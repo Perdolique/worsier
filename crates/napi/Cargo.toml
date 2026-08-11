@@ -1,0 +1,24 @@
+[package]
+name = "worsier-napi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+napi.workspace = true
+napi-derive.workspace = true
+serde_path_to_error.workspace = true
+serde_json.workspace = true
+worsier-cli = { path = "../cli" }
+worsier-formatter = { path = "../formatter" }
+
+[build-dependencies]
+napi-build.workspace = true
+
+[lints]
+workspace = true

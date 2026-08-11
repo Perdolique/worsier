@@ -1,0 +1,59 @@
+{
+  "name": "worsier",
+  "version": "0.1.0",
+  "description": "A configurable JavaScript and TypeScript formatter powered by Rust",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./configuration_schema.json": "./configuration_schema.json"
+  },
+  "bin": {
+    "worsier": "bin/worsier.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "configuration_schema.json",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "build:native": "napi build --manifest-path ../../crates/napi/Cargo.toml --output-dir ../../npm/linux-x64-gnu --platform --release --no-js",
+    "test": "node --test test/*.test.mjs",
+    "test:packed": "node ../../scripts/test-packed-package.mjs"
+  },
+  "napi": {
+    "binaryName": "worsier",
+    "targets": [
+      "aarch64-apple-darwin",
+      "aarch64-pc-windows-msvc",
+      "aarch64-unknown-linux-gnu",
+      "aarch64-unknown-linux-musl",
+      "x86_64-apple-darwin",
+      "x86_64-pc-windows-msvc",
+      "x86_64-unknown-linux-gnu",
+      "x86_64-unknown-linux-musl"
+    ]
+  },
+  "optionalDependencies": {
+    "worsier-darwin-arm64": "workspace:0.1.0",
+    "worsier-darwin-x64": "workspace:0.1.0",
+    "worsier-linux-arm64-gnu": "workspace:0.1.0",
+    "worsier-linux-arm64-musl": "workspace:0.1.0",
+    "worsier-linux-x64-gnu": "workspace:0.1.0",
+    "worsier-linux-x64-musl": "workspace:0.1.0",
+    "worsier-win32-arm64-msvc": "workspace:0.1.0",
+    "worsier-win32-x64-msvc": "workspace:0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "26.2.0",
+    "typescript": "7.0.2"
+  }
+}

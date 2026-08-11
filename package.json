@@ -1,0 +1,15 @@
+{
+  "name": "worsier-workspace",
+  "private": true,
+  "packageManager": "pnpm@9.4.0",
+  "scripts": {
+    "benchmark:node": "node scripts/benchmark-node.mjs",
+    "build": "pnpm --filter worsier build",
+    "check": "cargo test --workspace && pnpm --filter worsier test",
+    "generate": "cargo run -p worsier-formatter --example generate_schema && node scripts/generate-types.mjs"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "3.8.5",
+    "json-schema-to-typescript": "15.0.4"
+  }
+}

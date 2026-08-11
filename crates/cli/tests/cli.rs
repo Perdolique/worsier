@@ -1,0 +1,212 @@
+use std::fs;
+use std::io::Write;
+use std::path::Path;
+use std::process::{Command, Output, Stdio};
+
+fn command(directory: &Path) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_worsier"));
+    command.current_dir(directory);
+    command
+}
+
+fn write(path: &Path, source: &str) {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).unwrap();
+    }
+    fs::write(path, source).unwrap();
+}
+
+fn stderr(output: &Output) -> String {
+    String::from_utf8(output.stderr.clone()).unwrap()
+}
+
+#[test]
+fn reports_missing_config_and_init_refuses_to_overwrite() {
+    let directory = tempfile::tempdir().unwrap();
+    write(&directory.path().join("sample.ts"), "const value=1;");
+
+    let missing = command(directory.path()).arg("sample.ts").output().unwrap();
+    assert_eq!(missing.status.code(), Some(2));
+    assert!(stderr(&missing).contains("npx worsier --init"));
+
+    let initialized = command(directory.path()).arg("--init").output().unwrap();
+    assert!(initialized.status.success());
+    assert!(directory.path().join("worsier.jsonc").is_file());
+
+    let overwrite = command(directory.path()).arg("--init").output().unwrap();
+    assert_eq!(overwrite.status.code(), Some(2));
+    assert!(stderr(&overwrite).contains("already exists"));
+
+    write(&directory.path().join("notes.txt"), "not source");
+    let unsupported = command(directory.path()).arg("notes.txt").output().unwrap();
+    assert_eq!(unsupported.status.code(), Some(2));
+    assert!(stderr(&unsupported).contains("not a supported"));
+}
+
+#[test]
+fn supports_stdout_stdin_check_and_atomic_write() {
+    let directory = tempfile::tempdir().unwrap();
+    write(&directory.path().join("worsier.jsonc"), "{}");
+    write(
+        &directory.path().join("sample.ts"),
+        "const value={answer:42};",
+    );
+
+    let stdout = command(directory.path()).arg("sample.ts").output().unwrap();
+    assert!(stdout.status.success());
+    assert_eq!(
+        String::from_utf8(stdout.stdout).unwrap(),
+        "const value = { answer: 42 };\n"
+    );
+
+    let check = command(directory.path())
+        .args(["--check", "sample.ts"])
+        .output()
+        .unwrap();
+    assert_eq!(check.status.code(), Some(1));
+    assert_eq!(
+        fs::read_to_string(directory.path().join("sample.ts")).unwrap(),
+        "const value={answer:42};"
+    );
+
+    let write_result = command(directory.path())
+        .args(["--write", "sample.ts"])
+        .output()
+        .unwrap();
+    assert!(write_result.status.success());
+    assert_eq!(
+        fs::read_to_string(directory.path().join("sample.ts")).unwrap(),
+        "const value = { answer: 42 };\n"
+    );
+    assert!(
+        command(directory.path())
+            .args(["--check", "sample.ts"])
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let mut child = command(directory.path())
+        .args(["--stdin-filepath", "virtual.ts"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"const stdinValue=[1,2];")
+        .unwrap();
+    let stdin = child.wait_with_output().unwrap();
+    assert!(stdin.status.success());
+    assert_eq!(
+        String::from_utf8(stdin.stdout).unwrap(),
+        "const stdinValue = [1, 2];\n"
+    );
+}
+
+#[test]
+fn nearest_config_wins_and_explicit_config_disables_discovery() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        &directory.path().join("worsier.jsonc"),
+        r#"{"quoteStyle":"double"}"#,
+    );
+    write(
+        &directory.path().join("nested/worsier.jsonc"),
+        r#"{"quoteStyle":"single"}"#,
+    );
+    write(
+        &directory.path().join("nested/sample.ts"),
+        "const value=\"text\";",
+    );
+
+    let nearest = command(directory.path())
+        .arg("nested/sample.ts")
+        .output()
+        .unwrap();
+    assert!(nearest.status.success());
+    assert!(
+        String::from_utf8(nearest.stdout)
+            .unwrap()
+            .contains("'text'")
+    );
+
+    let explicit = command(directory.path())
+        .args(["--config", "worsier.jsonc", "nested/sample.ts"])
+        .output()
+        .unwrap();
+    assert!(explicit.status.success());
+    assert!(
+        String::from_utf8(explicit.stdout)
+            .unwrap()
+            .contains("\"text\"")
+    );
+}
+
+#[test]
+fn configuration_errors_include_the_nested_json_path() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        &directory.path().join("worsier.jsonc"),
+        r#"{"objects":{"unknown":true}}"#,
+    );
+    write(&directory.path().join("sample.ts"), "const value=1;");
+
+    let output = command(directory.path()).arg("sample.ts").output().unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stderr(&output).contains("objects.unknown"));
+}
+
+#[test]
+fn directory_walk_respects_gitignore_config_ignores_and_sorts_diagnostics() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        &directory.path().join("worsier.jsonc"),
+        r#"{"ignorePatterns":["ignored/**"]}"#,
+    );
+    write(&directory.path().join(".gitignore"), "gitignored.js\n");
+    write(&directory.path().join("ignored/skip.ts"), "const skip=1;");
+    write(&directory.path().join("gitignored.js"), "const ignored=1;");
+    write(&directory.path().join("z-invalid.ts"), "const z = @;");
+    write(&directory.path().join("a-invalid.ts"), "const a = @;");
+
+    let output = command(directory.path())
+        .args(["--check", ".", "--threads", "2"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let diagnostics = stderr(&output);
+    assert!(!diagnostics.contains("skip.ts"));
+    assert!(!diagnostics.contains("gitignored.js"));
+    assert!(diagnostics.find("a-invalid.ts").unwrap() < diagnostics.find("z-invalid.ts").unwrap());
+}
+
+#[test]
+fn parse_errors_do_not_modify_files_and_unicode_paths_work() {
+    let directory = tempfile::tempdir().unwrap();
+    write(&directory.path().join("worsier.jsonc"), "{}");
+    let invalid = directory.path().join("invalid.ts");
+    write(&invalid, "const value = @;");
+
+    let failed = command(directory.path())
+        .args(["--write", "invalid.ts"])
+        .output()
+        .unwrap();
+    assert_eq!(failed.status.code(), Some(2));
+    assert_eq!(fs::read_to_string(&invalid).unwrap(), "const value = @;");
+
+    let unicode = directory.path().join("папка с пробелом/файл.ts");
+    write(&unicode, "const value=[1,2];");
+    let written = command(directory.path())
+        .arg("--write")
+        .arg("папка с пробелом/файл.ts")
+        .output()
+        .unwrap();
+    assert!(written.status.success(), "{}", stderr(&written));
+    assert_eq!(
+        fs::read_to_string(unicode).unwrap(),
+        "const value = [1, 2];\n"
+    );
+}

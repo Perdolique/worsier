@@ -1,0 +1,8 @@
+target/
+node_modules/
+*.node
+npm/*/index.d.ts
+*.tgz
+coverage/
+/fuzz/artifacts/
+/fuzz/coverage/

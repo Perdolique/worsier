@@ -1,0 +1,10 @@
+{
+  "name": "worsier-linux-x64-musl",
+  "version": "0.1.0",
+  "license": "MIT",
+  "os": ["linux"],
+  "cpu": ["x64"],
+  "libc": ["musl"],
+  "main": "worsier.linux-x64-musl.node",
+  "files": ["worsier.linux-x64-musl.node"]
+}
