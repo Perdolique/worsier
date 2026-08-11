@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "description": "A configurable JavaScript and TypeScript formatter powered by Rust",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Perdolique/worsier.git",
+    "directory": "packages/npm"
+  },
   "type": "module",
   "engines": {
     "node": "^20.19.0 || >=22.12.0"

@@ -2,6 +2,10 @@
   "name": "worsier-win32-arm64-msvc",
   "version": "0.1.0",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Perdolique/worsier.git"
+  },
   "os": ["win32"],
   "cpu": ["arm64"],
   "main": "worsier.win32-arm64-msvc.node",

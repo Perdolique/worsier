@@ -2,13 +2,28 @@ name: Release
 
 on:
   push:
-    tags: ['v*']
+    branches: [master]
 
 permissions:
   contents: write
+  id-token: write
+  issues: write
+  pull-requests: write
 
 jobs:
+  release-please:
+    runs-on: ubuntu-24.04
+    outputs:
+      release_created: ${{ steps.release.outputs['packages/npm--release_created'] }}
+      sha: ${{ steps.release.outputs['packages/npm--sha'] }}
+      tag_name: ${{ steps.release.outputs['packages/npm--tag_name'] }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+
   native:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
     name: ${{ matrix.target }}
     strategy:
       fail-fast: false
@@ -43,6 +58,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.sha }}
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.95.0
@@ -72,9 +89,13 @@ jobs:
           if-no-files-found: error
 
   benchmarks:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.sha }}
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.95.0
@@ -96,17 +117,20 @@ jobs:
           path: benchmark-results.txt
 
   publish:
-    needs: [native, benchmarks]
+    needs: [release-please, native, benchmarks]
+    if: needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-24.04
     environment: npm
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.sha }}
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.95.0
       - uses: actions/setup-node@v4
         with:
-          node-version: 22.12.0
+          node-version: 24
           registry-url: https://registry.npmjs.org
           cache: pnpm
       - run: corepack enable
@@ -133,7 +157,7 @@ jobs:
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - name: Publish GitHub release with benchmark report
-        run: gh release create "$GITHUB_REF_NAME" --generate-notes --notes "$(cat benchmark-results.txt)" artifacts/*.node
+      - name: Upload GitHub release assets
+        run: gh release upload "${{ needs.release-please.outputs.tag_name }}" benchmark-results.txt artifacts/*.node --clobber
         env:
           GH_TOKEN: ${{ github.token }}

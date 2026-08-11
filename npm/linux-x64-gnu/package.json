@@ -2,6 +2,10 @@
   "name": "worsier-linux-x64-gnu",
   "version": "0.1.0",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Perdolique/worsier.git"
+  },
   "os": ["linux"],
   "cpu": ["x64"],
   "libc": ["glibc"],
