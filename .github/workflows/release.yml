@@ -179,7 +179,7 @@ jobs:
           for package_dir in npm/*; do
             package_name=$(node -p "require('./${package_dir}/package.json').name")
 
-            if npm publish "${package_dir}" --access public >"${publish_log}" 2>&1; then
+            if npm publish "./${package_dir}" --access public >"${publish_log}" 2>&1; then
               cat "${publish_log}"
               continue
             fi
