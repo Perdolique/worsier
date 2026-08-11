@@ -3,6 +3,12 @@ name: Release
 on:
   push:
     branches: [master]
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: Git tag to publish
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -14,11 +20,12 @@ jobs:
   release-please:
     runs-on: ubuntu-24.04
     outputs:
-      release_created: ${{ steps.release.outputs['packages/npm--release_created'] }}
-      sha: ${{ steps.release.outputs['packages/npm--sha'] }}
-      tag_name: ${{ steps.release.outputs['packages/npm--tag_name'] }}
+      release_created: ${{ github.event_name == 'workflow_dispatch' || steps.release.outputs['packages/npm--release_created'] }}
+      sha: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || steps.release.outputs['packages/npm--sha'] }}
+      tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || steps.release.outputs['packages/npm--tag_name'] }}
     steps:
       - uses: googleapis/release-please-action@v4
+        if: github.event_name == 'push'
         id: release
 
   native:
@@ -64,6 +71,7 @@ jobs:
         with:
           toolchain: 1.95.0
           targets: ${{ matrix.target }}
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v4
         with:
           node-version: 22.12.0
@@ -99,6 +107,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.95.0
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v4
         with:
           node-version: 22.12.0
@@ -128,6 +137,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.95.0
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v4
         with:
           node-version: 24
