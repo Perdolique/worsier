@@ -76,7 +76,6 @@ jobs:
         with:
           node-version: 22.12.0
           cache: pnpm
-      - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - name: Install musl linker
         if: matrix.musl
@@ -112,7 +111,6 @@ jobs:
         with:
           node-version: 22.12.0
           cache: pnpm
-      - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - name: Run report-only benchmarks
         run: cargo bench -p worsier-formatter --features benchmarking -- --noplot | tee benchmark-results.txt
@@ -143,7 +141,6 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
           cache: pnpm
-      - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - uses: actions/download-artifact@v4
         with:
