@@ -255,6 +255,7 @@ fn collect_files(paths: &[PathBuf]) -> Result<Vec<Candidate>> {
             .hidden(false)
             .git_ignore(true)
             .git_exclude(true)
+            .require_git(false)
             .filter_entry(|entry| {
                 !matches!(entry.file_name().to_str(), Some(".git" | "node_modules"))
             })
