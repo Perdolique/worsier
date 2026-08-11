@@ -170,8 +170,34 @@ jobs:
         run: pnpm exec napi artifacts --package-json-path packages/npm/package.json --output-dir artifacts --npm-dir npm
       - name: Validate package publication
         run: pnpm exec napi pre-publish --package-json-path packages/npm/package.json --npm-dir npm --root-publisher pnpm --no-gh-release --dry-run
+      - name: Prepare package publication
+        run: pnpm exec napi pre-publish --package-json-path packages/npm/package.json --npm-dir npm --root-publisher pnpm --no-gh-release --skip-optional-publish
       - name: Publish platform packages
-        run: pnpm exec napi pre-publish --package-json-path packages/npm/package.json --npm-dir npm --root-publisher pnpm --no-gh-release
+        run: |
+          publish_log="${RUNNER_TEMP}/npm-publish.log"
+
+          for package_dir in npm/*; do
+            package_name=$(node -p "require('./${package_dir}/package.json').name")
+
+            if npm publish "${package_dir}" --access public >"${publish_log}" 2>&1; then
+              cat "${publish_log}"
+              continue
+            fi
+
+            cat "${publish_log}"
+
+            if grep -Fq "You cannot publish over the previously published versions" "${publish_log}"; then
+              echo "::warning title=Skipped npm package::${package_name} is already published"
+              continue
+            fi
+
+            if grep -Fq "Package name triggered spam detection" "${publish_log}"; then
+              echo "::warning title=Skipped npm package::${package_name} was blocked by npm spam detection"
+              continue
+            fi
+
+            exit 1
+          done
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish root package
