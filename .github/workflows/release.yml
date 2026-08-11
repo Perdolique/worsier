@@ -58,10 +58,12 @@ jobs:
             platform: linux-x64-musl
             runner: ubuntu-24.04
             musl: true
+            build_args: --cross-compile
           - target: aarch64-unknown-linux-musl
             platform: linux-arm64-musl
             runner: ubuntu-24.04-arm
             musl: true
+            build_args: --cross-compile
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -77,12 +79,17 @@ jobs:
           node-version: 22.12.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Install musl linker
+      - uses: mlugg/setup-zig@v2
         if: matrix.musl
-        run: sudo apt-get update && sudo apt-get install --yes musl-tools
+        with:
+          version: 0.15.2
+      - uses: taiki-e/install-action@v2
+        if: matrix.musl
+        with:
+          tool: cargo-zigbuild
       - name: Build addon
         working-directory: packages/npm
-        run: pnpm exec napi build --manifest-path ../../crates/napi/Cargo.toml --output-dir ../../artifacts --platform --release --no-js --target ${{ matrix.target }}
+        run: pnpm exec napi build --manifest-path ../../crates/napi/Cargo.toml --output-dir ../../artifacts --platform --release --no-js --target ${{ matrix.target }} ${{ matrix.build_args }}
       - name: Runtime smoke
         if: matrix.musl != true
         run: node scripts/smoke-native.mjs artifacts/worsier.${{ matrix.platform }}.node
