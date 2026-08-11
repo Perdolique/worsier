@@ -88,8 +88,16 @@ jobs:
         with:
           tool: cargo-zigbuild
       - name: Build addon
+        if: runner.os != 'Windows'
         working-directory: packages/npm
         run: pnpm exec napi build --manifest-path ../../crates/napi/Cargo.toml --output-dir ../../artifacts --platform --release --no-js --target ${{ matrix.target }} ${{ matrix.build_args }}
+      - name: Build Windows addon
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cargo build --manifest-path crates/napi/Cargo.toml --release --target ${{ matrix.target }}
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/worsier_napi.dll" "artifacts/worsier.${{ matrix.platform }}.node"
       - name: Runtime smoke
         if: matrix.musl != true
         run: node scripts/smoke-native.mjs artifacts/worsier.${{ matrix.platform }}.node
