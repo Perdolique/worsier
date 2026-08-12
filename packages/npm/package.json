@@ -1,6 +1,6 @@
 {
   "name": "worsier",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "A focused JavaScript and TypeScript import formatter powered by Rust",
   "license": "MIT",
   "repository": {

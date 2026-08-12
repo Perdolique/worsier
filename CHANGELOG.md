@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.5](https://github.com/Perdolique/worsier/compare/v1.0.4...v1.0.5) (2026-08-12)
+
+
+### Bug Fixes
+
+* **npm:** document Windows package gap ([b2e6339](https://github.com/Perdolique/worsier/commit/b2e633949bea864f64555b1caeceacc3b1e8d227))
+
 ## [1.0.4](https://github.com/Perdolique/worsier/compare/v1.0.3...v1.0.4) (2026-08-12)
 
 
