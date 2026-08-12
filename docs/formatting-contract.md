@@ -5,6 +5,7 @@ variable declarations. It does not rewrite the contents of those variable declar
 
 ## Import layout
 
+- `rules.importLayout` defaults to `true` and controls only the contents of static imports.
 - `lineWidth` defaults to `120`. A flat import whose length equals the limit stays on one line.
 - Named imports use `{ a, b }` spacing and retain specifier order, aliases, `type` modifiers,
   module-specifier quotes, semicolons, import attributes, and comments.
@@ -13,6 +14,7 @@ variable declarations. It does not rewrite the contents of those variable declar
 - A single named specifier also breaks when the complete flat import exceeds `lineWidth`.
 - Default-only, namespace, and side-effect imports have no named list to break and stay on one line.
 - Dynamic `import()` expressions are not changed.
+- When `rules.importLayout` is `false`, every byte inside each static import span is preserved.
 
 ```ts
 import { type A, b, c } from 'package'
@@ -25,8 +27,15 @@ import {
 
 ## Statement boundaries
 
-Final import shapes and original variable-declaration shapes determine the separator. When both
-rules apply, the stronger separator wins:
+`rules.statementSpacing.imports` and `rules.statementSpacing.variableDeclarations` each accept
+`"separate"`, `"compact"`, or `"off"`. Both default to `"separate"`.
+
+Each statement contributes a requirement to its shared boundary. A blank-line requirement wins
+over a one-line-break requirement. If neither statement contributes a requirement, the original
+boundary is preserved.
+
+`"compact"` always requires exactly one line break. `"off"` contributes no requirement.
+`"separate"` uses the statement shape and category:
 
 | Adjacent statements | Separator |
 | --- | --- |
@@ -41,9 +50,16 @@ rules apply, the stronger separator wins:
 One blank line means exactly two LF or CRLF sequences with no whitespace on the empty line. Worsier
 does not add whitespace at the start or end of a file.
 
+Import spacing uses the formatted import shape when `rules.importLayout` is `true` and the original
+shape when it is `false`. Disabling import spacing does not disable import layout. On an import to
+variable-declaration boundary, for example, `"separate"` plus `"compact"` produces a blank line,
+`"compact"` plus `"compact"` produces one line break, and `"off"` plus `"compact"` produces one line
+break.
+
 ## Runtime variable declarations
 
-- `rules.variables` applies only to direct statement-list `const`, `let`, and `var` declarations.
+- `rules.statementSpacing.variableDeclarations` applies only to direct statement-list `const`,
+  `let`, and `var` declarations.
 - The declaration span is preserved: initializers, destructuring, types, comments, commas,
   semicolons, and multi-declarator statements are not reformatted or split.
 - Exported declarations, explicit `declare` declarations, declaration files, declarations inside
@@ -52,10 +68,11 @@ does not add whitespace at the start or end of a file.
   no separate future configuration key is reserved.
 - Statement lists include files, function bodies, ordinary blocks, `try`/`catch`/`finally` blocks,
   class static blocks, TypeScript module/namespace blocks, and each switch-case consequent.
-- A single-line list with at least two items and a direct runtime variable is unfolded. Every
-  sibling gets its own line, variable boundaries follow the table above, and nested inline
-  containers cascade outward with two-space indentation. Switch labels use one indentation level
-  and their consequent statements use two.
+- In `"separate"` or `"compact"` mode, a single-line list with at least two items and a direct
+  runtime variable is unfolded. Every sibling gets its own line, variable boundaries follow the
+  selected mode, and nested inline containers cascade outward with two-space indentation. Switch
+  labels use one indentation level and their consequent statements use two. `"off"` does not
+  unfold a list by itself.
 - A lone runtime variable in an inline block does not unfold that block. Existing multiline
   containers keep their current indentation.
 
@@ -77,13 +94,26 @@ does not add whitespace at the start or end of a file.
   "lineWidth": 120,
   "verifyAst": true,
   "rules": {
-    "imports": true,
-    "variables": true
+    "importLayout": true,
+    "statementSpacing": {
+      "imports": "separate",
+      "variableDeclarations": "separate"
+    }
   },
   "ignorePatterns": []
 }
 ```
 
-Unknown keys are configuration errors. `rules.imports` and `rules.variables` independently control
-their layouts and boundary spacing; disabling both returns the source unchanged. `lineWidth` only
-controls import layout. The CLI flag `--no-verify` disables AST verification for one invocation.
+Unknown keys and unknown spacing modes are configuration errors. The removed `rules.imports` and
+`rules.variables` keys are not aliases. Migrate them with the following exact replacements:
+
+| Removed setting | Replacement |
+| --- | --- |
+| `rules.imports: true` | `rules.importLayout: true` and `rules.statementSpacing.imports: "separate"` |
+| `rules.imports: false` | `rules.importLayout: false` and `rules.statementSpacing.imports: "off"` |
+| `rules.variables: true` | `rules.statementSpacing.variableDeclarations: "separate"` |
+| `rules.variables: false` | `rules.statementSpacing.variableDeclarations: "off"` |
+
+When import layout is `false` and both spacing modes are `"off"`, formatting returns the source
+unchanged. `lineWidth` only controls import layout. The CLI flag `--no-verify` disables AST
+verification for one invocation.

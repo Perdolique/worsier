@@ -19,7 +19,7 @@ use oxc_ast_visit::{
 use oxc_parser::{Kind, ParseOptions, Parser, Token, config::TokensParserConfig};
 use oxc_span::{ContentEq, GetSpan, SourceType, Span};
 
-use crate::{FormatError, ResolvedConfig};
+use crate::{FormatError, ResolvedConfig, StatementSpacingMode};
 
 const BOM: char = '\u{feff}';
 
@@ -27,6 +27,8 @@ const BOM: char = '\u{feff}';
 thread_local! {
     static SPAN_LOOKUP_COMPARISONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static INDENT_RESOLUTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static IMPORT_MULTILINE_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static VARIABLE_MULTILINE_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static CORRUPT_REWRITE_FOR_TEST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
@@ -41,6 +43,20 @@ fn span_lookup_comparison(result: bool) -> bool {
 fn indent_resolution() {
     #[cfg(test)]
     INDENT_RESOLUTIONS.set(INDENT_RESOLUTIONS.get() + 1);
+}
+
+#[inline]
+fn import_is_multiline(source: &str, span: Span) -> bool {
+    #[cfg(test)]
+    IMPORT_MULTILINE_SCANS.set(IMPORT_MULTILINE_SCANS.get() + 1);
+    source_slice(source, span).is_ok_and(contains_line_break)
+}
+
+#[inline]
+fn variable_is_multiline(source: &str, span: Span) -> bool {
+    #[cfg(test)]
+    VARIABLE_MULTILINE_SCANS.set(VARIABLE_MULTILINE_SCANS.get() + 1);
+    source_slice(source, span).is_ok_and(contains_line_break)
 }
 
 #[cfg(test)]
@@ -79,7 +95,10 @@ pub fn format_text(
             message: "Flow is not supported".to_owned(),
         });
     }
-    if !config.imports_enabled() && !config.variables_enabled() {
+    if !config.import_layout_enabled()
+        && config.import_spacing() == StatementSpacingMode::Off
+        && config.variable_declaration_spacing() == StatementSpacingMode::Off
+    {
         return Ok(None);
     }
 
@@ -90,8 +109,15 @@ pub fn format_text(
         &parsed.tokens,
         config.line_width(),
         newline,
-        config.imports_enabled(),
-        config.variables_enabled() && !source_type.is_typescript_definition(),
+        RewriteRules {
+            import_layout: config.import_layout_enabled(),
+            import_spacing: config.import_spacing(),
+            variable_spacing: if source_type.is_typescript_definition() {
+                StatementSpacingMode::Off
+            } else {
+                config.variable_declaration_spacing()
+            },
+        },
     )?;
     if edits.is_empty() {
         return Ok(None);
@@ -213,8 +239,21 @@ struct StatementShape {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum StatementTarget {
     Other,
-    Import { multiline: bool },
-    Variable { multiline: bool },
+    Import {
+        multiline: bool,
+        spacing: StatementSpacingMode,
+    },
+    Variable {
+        multiline: bool,
+        spacing: StatementSpacingMode,
+    },
+}
+
+#[derive(Clone, Copy, Debug)]
+struct RewriteRules {
+    import_layout: bool,
+    import_spacing: StatementSpacingMode,
+    variable_spacing: StatementSpacingMode,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -284,13 +323,12 @@ fn rewrite_edits(
     tokens: &[Token],
     line_width: u32,
     newline: &str,
-    imports_enabled: bool,
-    variables_enabled: bool,
+    rules: RewriteRules,
 ) -> Result<Vec<Edit>, FormatError> {
     let mut edits = Vec::new();
     let mut formatted_imports = HashMap::new();
 
-    if imports_enabled {
+    if rules.import_layout {
         for statement in &program.body {
             let Statement::ImportDeclaration(declaration) = statement else {
                 continue;
@@ -318,11 +356,19 @@ fn rewrite_edits(
         }
     }
 
+    if rules.import_spacing == StatementSpacingMode::Off
+        && rules.variable_spacing == StatementSpacingMode::Off
+    {
+        edits.sort_by_key(|edit| (edit.start, edit.end));
+        return Ok(edits);
+    }
+
     let mut collector = StatementCollector {
         source,
         tokens,
         formatted_imports: &formatted_imports,
-        variables_enabled,
+        import_spacing: rules.import_spacing,
+        variable_spacing: rules.variable_spacing,
         ambient_depth: 0,
         current_list: None,
         current_layout: None,
@@ -350,7 +396,8 @@ struct StatementCollector<'s> {
     source: &'s str,
     tokens: &'s [Token],
     formatted_imports: &'s HashMap<u32, bool>,
-    variables_enabled: bool,
+    import_spacing: StatementSpacingMode,
+    variable_spacing: StatementSpacingMode,
     ambient_depth: usize,
     current_list: Option<usize>,
     current_layout: Option<ExpandedLayout>,
@@ -399,11 +446,18 @@ impl StatementCollector<'_> {
 
     fn statement_shape(&self, statement: &Statement<'_>) -> StatementShape {
         let span = statement.span();
-        let target = if let Some(multiline) = self.formatted_imports.get(&span.start) {
+        let target = if self.import_spacing != StatementSpacingMode::Off
+            && matches!(statement, Statement::ImportDeclaration(_))
+        {
             StatementTarget::Import {
-                multiline: *multiline,
+                multiline: self
+                    .formatted_imports
+                    .get(&span.start)
+                    .copied()
+                    .unwrap_or_else(|| import_is_multiline(self.source, span)),
+                spacing: self.import_spacing,
             }
-        } else if self.variables_enabled
+        } else if self.variable_spacing != StatementSpacingMode::Off
             && self.ambient_depth == 0
             && matches!(
                 statement,
@@ -418,7 +472,8 @@ impl StatementCollector<'_> {
             )
         {
             StatementTarget::Variable {
-                multiline: source_slice(self.source, span).is_ok_and(contains_line_break),
+                multiline: variable_is_multiline(self.source, span),
+                spacing: self.variable_spacing,
             }
         } else {
             StatementTarget::Other
@@ -644,10 +699,13 @@ fn mark_expanded_layouts(lists: &mut [StatementList], switches: &mut [SwitchLayo
     for (list_index, list) in lists.iter_mut().enumerate() {
         list.expanded = !list.original_multiline
             && list.items.len() >= 2
-            && list
-                .items
-                .iter()
-                .any(|item| matches!(item.target, StatementTarget::Variable { .. }));
+            && list.items.iter().any(|item| {
+                matches!(
+                    item.target,
+                    StatementTarget::Variable { spacing, .. }
+                        if spacing != StatementSpacingMode::Off
+                )
+            });
         if list.expanded {
             pending.push_back(ExpandedLayout::List(list_index));
         }
@@ -745,10 +803,15 @@ fn append_list_layout_edits(
             }
         }
 
+        let mut fallback_indent = String::new();
         for pair in list.items.windows(2) {
             let [previous, next] = pair else {
                 unreachable!("windows(2) always contains two statements")
             };
+            let previous_indent = line_indent_at(source, previous.span.start);
+            if !previous_indent.is_empty() {
+                fallback_indent.clone_from(&previous_indent);
+            }
             let Some(blank_line) = boundary_blank_line(previous.target, next.target, list.expanded)
             else {
                 continue;
@@ -766,8 +829,9 @@ fn append_list_layout_edits(
                     source,
                     comments,
                     span,
-                    previous.span.start,
+                    &previous_indent,
                     next.span.start,
+                    &fallback_indent,
                 )
             };
             append_boundary_edit(source, comments, span, &separator, &indent, edits)?;
@@ -846,18 +910,56 @@ fn boundary_blank_line(
     next: StatementTarget,
     expanded: bool,
 ) -> Option<bool> {
-    match (previous, next) {
-        (StatementTarget::Other, StatementTarget::Other) => expanded.then_some(false),
-        (
-            StatementTarget::Import { multiline: false },
-            StatementTarget::Import { multiline: false },
-        )
-        | (
-            StatementTarget::Variable { multiline: false },
-            StatementTarget::Variable { multiline: false },
-        ) => Some(false),
-        _ => Some(true),
+    let layout_requirement = expanded.then_some(false);
+    let previous_requirement = statement_boundary_requirement(previous, next);
+    let next_requirement = statement_boundary_requirement(next, previous);
+
+    [layout_requirement, previous_requirement, next_requirement]
+        .into_iter()
+        .flatten()
+        .max()
+}
+
+fn statement_boundary_requirement(
+    statement: StatementTarget,
+    sibling: StatementTarget,
+) -> Option<bool> {
+    let mode = match statement {
+        StatementTarget::Other => return None,
+        StatementTarget::Import { spacing, .. } | StatementTarget::Variable { spacing, .. } => {
+            spacing
+        }
+    };
+    match mode {
+        StatementSpacingMode::Off => None,
+        StatementSpacingMode::Compact => Some(false),
+        StatementSpacingMode::Separate => Some(!same_single_line_category(statement, sibling)),
     }
+}
+
+const fn same_single_line_category(statement: StatementTarget, sibling: StatementTarget) -> bool {
+    matches!(
+        (statement, sibling),
+        (
+            StatementTarget::Import {
+                multiline: false,
+                ..
+            },
+            StatementTarget::Import {
+                multiline: false,
+                ..
+            }
+        ) | (
+            StatementTarget::Variable {
+                multiline: false,
+                ..
+            },
+            StatementTarget::Variable {
+                multiline: false,
+                ..
+            }
+        )
+    )
 }
 
 fn append_boundary_edit(
@@ -884,8 +986,9 @@ fn existing_boundary_indent(
     source: &str,
     comments: &[Comment],
     span: Span,
-    previous_start: u32,
+    previous_indent: &str,
     next_start: u32,
+    fallback_indent: &str,
 ) -> String {
     let anchor = comments_in_span(comments, span)
         .iter()
@@ -898,7 +1001,11 @@ fn existing_boundary_indent(
     if !indent.is_empty() || boundary_is_multiline {
         return indent;
     }
-    line_indent_at(source, previous_start)
+    if previous_indent.is_empty() {
+        fallback_indent.to_owned()
+    } else {
+        previous_indent.to_owned()
+    }
 }
 
 struct LayoutIndents {
@@ -1469,10 +1576,13 @@ mod tests {
     use oxc_allocator::Allocator;
 
     use super::{
-        CORRUPT_REWRITE_FOR_TEST, INDENT_RESOLUTIONS, SPAN_LOOKUP_COMPARISONS, parse, source_type,
-        verify,
+        CORRUPT_REWRITE_FOR_TEST, IMPORT_MULTILINE_SCANS, INDENT_RESOLUTIONS,
+        SPAN_LOOKUP_COMPARISONS, VARIABLE_MULTILINE_SCANS, parse, source_type, verify,
     };
-    use crate::{FormatConfig, RulesConfig, format_text, resolve_config};
+    use crate::{
+        FormatConfig, RulesConfig, StatementSpacingConfig, StatementSpacingMode, format_text,
+        resolve_config,
+    };
 
     fn format(source: &str) -> String {
         format_with(source, FormatConfig::default())
@@ -1487,6 +1597,27 @@ mod tests {
         format_text(Path::new(file_name), source, &config)
             .unwrap()
             .unwrap_or_else(|| source.to_owned())
+    }
+
+    fn format_with_rules(
+        source: &str,
+        import_layout: bool,
+        imports: StatementSpacingMode,
+        variable_declarations: StatementSpacingMode,
+    ) -> String {
+        format_with(
+            source,
+            FormatConfig {
+                rules: RulesConfig {
+                    import_layout,
+                    statement_spacing: StatementSpacingConfig {
+                        imports,
+                        variable_declarations,
+                    },
+                },
+                ..FormatConfig::default()
+            },
+        )
     }
 
     #[test]
@@ -1596,6 +1727,109 @@ mod tests {
     }
 
     #[test]
+    fn applies_all_import_spacing_modes_without_requiring_import_layout() {
+        let source = "import{a}from'x';\n\n\nimport{b}from'y';\n\n\nrun();";
+
+        assert_eq!(
+            format_with_rules(
+                source,
+                false,
+                StatementSpacingMode::Separate,
+                StatementSpacingMode::Off,
+            ),
+            "import{a}from'x';\nimport{b}from'y';\n\nrun();"
+        );
+        assert_eq!(
+            format_with_rules(
+                source,
+                false,
+                StatementSpacingMode::Compact,
+                StatementSpacingMode::Off,
+            ),
+            "import{a}from'x';\nimport{b}from'y';\nrun();"
+        );
+        assert_eq!(
+            format_with_rules(
+                source,
+                false,
+                StatementSpacingMode::Off,
+                StatementSpacingMode::Off,
+            ),
+            source
+        );
+    }
+
+    #[test]
+    fn import_spacing_uses_the_final_shape_only_when_layout_is_enabled() {
+        let source = "import{one,two}from'long-package';import value from'x';";
+        let without_layout = format_with(
+            source,
+            FormatConfig {
+                line_width: 20,
+                rules: RulesConfig {
+                    import_layout: false,
+                    statement_spacing: StatementSpacingConfig {
+                        imports: StatementSpacingMode::Separate,
+                        variable_declarations: StatementSpacingMode::Off,
+                    },
+                },
+                ..FormatConfig::default()
+            },
+        );
+        assert_eq!(
+            without_layout,
+            "import{one,two}from'long-package';\nimport value from'x';"
+        );
+
+        let with_layout = format_with(
+            source,
+            FormatConfig {
+                line_width: 20,
+                rules: RulesConfig {
+                    import_layout: true,
+                    statement_spacing: StatementSpacingConfig {
+                        imports: StatementSpacingMode::Separate,
+                        variable_declarations: StatementSpacingMode::Off,
+                    },
+                },
+                ..FormatConfig::default()
+            },
+        );
+        assert_eq!(
+            with_layout,
+            "import {\n  one,\n  two\n} from 'long-package';\n\nimport value from 'x';"
+        );
+    }
+
+    #[test]
+    fn import_layout_still_runs_when_import_spacing_is_off() {
+        let source = "import{a}from'x';\n\n\nrun();";
+        assert_eq!(
+            format_with_rules(
+                source,
+                true,
+                StatementSpacingMode::Off,
+                StatementSpacingMode::Off,
+            ),
+            "import { a } from 'x';\n\n\nrun();"
+        );
+    }
+
+    #[test]
+    fn compact_import_spacing_ignores_single_and_multiline_shapes() {
+        let source = "import {\n  one,\n  two\n} from 'pkg';\n\n\nimport value from 'other';";
+        assert_eq!(
+            format_with_rules(
+                source,
+                false,
+                StatementSpacingMode::Compact,
+                StatementSpacingMode::Off,
+            ),
+            "import {\n  one,\n  two\n} from 'pkg';\nimport value from 'other';"
+        );
+    }
+
+    #[test]
     fn preserves_every_non_import_byte_and_the_eof_shape() {
         let source = "import{a,b}from\"pkg\";\nconst odd={ untouched :true,nested:[1,  2] };\nexport{odd};\nconst quote=\"double\"";
         let output = format(source);
@@ -1642,8 +1876,11 @@ mod tests {
         let source = "import{a,b}from'x';const value={raw:true};";
         let config = resolve_config(FormatConfig {
             rules: RulesConfig {
-                imports: false,
-                variables: false,
+                import_layout: false,
+                statement_spacing: StatementSpacingConfig {
+                    imports: StatementSpacingMode::Off,
+                    variable_declarations: StatementSpacingMode::Off,
+                },
             },
             ..FormatConfig::default()
         })
@@ -1754,6 +1991,45 @@ mod tests {
     }
 
     #[test]
+    fn disabled_spacing_categories_skip_multiline_scans() {
+        let imports_only = "import{value}from'pkg';const outer=()=>{const inner=1;work();};";
+        IMPORT_MULTILINE_SCANS.set(0);
+        VARIABLE_MULTILINE_SCANS.set(0);
+        format_with_rules(
+            imports_only,
+            true,
+            StatementSpacingMode::Off,
+            StatementSpacingMode::Off,
+        );
+        assert_eq!(IMPORT_MULTILINE_SCANS.get(), 0);
+        assert_eq!(VARIABLE_MULTILINE_SCANS.get(), 0);
+
+        let import_spacing_only = "import value from'pkg';const outer=()=>{const inner=1;work();};";
+        IMPORT_MULTILINE_SCANS.set(0);
+        VARIABLE_MULTILINE_SCANS.set(0);
+        format_with_rules(
+            import_spacing_only,
+            false,
+            StatementSpacingMode::Separate,
+            StatementSpacingMode::Off,
+        );
+        assert_eq!(IMPORT_MULTILINE_SCANS.get(), 1);
+        assert_eq!(VARIABLE_MULTILINE_SCANS.get(), 0);
+
+        let variable_spacing_only = "import value from'pkg';const value=1;work();";
+        IMPORT_MULTILINE_SCANS.set(0);
+        VARIABLE_MULTILINE_SCANS.set(0);
+        format_with_rules(
+            variable_spacing_only,
+            false,
+            StatementSpacingMode::Off,
+            StatementSpacingMode::Separate,
+        );
+        assert_eq!(IMPORT_MULTILINE_SCANS.get(), 0);
+        assert_eq!(VARIABLE_MULTILINE_SCANS.get(), 1);
+    }
+
+    #[test]
     fn keeps_boundary_comments_attached_while_normalizing_import_spacing() {
         let source = "import a from'a'; // trailing\n// leading\nconst value={raw:true};";
         let output = format(source);
@@ -1783,6 +2059,109 @@ mod tests {
     }
 
     #[test]
+    fn applies_all_variable_spacing_modes_and_only_active_modes_unfold_blocks() {
+        let source = "function f(){const a=1;work();}";
+
+        assert_eq!(
+            format_with_rules(
+                source,
+                false,
+                StatementSpacingMode::Off,
+                StatementSpacingMode::Separate,
+            ),
+            "function f(){\n  const a=1;\n\n  work();\n}"
+        );
+        assert_eq!(
+            format_with_rules(
+                source,
+                false,
+                StatementSpacingMode::Off,
+                StatementSpacingMode::Compact,
+            ),
+            "function f(){\n  const a=1;\n  work();\n}"
+        );
+        assert_eq!(
+            format_with_rules(
+                source,
+                false,
+                StatementSpacingMode::Off,
+                StatementSpacingMode::Off,
+            ),
+            source
+        );
+    }
+
+    #[test]
+    fn compact_variable_spacing_ignores_single_and_multiline_shapes() {
+        let source = "const first={\n  value:1\n};\n\n\nlet second=2;\n\n\nwork();";
+        assert_eq!(
+            format_with_rules(
+                source,
+                false,
+                StatementSpacingMode::Off,
+                StatementSpacingMode::Compact,
+            ),
+            "const first={\n  value:1\n};\nlet second=2;\nwork();"
+        );
+    }
+
+    #[test]
+    fn combines_both_sides_of_import_variable_boundaries() {
+        let forward = "import value from 'pkg';const value=1;";
+        let reverse = "const value=1;import value from 'pkg';";
+        for source in [forward, reverse] {
+            let blank_line = source.replacen(';', ";\n\n", 1);
+            let one_line = source.replacen(';', ";\n", 1);
+
+            assert_eq!(
+                format_with_rules(
+                    source,
+                    false,
+                    StatementSpacingMode::Separate,
+                    StatementSpacingMode::Compact,
+                ),
+                blank_line
+            );
+            assert_eq!(
+                format_with_rules(
+                    source,
+                    false,
+                    StatementSpacingMode::Compact,
+                    StatementSpacingMode::Compact,
+                ),
+                one_line
+            );
+            assert_eq!(
+                format_with_rules(
+                    source,
+                    false,
+                    StatementSpacingMode::Off,
+                    StatementSpacingMode::Compact,
+                ),
+                one_line
+            );
+            assert_eq!(
+                format_with_rules(
+                    source,
+                    false,
+                    StatementSpacingMode::Compact,
+                    StatementSpacingMode::Off,
+                ),
+                one_line
+            );
+            assert_eq!(
+                format_with_rules(
+                    source,
+                    false,
+                    StatementSpacingMode::Off,
+                    StatementSpacingMode::Off,
+                ),
+                source
+            );
+        }
+    }
+
+    #[test]
     fn preserves_variable_declaration_contents_and_line_width_scope() {
         let source = "const { a,\n b }: Value = make(  1,2), other=[1,  2];let next=3;";
         let output = format_with(
@@ -1800,14 +2179,17 @@ mod tests {
     }
 
     #[test]
-    fn keeps_import_and_variable_rules_independent() {
+    fn keeps_import_layout_and_statement_spacing_independent() {
         let source = "import{a}from'x';const b=1;let c=2;run();";
         let variables_only = format_with(
             source,
             FormatConfig {
                 rules: RulesConfig {
-                    imports: false,
-                    variables: true,
+                    import_layout: false,
+                    statement_spacing: StatementSpacingConfig {
+                        imports: StatementSpacingMode::Off,
+                        variable_declarations: StatementSpacingMode::Separate,
+                    },
                 },
                 ..FormatConfig::default()
             },
@@ -1821,8 +2203,11 @@ mod tests {
             source,
             FormatConfig {
                 rules: RulesConfig {
-                    imports: true,
-                    variables: false,
+                    import_layout: true,
+                    statement_spacing: StatementSpacingConfig {
+                        imports: StatementSpacingMode::Separate,
+                        variable_declarations: StatementSpacingMode::Off,
+                    },
                 },
                 ..FormatConfig::default()
             },
@@ -1878,6 +2263,55 @@ mod tests {
     }
 
     #[test]
+    fn compact_mode_unfolds_nested_blocks_and_switch_cases_without_blank_lines() {
+        let source =
+            "function outer(){if(ok){const a=1;work();}switch(x){case 1:let b=2;done();}finish();}";
+        let expected = "function outer(){\n  if(ok){\n    const a=1;\n    work();\n  }\n  switch(x){\n    case 1:\n      let b=2;\n      done();\n  }\n  finish();\n}";
+        let output = format_with_rules(
+            source,
+            false,
+            StatementSpacingMode::Off,
+            StatementSpacingMode::Compact,
+        );
+        assert_eq!(output, expected);
+        assert_eq!(
+            format_with_rules(
+                &output,
+                false,
+                StatementSpacingMode::Off,
+                StatementSpacingMode::Compact,
+            ),
+            output
+        );
+    }
+
+    #[test]
+    fn compact_spacing_preserves_comments_bom_crlf_and_eof_shape() {
+        let source = "\u{feff}import value from'pkg'; // trailing\r\n\r\n// leading\r\nconst a=1;\r\n\r\nwork();";
+        let output = format_with_rules(
+            source,
+            false,
+            StatementSpacingMode::Compact,
+            StatementSpacingMode::Compact,
+        );
+        assert_eq!(
+            output,
+            "\u{feff}import value from'pkg'; // trailing\r\n// leading\r\nconst a=1;\r\nwork();"
+        );
+        assert!(!output.replace("\r\n", "").contains('\n'));
+        assert!(!output.ends_with('\n'));
+        assert_eq!(
+            format_with_rules(
+                &output,
+                false,
+                StatementSpacingMode::Compact,
+                StatementSpacingMode::Compact,
+            ),
+            output
+        );
+    }
+
+    #[test]
     fn formats_existing_nested_statement_lists_without_reindenting_them() {
         let source = "function f() {\n    before();\n  const a=1;\n      after();\n}";
         let expected = "function f() {\n    before();\n\n  const a=1;\n\n      after();\n}";
@@ -1905,6 +2339,28 @@ mod tests {
         let expected = "function f() {\n  const a=1;\n\n  work();\n}\nswitch(x) {\n  case 1:\n    let b=2;\n\n    done();\n}";
         assert_eq!(format(source), expected);
         assert_eq!(format(expected), expected);
+    }
+
+    #[test]
+    fn preserves_list_indent_across_multiple_inline_boundaries() {
+        let source = "function f() {\n  before(); const a=1; other();\n}\nswitch(x) {\n  case 1:\n    before(); let b=2; done();\n}";
+        let expected = "function f() {\n  before();\n  const a=1;\n  other();\n}\nswitch(x) {\n  case 1:\n    before();\n    let b=2;\n    done();\n}";
+        let output = format_with_rules(
+            source,
+            false,
+            StatementSpacingMode::Off,
+            StatementSpacingMode::Compact,
+        );
+        assert_eq!(output, expected);
+        assert_eq!(
+            format_with_rules(
+                &output,
+                false,
+                StatementSpacingMode::Off,
+                StatementSpacingMode::Compact,
+            ),
+            output
+        );
     }
 
     #[test]

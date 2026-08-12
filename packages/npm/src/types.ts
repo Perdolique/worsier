@@ -8,6 +8,10 @@ export interface FormatConfig {
   verifyAst?: boolean
 }
 export interface RulesConfig {
-  imports?: boolean
-  variables?: boolean
+  importLayout?: boolean
+  statementSpacing?: StatementSpacingConfig
+}
+export interface StatementSpacingConfig {
+  imports?: 'separate' | 'compact' | 'off'
+  variableDeclarations?: 'separate' | 'compact' | 'off'
 }

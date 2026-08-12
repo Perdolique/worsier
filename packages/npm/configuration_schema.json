@@ -25,8 +25,11 @@
     "rules": {
       "$ref": "#/$defs/RulesConfig",
       "default": {
-        "imports": true,
-        "variables": true
+        "importLayout": true,
+        "statementSpacing": {
+          "imports": "separate",
+          "variableDeclarations": "separate"
+        }
       }
     },
     "verifyAst": {
@@ -39,16 +42,41 @@
     "RulesConfig": {
       "type": "object",
       "properties": {
-        "imports": {
+        "importLayout": {
           "type": "boolean",
           "default": true
         },
-        "variables": {
-          "type": "boolean",
-          "default": true
+        "statementSpacing": {
+          "$ref": "#/$defs/StatementSpacingConfig",
+          "default": {
+            "imports": "separate",
+            "variableDeclarations": "separate"
+          }
         }
       },
       "additionalProperties": false
+    },
+    "StatementSpacingConfig": {
+      "type": "object",
+      "properties": {
+        "imports": {
+          "$ref": "#/$defs/StatementSpacingMode",
+          "default": "separate"
+        },
+        "variableDeclarations": {
+          "$ref": "#/$defs/StatementSpacingMode",
+          "default": "separate"
+        }
+      },
+      "additionalProperties": false
+    },
+    "StatementSpacingMode": {
+      "type": "string",
+      "enum": [
+        "separate",
+        "compact",
+        "off"
+      ]
     }
   }
 }
