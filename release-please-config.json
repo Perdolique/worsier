@@ -30,8 +30,7 @@
         "/npm/linux-arm64-musl/package.json",
         "/npm/linux-x64-gnu/package.json",
         "/npm/linux-x64-musl/package.json",
-        "/npm/win32-arm64-msvc/package.json",
-        "/npm/win32-x64-msvc/package.json"
+        "/npm/win32-arm64-msvc/package.json"
       ]
     }
   }

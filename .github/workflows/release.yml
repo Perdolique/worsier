@@ -97,9 +97,6 @@ jobs:
           - target: aarch64-apple-darwin
             platform: darwin-arm64
             runner: macos-15
-          - target: x86_64-pc-windows-msvc
-            platform: win32-x64-msvc
-            runner: windows-2025
           - target: aarch64-pc-windows-msvc
             platform: win32-arm64-msvc
             runner: windows-11-arm
@@ -256,11 +253,6 @@ jobs:
           for package_dir in npm/*; do
             package_name=$(node -p "require('./${package_dir}/package.json').name")
 
-            if [[ "${package_name}" == "worsier-win32-x64-msvc" ]]; then
-              echo "::warning title=Skipped npm package::${package_name} is not available in the npm registry"
-              continue
-            fi
-
             if npm publish "./${package_dir}" --access public >"${publish_log}" 2>&1; then
               cat "${publish_log}"
               continue
@@ -280,21 +272,6 @@ jobs:
             exit 1
           done
         shell: bash
-      - name: Verify all platform packages
-        shell: bash
-        run: |
-          for package_dir in npm/*; do
-            package_name=$(node -p "require('./${package_dir}/package.json').name")
-
-            if [[ "${package_name}" == "worsier-win32-x64-msvc" ]]; then
-              echo "::warning title=Skipped npm package::${package_name} is not available in the npm registry"
-              continue
-            fi
-
-            package_version=$(node -p "require('./${package_dir}/package.json').version")
-            published_version=$(npm view "${package_name}@${package_version}" version)
-            [[ "${published_version}" == "${package_version}" ]]
-          done
       - name: Publish root package
         working-directory: packages/npm
         shell: bash

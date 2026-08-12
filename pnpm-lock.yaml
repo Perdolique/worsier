@@ -29,8 +29,6 @@ importers:
 
   npm/win32-arm64-msvc: {}
 
-  npm/win32-x64-msvc: {}
-
   packages/npm:
     optionalDependencies:
       worsier-darwin-arm64:
@@ -54,9 +52,6 @@ importers:
       worsier-win32-arm64-msvc:
         specifier: workspace:*
         version: link:../../npm/win32-arm64-msvc
-      worsier-win32-x64-msvc:
-        specifier: workspace:*
-        version: link:../../npm/win32-x64-msvc
     devDependencies:
       '@types/node':
         specifier: 26.2.0
