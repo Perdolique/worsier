@@ -32,7 +32,7 @@
     "build": "tsc -p tsconfig.json",
     "build:native": "napi build --manifest-path ../../crates/napi/Cargo.toml --output-dir ../../npm/linux-x64-gnu --platform --release --no-js",
     "test": "node --test test/*.test.mjs",
-    "test:packed": "node ../../scripts/test-packed-package.mjs"
+    "test:packed": "node scripts/test-packed-package.mjs"
   },
   "napi": {
     "binaryName": "worsier",

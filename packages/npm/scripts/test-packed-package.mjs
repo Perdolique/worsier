@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
-const root = resolve(import.meta.dirname, '..')
+const root = resolve(import.meta.dirname, '../../..')
 const packageDirectory = join(root, 'packages/npm')
 const platformDirectory = join(root, 'npm/linux-x64-gnu')
 const temporary = await mkdtemp(join(tmpdir(), 'worsier-packed-'))
