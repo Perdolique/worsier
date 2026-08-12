@@ -14,8 +14,10 @@ run('mkdir', ['-p', tarballs])
 run('pnpm', ['pack', '--pack-destination', tarballs], packageDirectory)
 run('pnpm', ['pack', '--pack-destination', tarballs], platformDirectory)
 
-const rootTarball = join(tarballs, 'worsier-0.1.0.tgz')
-const platformTarball = join(tarballs, 'worsier-linux-x64-gnu-0.1.0.tgz')
+const rootVersion = JSON.parse(await readFile(join(packageDirectory, 'package.json'), 'utf8')).version
+const platformVersion = JSON.parse(await readFile(join(platformDirectory, 'package.json'), 'utf8')).version
+const rootTarball = join(tarballs, `worsier-${rootVersion}.tgz`)
+const platformTarball = join(tarballs, `worsier-linux-x64-gnu-${platformVersion}.tgz`)
 const project = join(temporary, 'project')
 run('mkdir', ['-p', project])
 await writeFile(join(project, 'package.json'), '{"type":"module","private":true}\n')
