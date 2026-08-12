@@ -49,14 +49,14 @@ fn supports_stdout_stdin_check_and_atomic_write() {
     write(&directory.path().join("worsier.jsonc"), "{}");
     write(
         &directory.path().join("sample.ts"),
-        "const value={answer:42};",
+        "import{answer,type Value}from'pkg';const value={answer:42};",
     );
 
     let stdout = command(directory.path()).arg("sample.ts").output().unwrap();
     assert!(stdout.status.success());
     assert_eq!(
         String::from_utf8(stdout.stdout).unwrap(),
-        "const value = { answer: 42 };\n"
+        "import { answer, type Value } from 'pkg';\n\nconst value={answer:42};"
     );
 
     let check = command(directory.path())
@@ -66,7 +66,7 @@ fn supports_stdout_stdin_check_and_atomic_write() {
     assert_eq!(check.status.code(), Some(1));
     assert_eq!(
         fs::read_to_string(directory.path().join("sample.ts")).unwrap(),
-        "const value={answer:42};"
+        "import{answer,type Value}from'pkg';const value={answer:42};"
     );
 
     let write_result = command(directory.path())
@@ -76,7 +76,7 @@ fn supports_stdout_stdin_check_and_atomic_write() {
     assert!(write_result.status.success());
     assert_eq!(
         fs::read_to_string(directory.path().join("sample.ts")).unwrap(),
-        "const value = { answer: 42 };\n"
+        "import { answer, type Value } from 'pkg';\n\nconst value={answer:42};"
     );
     assert!(
         command(directory.path())
@@ -96,13 +96,13 @@ fn supports_stdout_stdin_check_and_atomic_write() {
         .stdin
         .take()
         .unwrap()
-        .write_all(b"const stdinValue=[1,2];")
+        .write_all(b"import{stdinValue}from'pkg';const raw=[1,2];")
         .unwrap();
     let stdin = child.wait_with_output().unwrap();
     assert!(stdin.status.success());
     assert_eq!(
         String::from_utf8(stdin.stdout).unwrap(),
-        "const stdinValue = [1, 2];\n"
+        "import { stdinValue } from 'pkg';\n\nconst raw=[1,2];"
     );
 }
 
@@ -111,15 +111,15 @@ fn nearest_config_wins_and_explicit_config_disables_discovery() {
     let directory = tempfile::tempdir().unwrap();
     write(
         &directory.path().join("worsier.jsonc"),
-        r#"{"quoteStyle":"double"}"#,
+        r#"{"lineWidth":120}"#,
     );
     write(
         &directory.path().join("nested/worsier.jsonc"),
-        r#"{"quoteStyle":"single"}"#,
+        r#"{"lineWidth":20}"#,
     );
     write(
         &directory.path().join("nested/sample.ts"),
-        "const value=\"text\";",
+        "import{one,two}from'package';",
     );
 
     let nearest = command(directory.path())
@@ -127,10 +127,9 @@ fn nearest_config_wins_and_explicit_config_disables_discovery() {
         .output()
         .unwrap();
     assert!(nearest.status.success());
-    assert!(
-        String::from_utf8(nearest.stdout)
-            .unwrap()
-            .contains("'text'")
+    assert_eq!(
+        String::from_utf8(nearest.stdout).unwrap(),
+        "import {\n  one,\n  two\n} from 'package';"
     );
 
     let explicit = command(directory.path())
@@ -138,10 +137,9 @@ fn nearest_config_wins_and_explicit_config_disables_discovery() {
         .output()
         .unwrap();
     assert!(explicit.status.success());
-    assert!(
-        String::from_utf8(explicit.stdout)
-            .unwrap()
-            .contains("\"text\"")
+    assert_eq!(
+        String::from_utf8(explicit.stdout).unwrap(),
+        "import { one, two } from 'package';"
     );
 }
 
@@ -150,13 +148,21 @@ fn configuration_errors_include_the_nested_json_path() {
     let directory = tempfile::tempdir().unwrap();
     write(
         &directory.path().join("worsier.jsonc"),
-        r#"{"objects":{"unknown":true}}"#,
+        r#"{"rules":{"unknown":true}}"#,
     );
     write(&directory.path().join("sample.ts"), "const value=1;");
 
     let output = command(directory.path()).arg("sample.ts").output().unwrap();
     assert_eq!(output.status.code(), Some(2));
-    assert!(stderr(&output).contains("objects.unknown"));
+    assert!(stderr(&output).contains("rules.unknown"));
+
+    write(
+        &directory.path().join("worsier.jsonc"),
+        r#"{"quoteStyle":"single"}"#,
+    );
+    let removed = command(directory.path()).arg("sample.ts").output().unwrap();
+    assert_eq!(removed.status.code(), Some(2));
+    assert!(stderr(&removed).contains("quoteStyle"));
 }
 
 #[test]
@@ -198,7 +204,7 @@ fn parse_errors_do_not_modify_files_and_unicode_paths_work() {
     assert_eq!(fs::read_to_string(&invalid).unwrap(), "const value = @;");
 
     let unicode = directory.path().join("папка с пробелом/файл.ts");
-    write(&unicode, "const value=[1,2];");
+    write(&unicode, "import{value}from'pkg';const raw=[1,2];");
     let written = command(directory.path())
         .arg("--write")
         .arg("папка с пробелом/файл.ts")
@@ -207,6 +213,6 @@ fn parse_errors_do_not_modify_files_and_unicode_paths_work() {
     assert!(written.status.success(), "{}", stderr(&written));
     assert_eq!(
         fs::read_to_string(unicode).unwrap(),
-        "const value = [1, 2];\n"
+        "import { value } from 'pkg';\n\nconst raw=[1,2];"
     );
 }

@@ -13,11 +13,9 @@ pnpm --filter worsier build:native
 pnpm benchmark:node
 ```
 
-The Criterion suite measures parsing, node/comment indexing, IR generation,
-printing, formatting with `verifyAst: false`, formatting with `verifyAst: true`,
-and a mixed TypeScript/TSX project. It covers small, 50 KB, and 1 MB generated
-inputs. The Node.js benchmark measures API and CLI cold starts in fresh
-processes, separately from Rust throughput.
+The Criterion suite measures parsing, import rewriting, and AST verification. It covers import-heavy
+small, 50 KB, and 1 MB generated inputs. The Node.js benchmark measures API and CLI cold starts in
+fresh processes, separately from Rust throughput.
 
 No regression threshold is enforced for v0.1. A committed threshold should be
 introduced only after release measurements establish a stable baseline across

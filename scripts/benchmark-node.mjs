@@ -15,7 +15,7 @@ if (!Number.isSafeInteger(iterations) || iterations < 1) {
 
 const apiProgram = [
   `import { format } from ${JSON.stringify(packageUrl)}`,
-  "await format('cold-start.ts', 'const value={items:[1,2,3]};', {})"
+  `await format('cold-start.ts', "import{one,type Two}from'pkg';const value={items:[1,2,3]};", {})`
 ].join('; ')
 
 benchmark('node_api_cold_start', ['--input-type=module', '--eval', apiProgram])

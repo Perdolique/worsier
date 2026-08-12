@@ -8,8 +8,12 @@ import test from 'node:test'
 import { format } from '../dist/index.js'
 
 test('formats through the asynchronous native API', async () => {
-  const output = await format('sample.ts', 'const value={items:[1,2]};', {})
-  assert.equal(output, 'const value = { items: [1, 2] };\n')
+  const source = "import{one,type Two}from'pkg';const value={items:[1,2]};"
+  const output = await format('sample.ts', source, {})
+  assert.equal(output, "import { one, type Two } from 'pkg';\n\nconst value={items:[1,2]};")
+
+  const disabled = await format('sample.ts', source, { rules: { imports: false } })
+  assert.equal(disabled, source)
 })
 
 test('maps native failures to stable error codes', async () => {
@@ -20,8 +24,8 @@ test('maps native failures to stable error codes', async () => {
     code: 'CONFIG_ERROR'
   })
   await assert.rejects(
-    format('sample.ts', 'const value = 1;', { objects: { unknown: true } }),
-    (error) => error.code === 'CONFIG_ERROR' && error.message.includes('objects.unknown')
+    format('sample.ts', 'const value = 1;', { quoteStyle: 'single' }),
+    (error) => error.code === 'CONFIG_ERROR' && error.message.includes('quoteStyle')
   )
 })
 
