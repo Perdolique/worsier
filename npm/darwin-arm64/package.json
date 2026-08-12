@@ -1,13 +1,20 @@
 {
   "name": "worsier-darwin-arm64",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Perdolique/worsier.git"
   },
-  "os": ["darwin"],
-  "cpu": ["arm64"],
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
   "main": "worsier.darwin-arm64.node",
-  "files": ["worsier.darwin-arm64.node", "LICENSE"]
+  "files": [
+    "worsier.darwin-arm64.node",
+    "LICENSE"
+  ]
 }

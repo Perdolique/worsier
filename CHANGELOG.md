@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.2](https://github.com/Perdolique/worsier/compare/v1.0.1...v1.0.2) (2026-08-12)
+
+
+### Bug Fixes
+
+* **all:** harden formatter and release flow ([50063f1](https://github.com/Perdolique/worsier/commit/50063f1a4872e5f226c57582916e1d46b02921da))
+* harden formatter and release pipeline ([c9541bc](https://github.com/Perdolique/worsier/commit/c9541bc38e35a4a9928165bc21e99471aa078e7b))
+
 ## [1.0.1](https://github.com/Perdolique/worsier/compare/v1.0.0...v1.0.1) (2026-08-12)
 
 
