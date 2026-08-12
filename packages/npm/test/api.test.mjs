@@ -12,7 +12,24 @@ test('formats through the asynchronous native API', async () => {
   const output = await format('sample.ts', source, {})
   assert.equal(output, "import { one, type Two } from 'pkg';\n\nconst value={items:[1,2]};")
 
-  const disabled = await format('sample.ts', source, { rules: { imports: false } })
+  const variablesOnly = await format('sample.ts', source, {
+    rules: { imports: false }
+  })
+  assert.equal(
+    variablesOnly,
+    "import{one,type Two}from'pkg';\n\nconst value={items:[1,2]};"
+  )
+
+  const importsOnly = await format(
+    'sample.ts',
+    "import{value}from'pkg';const first=1;let second=2;",
+    { rules: { variables: false } }
+  )
+  assert.equal(importsOnly, "import { value } from 'pkg';\n\nconst first=1;let second=2;")
+
+  const disabled = await format('sample.ts', source, {
+    rules: { imports: false, variables: false }
+  })
   assert.equal(disabled, source)
 })
 

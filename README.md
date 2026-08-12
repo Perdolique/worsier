@@ -1,7 +1,8 @@
 # Worsier
 
-Worsier is a focused JavaScript, TypeScript, JSX, and TSX import formatter backed by a Rust engine.
-It rewrites static imports and their blank-line boundaries while preserving all other source text.
+Worsier is a focused JavaScript, TypeScript, JSX, and TSX formatter backed by a Rust engine.
+It formats static imports and the boundaries around runtime variable declarations while preserving
+the declarations themselves.
 Node.js 24.0.0 or newer is required for the CLI and programmatic API.
 
 ```sh
@@ -19,7 +20,7 @@ import { format } from 'worsier'
 
 const output = await format('example.ts', "import{answer,type Value}from'pkg'", {
   lineWidth: 120,
-  rules: { imports: true }
+  rules: { imports: true, variables: true }
 })
 ```
 

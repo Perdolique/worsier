@@ -3,7 +3,8 @@
   "lineWidth": 120,
   "verifyAst": true,
   "rules": {
-    "imports": true
+    "imports": true,
+    "variables": true
   },
   "ignorePatterns": []
 }

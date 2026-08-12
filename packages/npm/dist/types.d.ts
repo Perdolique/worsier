@@ -7,4 +7,5 @@ export interface FormatConfig {
 }
 export interface RulesConfig {
     imports?: boolean;
+    variables?: boolean;
 }

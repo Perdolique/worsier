@@ -31,11 +31,15 @@ impl Default for FormatConfig {
 #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
 pub struct RulesConfig {
     pub imports: bool,
+    pub variables: bool,
 }
 
 impl Default for RulesConfig {
     fn default() -> Self {
-        Self { imports: true }
+        Self {
+            imports: true,
+            variables: true,
+        }
     }
 }
 
@@ -58,6 +62,11 @@ impl ResolvedConfig {
     #[must_use]
     pub const fn imports_enabled(&self) -> bool {
         self.value.rules.imports
+    }
+
+    #[must_use]
+    pub const fn variables_enabled(&self) -> bool {
+        self.value.rules.variables
     }
 
     #[must_use]
@@ -91,6 +100,7 @@ mod tests {
         assert_eq!(config.line_width(), 120);
         assert!(config.verify_ast());
         assert!(config.imports_enabled());
+        assert!(config.variables_enabled());
     }
 
     #[test]

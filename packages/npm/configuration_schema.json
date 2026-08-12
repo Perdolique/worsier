@@ -25,7 +25,8 @@
     "rules": {
       "$ref": "#/$defs/RulesConfig",
       "default": {
-        "imports": true
+        "imports": true,
+        "variables": true
       }
     },
     "verifyAst": {
@@ -39,6 +40,10 @@
       "type": "object",
       "properties": {
         "imports": {
+          "type": "boolean",
+          "default": true
+        },
+        "variables": {
           "type": "boolean",
           "default": true
         }
