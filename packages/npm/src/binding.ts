@@ -42,7 +42,12 @@ export function loadBinding(): NativeBinding {
     return binding
   }
 
-  const suffix = process.platform === 'linux' ? `-${libc()}` : process.platform === 'win32' ? '-msvc' : ''
+  let suffix = ''
+  if (process.platform === 'linux') {
+    suffix = `-${libc()}`
+  } else if (process.platform === 'win32') {
+    suffix = '-msvc'
+  }
   const target = `${process.platform}-${process.arch}${suffix}`
   const packageName = platformPackages[target]
 

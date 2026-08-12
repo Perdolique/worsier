@@ -1,6 +1,6 @@
 {
   "name": "worsier-linux-x64-gnu",
-  "version": "0.1.0",
+  "version": "1.0.1",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -10,5 +10,5 @@
   "cpu": ["x64"],
   "libc": ["glibc"],
   "main": "worsier.linux-x64-gnu.node",
-  "files": ["worsier.linux-x64-gnu.node"]
+  "files": ["worsier.linux-x64-gnu.node", "LICENSE"]
 }

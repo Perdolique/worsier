@@ -1,6 +1,6 @@
 {
   "name": "worsier-darwin-x64",
-  "version": "0.1.0",
+  "version": "1.0.1",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -9,5 +9,5 @@
   "os": ["darwin"],
   "cpu": ["x64"],
   "main": "worsier.darwin-x64.node",
-  "files": ["worsier.darwin-x64.node"]
+  "files": ["worsier.darwin-x64.node", "LICENSE"]
 }

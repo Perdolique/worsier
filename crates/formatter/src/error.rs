@@ -49,3 +49,38 @@ impl FormatError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::FormatError;
+
+    #[test]
+    fn exposes_stable_codes_for_every_error_variant() {
+        let errors = [
+            (
+                FormatError::Parse {
+                    diagnostics: String::new(),
+                },
+                "PARSE_ERROR",
+            ),
+            (
+                FormatError::UnsupportedSource {
+                    message: String::new(),
+                },
+                "UNSUPPORTED_SOURCE",
+            ),
+            (FormatError::invalid_config("invalid"), "CONFIG_ERROR"),
+            (
+                FormatError::Verification {
+                    message: String::new(),
+                },
+                "VERIFICATION_ERROR",
+            ),
+            (FormatError::internal("internal"), "INTERNAL_ERROR"),
+        ];
+
+        for (error, expected) in errors {
+            assert_eq!(error.code(), expected);
+        }
+    }
+}

@@ -190,6 +190,122 @@ fn directory_walk_respects_gitignore_config_ignores_and_sorts_diagnostics() {
 }
 
 #[test]
+fn nested_config_ignores_are_relative_to_that_config() {
+    let directory = tempfile::tempdir().unwrap();
+    write(&directory.path().join("worsier.jsonc"), "{}");
+    write(
+        &directory.path().join("nested/worsier.jsonc"),
+        r#"{"ignorePatterns":["ignored/**"]}"#,
+    );
+    let ignored = directory.path().join("nested/ignored/sample.ts");
+    write(&ignored, "import{ignored}from'pkg';");
+    let included = directory.path().join("nested/included.ts");
+    write(&included, "import{included}from'pkg';");
+
+    let output = command(directory.path())
+        .args(["--write", "."])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(
+        fs::read_to_string(ignored).unwrap(),
+        "import{ignored}from'pkg';"
+    );
+    assert_eq!(
+        fs::read_to_string(included).unwrap(),
+        "import { included } from 'pkg';"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn explicit_symbolic_links_are_rejected_without_modifying_the_target() {
+    use std::os::unix::fs::symlink;
+
+    let directory = tempfile::tempdir().unwrap();
+    write(&directory.path().join("worsier.jsonc"), "{}");
+    let target = directory.path().join("target.ts");
+    let link = directory.path().join("link.ts");
+    write(&target, "import{value}from'pkg';");
+    symlink("target.ts", &link).unwrap();
+
+    let output = command(directory.path())
+        .args(["--write", "link.ts"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stderr(&output).contains("symbolic link"));
+    assert!(fs::symlink_metadata(link).unwrap().file_type().is_symlink());
+    assert_eq!(
+        fs::read_to_string(target).unwrap(),
+        "import{value}from'pkg';"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn atomic_write_preserves_permissions_and_extended_attributes() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let directory = tempfile::tempdir().unwrap();
+    write(&directory.path().join("worsier.jsonc"), "{}");
+    let source = directory.path().join("sample.ts");
+    write(&source, "import{value}from'pkg';");
+    fs::set_permissions(&source, fs::Permissions::from_mode(0o640)).unwrap();
+    let attribute = if cfg!(target_os = "macos") {
+        "com.perdolique.worsier-test"
+    } else {
+        "user.worsier-test"
+    };
+    xattr::set(&source, attribute, b"preserved").unwrap();
+    let before = fs::metadata(&source).unwrap();
+
+    let output = command(directory.path())
+        .args(["--write", "sample.ts"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+
+    let after = fs::metadata(&source).unwrap();
+    assert_eq!(after.permissions().mode() & 0o777, 0o640);
+    assert_eq!((after.uid(), after.gid()), (before.uid(), before.gid()));
+    assert_eq!(
+        xattr::get(source, attribute).unwrap().unwrap(),
+        b"preserved"
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn atomic_write_preserves_access_control_lists() {
+    let directory = tempfile::tempdir().unwrap();
+    write(&directory.path().join("worsier.jsonc"), "{}");
+    let source = directory.path().join("protected.ts");
+    write(&source, "import{value}from'pkg';");
+
+    let chmod = Command::new("chmod")
+        .args(["+a", "nobody deny read"])
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(chmod.status.success(), "{}", stderr(&chmod));
+
+    let output = command(directory.path())
+        .args(["--write", "protected.ts"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+
+    let listing = Command::new("ls").arg("-le").arg(&source).output().unwrap();
+    assert!(listing.status.success(), "{}", stderr(&listing));
+    assert!(
+        String::from_utf8(listing.stdout)
+            .unwrap()
+            .contains("user:nobody deny read")
+    );
+}
+
+#[test]
 fn parse_errors_do_not_modify_files_and_unicode_paths_work() {
     let directory = tempfile::tempdir().unwrap();
     write(&directory.path().join("worsier.jsonc"), "{}");
@@ -215,4 +331,27 @@ fn parse_errors_do_not_modify_files_and_unicode_paths_work() {
         fs::read_to_string(unicode).unwrap(),
         "import { value } from 'pkg';\n\nconst raw=[1,2];"
     );
+}
+
+#[test]
+fn accepts_every_documented_source_extension() {
+    let directory = tempfile::tempdir().unwrap();
+    write(&directory.path().join("worsier.jsonc"), "{}");
+    let cases = [
+        ("sample.js", "const element=<div/>;"),
+        ("sample.mjs", "const value=1;"),
+        ("sample.cjs", "const value=1;"),
+        ("sample.jsx", "const element=<div/>;"),
+        ("sample.ts", "const value:number=1;"),
+        ("sample.mts", "const value:number=1;"),
+        ("sample.cts", "const value:number=1;"),
+        ("sample.tsx", "const element: JSX.Element=<div/>;"),
+    ];
+
+    for (file_name, source) in cases {
+        write(&directory.path().join(file_name), source);
+        let output = command(directory.path()).arg(file_name).output().unwrap();
+        assert!(output.status.success(), "{file_name}: {}", stderr(&output));
+        assert_eq!(String::from_utf8(output.stdout).unwrap(), source);
+    }
 }

@@ -23,6 +23,18 @@ jobs:
       - run: cargo check --manifest-path fuzz/Cargo.toml
       - run: cargo bench -p worsier-formatter --features benchmarking --no-run
 
+  cli-platform:
+    strategy:
+      matrix:
+        runner: [macos-15, windows-2025]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.95.0
+      - run: cargo test -p worsier-cli
+
   npm:
     runs-on: ubuntu-24.04
     steps:
@@ -33,9 +45,10 @@ jobs:
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v4
         with:
-          node-version: 22.12.0
+          node-version: 24.0.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm check:versions
       - run: pnpm generate
       - run: git diff --exit-code -- packages/npm/configuration_schema.json packages/npm/src/types.ts
       - run: pnpm --filter worsier build

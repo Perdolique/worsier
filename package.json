@@ -5,7 +5,8 @@
   "scripts": {
     "benchmark:node": "node scripts/benchmark-node.mjs",
     "build": "pnpm --filter worsier build",
-    "check": "cargo test --workspace && pnpm --filter worsier test",
+    "check": "pnpm check:versions && cargo test --workspace && pnpm --filter worsier build && pnpm --filter worsier build:native && pnpm --filter worsier test && pnpm --filter worsier test:packed",
+    "check:versions": "node scripts/check-versions.mjs",
     "generate": "cargo run -p worsier-formatter --example generate_schema && node scripts/generate-types.mjs"
   },
   "devDependencies": {

@@ -1,47 +1,31 @@
 use std::path::PathBuf;
 
-use napi::bindgen_prelude::{AsyncTask, Env, Task};
+use napi::bindgen_prelude::spawn_blocking;
 use napi::{Error, Result, Status};
 use napi_derive::napi;
 use worsier_formatter::{FormatConfig, format_text, resolve_config};
 
-pub struct FormatTask {
-    file_name: PathBuf,
-    source_text: String,
-    config_json: String,
-}
-
-impl Task for FormatTask {
-    type Output = String;
-    type JsValue = String;
-
-    fn compute(&mut self) -> Result<Self::Output> {
-        let mut deserializer = serde_json::Deserializer::from_str(&self.config_json);
-        let raw: FormatConfig = serde_path_to_error::deserialize(&mut deserializer)
-            .map_err(|error| native_error("CONFIG_ERROR", error))?;
-        let config = resolve_config(raw).map_err(format_error)?;
-        let output =
-            format_text(&self.file_name, &self.source_text, &config).map_err(format_error)?;
-        Ok(output.unwrap_or_else(|| self.source_text.clone()))
-    }
-
-    fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
-        Ok(output)
-    }
-}
-
 #[napi]
-#[must_use]
-pub fn format(
-    file_name: String,
-    source_text: String,
-    config_json: String,
-) -> AsyncTask<FormatTask> {
-    AsyncTask::new(FormatTask {
-        file_name: PathBuf::from(file_name),
-        source_text,
-        config_json,
-    })
+/// Formats source text on Tokio's blocking pool rather than Node's shared libuv pool.
+///
+/// # Errors
+///
+/// Rejects with a stable Worsier error code when configuration, parsing, verification, or the
+/// background worker fails.
+pub async fn format(file_name: String, source_text: String, config_json: String) -> Result<String> {
+    spawn_blocking(move || format_in_worker(file_name, source_text, &config_json))
+        .await
+        .map_err(|error| native_error("INTERNAL_ERROR", error))?
+}
+
+fn format_in_worker(file_name: String, source_text: String, config_json: &str) -> Result<String> {
+    let mut deserializer = serde_json::Deserializer::from_str(config_json);
+    let raw: FormatConfig = serde_path_to_error::deserialize(&mut deserializer)
+        .map_err(|error| native_error("CONFIG_ERROR", error))?;
+    let config = resolve_config(raw).map_err(format_error)?;
+    let file_name = PathBuf::from(file_name);
+    let output = format_text(&file_name, &source_text, &config).map_err(format_error)?;
+    Ok(output.unwrap_or(source_text))
 }
 
 #[napi]

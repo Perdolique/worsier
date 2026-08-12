@@ -1,9 +1,9 @@
+use std::collections::HashMap;
 use std::ffi::OsString;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::{collections::HashMap, mem};
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
@@ -110,7 +110,7 @@ fn run_args(args: &Args) -> Result<i32> {
         if explicit_single_file {
             bail!(
                 "{} is not a supported JavaScript or TypeScript file",
-                args.paths[0].display()
+                escaped_path(&args.paths[0])
             );
         }
         return Ok(0);
@@ -128,7 +128,7 @@ fn run_args(args: &Args) -> Result<i32> {
             Some(config) => Arc::clone(config),
             None => config_cache.discover(&candidate.path, args.no_verify)?,
         };
-        if candidate.discovered && loaded.is_ignored(&candidate.path) {
+        if candidate.discovered && loaded.is_ignored(&candidate.path)? {
             continue;
         }
         jobs.push(Job {
@@ -137,7 +137,22 @@ fn run_args(args: &Args) -> Result<i32> {
         });
     }
 
-    let run = || jobs.par_iter().map(format_job).collect::<Vec<_>>();
+    run_jobs(args, &jobs)
+}
+
+fn run_jobs(args: &Args, jobs: &[Job]) -> Result<i32> {
+    let mode = if args.write {
+        JobMode::Write
+    } else if args.check {
+        JobMode::Check
+    } else {
+        JobMode::Stdout
+    };
+    let run = || {
+        jobs.par_iter()
+            .map(|job| format_job(job, mode))
+            .collect::<Vec<_>>()
+    };
     let mut results = if let Some(threads) = args.threads {
         rayon::ThreadPoolBuilder::new()
             .num_threads(threads)
@@ -153,24 +168,23 @@ fn run_args(args: &Args) -> Result<i32> {
     for result in results {
         match result {
             JobResult::Clean { source, .. } => {
-                if !args.check && !args.write {
+                if let Some(source) = source {
                     print!("{source}");
                 }
             }
             JobResult::Changed { path, output } => {
                 changed = true;
                 if args.write {
-                    atomic_write(&path, output.as_bytes())?;
-                    eprintln!("Formatted {}", path.display());
+                    eprintln!("Formatted {}", escaped_path(&path));
                 } else if args.check {
-                    eprintln!("Would format {}", path.display());
-                } else {
+                    eprintln!("Would format {}", escaped_path(&path));
+                } else if let Some(output) = output {
                     print!("{output}");
                 }
             }
             JobResult::Failed { path, error } => {
                 failed = true;
-                eprintln!("{}: {error:#}", path.display());
+                eprintln!("{}: {error:#}", escaped_path(&path));
             }
         }
     }
@@ -210,16 +224,24 @@ fn format_stdin(args: &Args, file_name: &Path) -> Result<i32> {
 
 fn init_config(directory: &Path) -> Result<()> {
     let path = directory.join(CONFIG_FILE);
-    if path.exists() {
-        bail!("{} already exists", path.display());
-    }
     let config = FormatConfig {
         schema: Some("./node_modules/worsier/configuration_schema.json".to_owned()),
         ..FormatConfig::default()
     };
     let json = serde_json::to_string_pretty(&config)?;
-    fs::write(&path, format!("{json}\n"))?;
-    println!("Created {}", path.display());
+    let file = OpenOptions::new().write(true).create_new(true).open(&path);
+    let mut file = match file {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            bail!("{} already exists", escaped_path(&path));
+        }
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to create {}", escaped_path(&path)));
+        }
+    };
+    file.write_all(format!("{json}\n").as_bytes())?;
+    file.sync_all()?;
+    println!("Created {}", escaped_path(&path));
     Ok(())
 }
 
@@ -232,6 +254,12 @@ struct Candidate {
 fn collect_files(paths: &[PathBuf]) -> Result<Vec<Candidate>> {
     let mut files = Vec::new();
     for path in paths {
+        if fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+            bail!(
+                "{} is a symbolic link; format its target explicitly",
+                escaped_path(path)
+            );
+        }
         if path.is_file() {
             if is_supported(path) {
                 files.push(Candidate {
@@ -241,13 +269,13 @@ fn collect_files(paths: &[PathBuf]) -> Result<Vec<Candidate>> {
             } else {
                 bail!(
                     "{} is not a supported JavaScript or TypeScript file",
-                    path.display()
+                    escaped_path(path)
                 );
             }
             continue;
         }
         if !path.is_dir() {
-            bail!("{} does not exist", path.display());
+            bail!("{} does not exist", escaped_path(path));
         }
 
         let walker = WalkBuilder::new(path)
@@ -260,7 +288,7 @@ fn collect_files(paths: &[PathBuf]) -> Result<Vec<Candidate>> {
             })
             .build();
         for entry in walker {
-            let entry = entry.with_context(|| format!("failed to walk {}", path.display()))?;
+            let entry = entry.with_context(|| format!("failed to walk {}", escaped_path(path)))?;
             if entry.file_type().is_some_and(|kind| kind.is_file()) && is_supported(entry.path()) {
                 files.push(Candidate {
                     path: entry.into_path(),
@@ -270,9 +298,10 @@ fn collect_files(paths: &[PathBuf]) -> Result<Vec<Candidate>> {
         }
     }
     files.sort_by(|left, right| left.path.cmp(&right.path));
-    files.dedup_by(|right, left| {
-        if left.path == right.path {
-            left.discovered &= mem::take(&mut right.discovered);
+    files.dedup_by(|duplicate, retained| {
+        if retained.path == duplicate.path {
+            // Vec::dedup_by passes the later duplicate first. Any explicit occurrence wins.
+            retained.discovered = retained.discovered && duplicate.discovered;
             true
         } else {
             false
@@ -315,7 +344,7 @@ impl ConfigCache {
         };
         let mut current = start
             .canonicalize()
-            .with_context(|| format!("failed to resolve {}", start.display()))?;
+            .with_context(|| format!("failed to resolve {}", escaped_path(start)))?;
         let mut visited = Vec::new();
 
         let loaded = loop {
@@ -331,7 +360,7 @@ impl ConfigCache {
             if at_vcs_root || !current.pop() {
                 bail!(
                     "no {CONFIG_FILE} found for {}; run `npx worsier --init`",
-                    file.display()
+                    escaped_path(file)
                 );
             }
         };
@@ -349,29 +378,46 @@ struct LoadedConfig {
 }
 
 impl LoadedConfig {
-    fn is_ignored(&self, path: &Path) -> bool {
-        self.ignore
-            .matched_path_or_any_parents(path, false)
-            .is_ignore()
+    fn is_ignored(&self, path: &Path) -> Result<bool> {
+        let absolute_path = path
+            .canonicalize()
+            .with_context(|| format!("failed to resolve {}", escaped_path(path)))?;
+        Ok(self
+            .ignore
+            .matched_path_or_any_parents(absolute_path, false)
+            .is_ignore())
     }
 }
 
 fn load_config(path: &Path, no_verify: bool) -> Result<Arc<LoadedConfig>> {
     let absolute_path = path
         .canonicalize()
-        .with_context(|| format!("failed to resolve configuration {}", path.display()))?;
-    let source = fs::read_to_string(&absolute_path)
-        .with_context(|| format!("failed to read configuration {}", absolute_path.display()))?;
+        .with_context(|| format!("failed to resolve configuration {}", escaped_path(path)))?;
+    let source = fs::read_to_string(&absolute_path).with_context(|| {
+        format!(
+            "failed to read configuration {}",
+            escaped_path(&absolute_path)
+        )
+    })?;
     let value: serde_json::Value =
         jsonc_parser::parse_to_serde_value(&source, &jsonc_parser::ParseOptions::default())
-            .with_context(|| format!("invalid JSONC configuration {}", absolute_path.display()))?;
-    let mut config: FormatConfig = serde_path_to_error::deserialize(value)
-        .with_context(|| format!("invalid configuration value in {}", absolute_path.display()))?;
+            .with_context(|| {
+                format!(
+                    "invalid JSONC configuration {}",
+                    escaped_path(&absolute_path)
+                )
+            })?;
+    let mut config: FormatConfig = serde_path_to_error::deserialize(value).with_context(|| {
+        format!(
+            "invalid configuration value in {}",
+            escaped_path(&absolute_path)
+        )
+    })?;
     if no_verify {
         config.verify_ast = false;
     }
     let resolved = resolve_config(config)
-        .with_context(|| format!("invalid configuration {}", absolute_path.display()))?;
+        .with_context(|| format!("invalid configuration {}", escaped_path(&absolute_path)))?;
     let directory = absolute_path.parent().unwrap_or_else(|| Path::new("."));
     let mut ignore = GitignoreBuilder::new(directory);
     for pattern in resolved.ignore_patterns() {
@@ -390,15 +436,31 @@ struct Job {
     config: Arc<ResolvedConfig>,
 }
 
-enum JobResult {
-    Clean { path: PathBuf, source: String },
-    Changed { path: PathBuf, output: String },
-    Failed { path: PathBuf, error: anyhow::Error },
+#[derive(Clone, Copy)]
+enum JobMode {
+    Check,
+    Write,
+    Stdout,
 }
 
-fn format_job(job: &Job) -> JobResult {
+enum JobResult {
+    Clean {
+        path: PathBuf,
+        source: Option<String>,
+    },
+    Changed {
+        path: PathBuf,
+        output: Option<String>,
+    },
+    Failed {
+        path: PathBuf,
+        error: anyhow::Error,
+    },
+}
+
+fn format_job(job: &Job, mode: JobMode) -> JobResult {
     let source = match fs::read_to_string(&job.path)
-        .with_context(|| format!("failed to read {}", job.path.display()))
+        .with_context(|| format!("failed to read {}", escaped_path(&job.path)))
     {
         Ok(source) => source,
         Err(error) => {
@@ -410,13 +472,23 @@ fn format_job(job: &Job) -> JobResult {
     };
     let result = format_text(&job.path, &source, &job.config).map_err(anyhow::Error::from);
     match result {
-        Ok(Some(output)) => JobResult::Changed {
-            path: job.path.clone(),
-            output,
-        },
+        Ok(Some(output)) => {
+            if matches!(mode, JobMode::Write)
+                && let Err(error) = atomic_write(&job.path, output.as_bytes())
+            {
+                return JobResult::Failed {
+                    path: job.path.clone(),
+                    error,
+                };
+            }
+            JobResult::Changed {
+                path: job.path.clone(),
+                output: matches!(mode, JobMode::Stdout).then_some(output),
+            }
+        }
         Ok(None) => JobResult::Clean {
             path: job.path.clone(),
-            source,
+            source: matches!(mode, JobMode::Stdout).then_some(source),
         },
         Err(error) => JobResult::Failed {
             path: job.path.clone(),
@@ -434,28 +506,162 @@ fn result_path(result: &JobResult) -> &Path {
 }
 
 fn atomic_write(path: &Path, output: &[u8]) -> Result<()> {
+    atomic_write_with_before_replace(path, output, || Ok(()))
+}
+
+fn atomic_write_with_before_replace(
+    path: &Path,
+    output: &[u8],
+    before_replace: impl FnOnce() -> Result<()>,
+) -> Result<()> {
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    let permissions = fs::metadata(path)?.permissions();
     let mut temporary = NamedTempFile::new_in(parent)?;
-    temporary.as_file_mut().set_permissions(permissions)?;
     temporary.write_all(output)?;
+    copy_file_metadata(path, temporary.path(), temporary.as_file())?;
     temporary.as_file_mut().sync_all()?;
-    temporary
-        .persist(path)
-        .map_err(|error| error.error)
-        .with_context(|| format!("failed to replace {}", path.display()))?;
-    File::open(parent)?.sync_all()?;
+    before_replace()?;
+
+    #[cfg(windows)]
+    {
+        replace_file_windows(path, temporary)
+    }
+
+    #[cfg(unix)]
+    {
+        temporary
+            .persist(path)
+            .map_err(|error| error.error)
+            .with_context(|| format!("failed to replace {}", escaped_path(path)))?;
+        File::open(parent)?.sync_all()?;
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[allow(
+    unsafe_code,
+    reason = "copyfile(3) is the platform API that preserves ACLs and extended metadata"
+)]
+fn copy_file_metadata(path: &Path, _temporary_path: &Path, temporary: &File) -> Result<()> {
+    use std::os::fd::AsRawFd;
+
+    let source = File::open(path)?;
+    // SAFETY: both descriptors remain open for the duration of fcopyfile, the state pointer is
+    // null as permitted by copyfile(3), and COPYFILE_METADATA copies no file contents.
+    let result = unsafe {
+        libc::fcopyfile(
+            source.as_raw_fd(),
+            temporary.as_raw_fd(),
+            std::ptr::null_mut(),
+            libc::COPYFILE_METADATA,
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error()).context("failed to preserve file metadata")
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+#[allow(
+    unsafe_code,
+    reason = "fchown is required to preserve the original file owner before atomic replacement"
+)]
+fn copy_file_metadata(path: &Path, temporary_path: &Path, temporary: &File) -> Result<()> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = fs::metadata(path)?;
+    // SAFETY: the descriptor is owned by `temporary` and uid/gid come directly from metadata.
+    let result = unsafe { libc::fchown(temporary.as_raw_fd(), metadata.uid(), metadata.gid()) };
+    if result != 0 {
+        return Err(io::Error::last_os_error()).context("failed to preserve file ownership");
+    }
+    temporary.set_permissions(metadata.permissions())?;
+    for name in xattr::list(path)? {
+        if let Some(value) = xattr::get(path, &name)? {
+            xattr::set(temporary_path, &name, &value)?;
+        }
+    }
     Ok(())
+}
+
+#[cfg(windows)]
+fn copy_file_metadata(_path: &Path, _temporary_path: &Path, _temporary: &File) -> Result<()> {
+    // ReplaceFileW merges the original file's attributes, ACLs, encryption, and named streams.
+    Ok(())
+}
+
+#[cfg(windows)]
+#[allow(
+    unsafe_code,
+    reason = "ReplaceFileW is the platform API that atomically preserves Windows file metadata"
+)]
+fn replace_file_windows(path: &Path, temporary: NamedTempFile) -> Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+
+    use windows_sys::Win32::Storage::FileSystem::ReplaceFileW;
+
+    let (replacement, replacement_path) = temporary.keep()?;
+    replacement.sync_all()?;
+    drop(replacement);
+    let replaced_wide = path
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let replacement_wide = replacement_path
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    // SAFETY: both paths are valid, nul-terminated UTF-16 buffers; optional pointers are null.
+    let result = unsafe {
+        ReplaceFileW(
+            replaced_wide.as_ptr(),
+            replacement_wide.as_ptr(),
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    };
+    if result == 0 {
+        let error = io::Error::last_os_error();
+        let _ = fs::remove_file(replacement_path);
+        return Err(error).with_context(|| format!("failed to replace {}", escaped_path(path)));
+    }
+
+    Ok(())
+}
+
+fn escaped_path(path: &Path) -> String {
+    let mut escaped = String::new();
+    for character in path.to_string_lossy().chars() {
+        if character.is_control() {
+            escaped.extend(character.escape_default());
+        } else {
+            escaped.push(character);
+        }
+    }
+    escaped
 }
 
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::sync::{Arc, Barrier};
+    use std::thread;
 
-    use super::{CONFIG_FILE, init_config, load_config_with_override};
+    use super::{
+        CONFIG_FILE, Job, JobMode, JobResult, atomic_write_with_before_replace, escaped_path,
+        format_job, init_config, load_config_with_override,
+    };
+    use worsier_formatter::{FormatConfig, resolve_config};
 
     #[test]
     fn init_writes_a_loadable_complete_config_without_overwriting() {
@@ -468,5 +674,80 @@ mod tests {
             "{\n  \"$schema\": \"./node_modules/worsier/configuration_schema.json\",\n  \"lineWidth\": 120,\n  \"verifyAst\": true,\n  \"rules\": {\n    \"imports\": true\n  },\n  \"ignorePatterns\": []\n}\n"
         );
         assert!(init_config(directory.path()).is_err());
+    }
+
+    #[test]
+    fn concurrent_init_has_exactly_one_winner() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = Arc::new(directory.path().to_owned());
+        let barrier = Arc::new(Barrier::new(16));
+        let handles = (0..16)
+            .map(|_| {
+                let path = Arc::clone(&path);
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    init_config(&path).is_ok()
+                })
+            })
+            .collect::<Vec<_>>();
+        let successes = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .filter(|success| *success)
+            .count();
+
+        assert_eq!(successes, 1);
+        assert!(load_config_with_override(&path.join(CONFIG_FILE), false).is_ok());
+    }
+
+    #[test]
+    fn check_jobs_do_not_retain_source_sized_payloads() {
+        let directory = tempfile::tempdir().unwrap();
+        let clean = directory.path().join("clean.ts");
+        fs::write(&clean, "import { value } from 'pkg';").unwrap();
+        let config = resolve_config(FormatConfig::default()).unwrap();
+        let clean_job = Job {
+            path: clean,
+            config: Arc::new(config.clone()),
+        };
+        assert!(matches!(
+            format_job(&clean_job, JobMode::Check),
+            JobResult::Clean { source: None, .. }
+        ));
+
+        let changed = directory.path().join("changed.ts");
+        fs::write(&changed, "import{value}from'pkg';").unwrap();
+        let changed_job = Job {
+            path: changed,
+            config: Arc::new(config),
+        };
+        assert!(matches!(
+            format_job(&changed_job, JobMode::Check),
+            JobResult::Changed { output: None, .. }
+        ));
+    }
+
+    #[test]
+    fn diagnostic_paths_escape_terminal_control_characters() {
+        assert_eq!(
+            escaped_path(std::path::Path::new("source\u{1b}[31m.ts")),
+            "source\\u{1b}[31m.ts"
+        );
+    }
+
+    #[test]
+    fn atomic_write_failure_before_replace_leaves_original_unchanged() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("sample.ts");
+        fs::write(&path, "original").unwrap();
+
+        let error = atomic_write_with_before_replace(&path, b"replacement", || {
+            Err(anyhow::anyhow!("injected failure"))
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("injected failure"));
+        assert_eq!(fs::read_to_string(path).unwrap(), "original");
     }
 }

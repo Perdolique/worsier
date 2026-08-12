@@ -20,7 +20,7 @@ fn formatter_benchmarks(criterion: &mut Criterion) {
         let source = source_with_size(bytes);
         group.throughput(Throughput::Bytes(source.len() as u64));
         group.bench_with_input(
-            BenchmarkId::new("parse", name),
+            BenchmarkId::new("single_parse", name),
             &source,
             |bencher, source| {
                 bencher.iter(|| {
@@ -29,7 +29,7 @@ fn formatter_benchmarks(criterion: &mut Criterion) {
             },
         );
         group.bench_with_input(
-            BenchmarkId::new("import_rewrite", name),
+            BenchmarkId::new("format_no_verify", name),
             &source,
             |bencher, source| {
                 bencher.iter(|| {
@@ -39,7 +39,7 @@ fn formatter_benchmarks(criterion: &mut Criterion) {
             },
         );
         group.bench_with_input(
-            BenchmarkId::new("verify", name),
+            BenchmarkId::new("parse_and_verify", name),
             &source,
             |bencher, source| {
                 bencher.iter(|| {

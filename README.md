@@ -2,6 +2,7 @@
 
 Worsier is a focused JavaScript, TypeScript, JSX, and TSX import formatter backed by a Rust engine.
 It rewrites static imports and their blank-line boundaries while preserving all other source text.
+Node.js 24.0.0 or newer is required for the CLI and programmatic API.
 
 ```sh
 pnpm add -D worsier
