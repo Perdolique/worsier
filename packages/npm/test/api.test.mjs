@@ -23,6 +23,9 @@ test('maps native failures to stable error codes', async () => {
   await assert.rejects(format('sample.ts', 'const value = 1;', { lineWidth: 0 }), {
     code: 'CONFIG_ERROR'
   })
+  await assert.rejects(format('sample.flow', 'const value = 1;', {}), {
+    code: 'UNSUPPORTED_SOURCE'
+  })
   await assert.rejects(
     format('sample.ts', 'const value = 1;', { quoteStyle: 'single' }),
     (error) => error.code === 'CONFIG_ERROR' && error.message.includes('quoteStyle')

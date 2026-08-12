@@ -9,6 +9,31 @@ use crate::{FormatError, ResolvedConfig};
 
 const BOM: char = '\u{feff}';
 
+#[cfg(test)]
+thread_local! {
+    static SPAN_LOOKUP_COMPARISONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static CORRUPT_REWRITE_FOR_TEST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[inline]
+fn span_lookup_comparison(result: bool) -> bool {
+    #[cfg(test)]
+    SPAN_LOOKUP_COMPARISONS.set(SPAN_LOOKUP_COMPARISONS.get() + 1);
+    result
+}
+
+#[cfg(test)]
+fn maybe_corrupt_rewrite_for_test(rewritten: &mut String) {
+    CORRUPT_REWRITE_FOR_TEST.with(|corrupt| {
+        if corrupt.replace(false) {
+            rewritten.push_str("\nconst __worsier_verification_probe = true;");
+        }
+    });
+}
+
+#[cfg(not(test))]
+fn maybe_corrupt_rewrite_for_test(_: &mut String) {}
+
 /// Formats static import declarations in JavaScript, TypeScript, JSX, or TSX source text.
 ///
 /// # Errors
@@ -29,7 +54,7 @@ pub fn format_text(
 
     if parsed.is_flow_language {
         return Err(FormatError::UnsupportedSource {
-            message: "Flow is not supported in v0.1".to_owned(),
+            message: "Flow is not supported".to_owned(),
         });
     }
     if !config.imports_enabled() {
@@ -48,20 +73,20 @@ pub fn format_text(
         return Ok(None);
     }
 
-    let rewritten = apply_edits(source, &edits)?;
-    let mut output = String::with_capacity(bom.len() + rewritten.len());
-    output.push_str(bom);
-    output.push_str(&rewritten);
-
+    let mut rewritten = apply_edits(source, &edits)?;
+    maybe_corrupt_rewrite_for_test(&mut rewritten);
     if config.verify_ast() {
         verify(file_name, source_type, &parsed.program, &rewritten)?;
     }
 
-    if output == source_text {
-        Ok(None)
-    } else {
-        Ok(Some(output))
+    if bom.is_empty() {
+        return Ok(Some(rewritten));
     }
+
+    let mut output = String::with_capacity(bom.len() + rewritten.len());
+    output.push_str(bom);
+    output.push_str(&rewritten);
+    Ok(Some(output))
 }
 
 fn source_type(path: &Path) -> Result<SourceType, FormatError> {
@@ -90,6 +115,8 @@ fn parse_with_tokens<'a>(
     source: &'a str,
     source_type: SourceType,
 ) -> Result<oxc_parser::ParserReturn<'a>, FormatError> {
+    // The token-producing parser can panic on malformed lexer input such as NUL. Run the
+    // diagnostic parser first so invalid source is rejected before token collection begins.
     let preflight_allocator = Allocator::default();
     parse(&preflight_allocator, source, source_type)?;
 
@@ -179,11 +206,13 @@ fn rewrite_edits(
     for statement in &program.body {
         let span = statement.span();
         let import_multiline = if let Statement::ImportDeclaration(declaration) = statement {
+            let declaration_tokens = tokens_in_span(tokens, span);
+            let declaration_comments = comments_in_span(&program.comments, span);
             let formatted = format_import(
                 declaration,
                 source,
-                tokens,
-                &program.comments,
+                declaration_tokens,
+                declaration_comments,
                 line_width,
                 newline,
             )?;
@@ -246,10 +275,7 @@ fn format_boundary_separator(
     comments: &[Comment],
     statement_separator: &str,
 ) -> Result<String, FormatError> {
-    let boundary_comments = comments
-        .iter()
-        .filter(|comment| comment.span.start >= span.start && comment.span.end <= span.end)
-        .collect::<Vec<_>>();
+    let boundary_comments = comments_in_span(comments, span);
     if boundary_comments.is_empty() {
         let separator = source_slice(source, span)?;
         return if separator.chars().all(char::is_whitespace) {
@@ -419,7 +445,15 @@ fn format_named_import(
             }
             output.push_str(&segment.text);
         }
-        output.push_str(" }");
+        if segments
+            .last()
+            .is_some_and(|segment| segment.ends_line_comment)
+        {
+            output.push_str(newline);
+            output.push('}');
+        } else {
+            output.push_str(" }");
+        }
     }
 
     if !suffix.text.is_empty() {
@@ -446,9 +480,26 @@ fn named_segments(start: u32, end: u32, tokens: &[Token]) -> Vec<Span> {
 }
 
 fn range_has_token(range: Span, tokens: &[Token]) -> bool {
-    tokens
-        .iter()
-        .any(|token| token.start() >= range.start && token.end() <= range.end)
+    !tokens_in_span(tokens, range).is_empty()
+}
+
+fn tokens_in_span(tokens: &[Token], span: Span) -> &[Token] {
+    let start = tokens.partition_point(|token| span_lookup_comparison(token.start() < span.start));
+    let end = start
+        + tokens[start..].partition_point(|token| {
+            span_lookup_comparison(token.start() < span.end && token.end() <= span.end)
+        });
+    &tokens[start..end]
+}
+
+fn comments_in_span(comments: &[Comment], span: Span) -> &[Comment] {
+    let start =
+        comments.partition_point(|comment| span_lookup_comparison(comment.span.start < span.start));
+    let end = start
+        + comments[start..].partition_point(|comment| {
+            span_lookup_comparison(comment.span.start < span.end && comment.span.end <= span.end)
+        });
+    &comments[start..end]
 }
 
 #[derive(Clone, Copy)]
@@ -477,21 +528,17 @@ fn canonicalize_range(
     newline: &str,
     comma_after_last_token: bool,
 ) -> Result<CanonicalText, FormatError> {
+    let tokens = tokens_in_span(tokens, range);
+    let comments = comments_in_span(comments, range);
     let mut items = Vec::new();
-    for token in tokens
-        .iter()
-        .filter(|token| token.start() >= range.start && token.end() <= range.end)
-    {
+    for token in tokens {
         items.push(LexicalItem {
             span: token.span(),
             text: source_slice(source, token.span())?,
             kind: LexicalKind::Token(token.kind()),
         });
     }
-    for comment in comments
-        .iter()
-        .filter(|comment| comment.span.start >= range.start && comment.span.end <= range.end)
-    {
+    for comment in comments {
         items.push(LexicalItem {
             span: comment.span,
             text: source_slice(source, comment.span)?,
@@ -661,8 +708,12 @@ pub fn benchmark_verify(file_name: &Path, source: &str) -> Result<(), FormatErro
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write as _;
     use std::path::Path;
 
+    use oxc_allocator::Allocator;
+
+    use super::{CORRUPT_REWRITE_FOR_TEST, SPAN_LOOKUP_COMPARISONS, parse, source_type, verify};
     use crate::{FormatConfig, RulesConfig, format_text, resolve_config};
 
     fn format(source: &str) -> String {
@@ -681,6 +732,49 @@ mod tests {
         let source = "import{z as local,type A,b}from\"pkg\";\nimport type{Foo,Bar as Baz}from'x'\nimport value,*as space from\"ns\";\nimport\"side\";";
         let expected = "import { z as local, type A, b } from \"pkg\";\nimport type { Foo, Bar as Baz } from 'x'\nimport value, * as space from \"ns\";\nimport \"side\";";
         assert_eq!(format(source), expected);
+    }
+
+    #[test]
+    fn formats_default_and_named_imports() {
+        let source = "import React,{useState,type ComponentType as Type}from'react';";
+        let flat = "import React, { useState, type ComponentType as Type } from 'react';";
+        assert_eq!(format(source), flat);
+
+        let multiline = format_with(
+            source,
+            FormatConfig {
+                line_width: 30,
+                ..FormatConfig::default()
+            },
+        );
+        assert_eq!(
+            multiline,
+            "import React, {\n  useState,\n  type ComponentType as Type\n} from 'react';"
+        );
+        assert_eq!(
+            format_with(
+                &multiline,
+                FormatConfig {
+                    line_width: 30,
+                    ..FormatConfig::default()
+                }
+            ),
+            multiline
+        );
+    }
+
+    #[test]
+    fn keeps_the_closing_brace_outside_a_final_line_comment() {
+        let source = "import { a // keep\n} from \"x\";";
+        let expected = "import {\n  a // keep\n} from \"x\";";
+        assert_eq!(format(source), expected);
+        assert_eq!(format(expected), expected);
+
+        let no_verify = FormatConfig {
+            verify_ast: false,
+            ..FormatConfig::default()
+        };
+        assert_eq!(format_with(source, no_verify), expected);
     }
 
     #[test]
@@ -805,6 +899,65 @@ mod tests {
             format_text(Path::new("sample.ts"), &output, &config)
                 .unwrap()
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn verification_rejects_a_different_program() {
+        let file_name = Path::new("sample.ts");
+        let source_type = source_type(file_name).unwrap();
+        let allocator = Allocator::default();
+        let input = parse(&allocator, "import { original } from 'pkg';", source_type).unwrap();
+
+        let error = verify(
+            file_name,
+            source_type,
+            &input.program,
+            "import { changed } from 'pkg';",
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), "VERIFICATION_ERROR");
+    }
+
+    #[test]
+    fn format_text_runs_semantic_verification() {
+        let config = resolve_config(FormatConfig::default()).unwrap();
+        CORRUPT_REWRITE_FOR_TEST.set(true);
+
+        let error = format_text(
+            Path::new("sample.ts"),
+            "import{original}from'pkg';",
+            &config,
+        )
+        .unwrap_err();
+
+        assert_eq!(error.code(), "VERIFICATION_ERROR");
+    }
+
+    #[test]
+    fn import_span_lookups_stay_bounded_for_many_imports() {
+        let import_count = 512;
+        let mut source = String::new();
+        for index in 0..import_count {
+            writeln!(
+                source,
+                "import{{value{index},type Type{index}}}from'package-{index}';"
+            )
+            .unwrap();
+        }
+        let config = resolve_config(FormatConfig {
+            verify_ast: false,
+            ..FormatConfig::default()
+        })
+        .unwrap();
+
+        SPAN_LOOKUP_COMPARISONS.set(0);
+        format_text(Path::new("many-imports.ts"), &source, &config).unwrap();
+        let comparisons = SPAN_LOOKUP_COMPARISONS.get();
+        assert!(comparisons > 0);
+        assert!(
+            comparisons < import_count * 128,
+            "span lookups performed {comparisons} comparisons for {import_count} imports"
         );
     }
 

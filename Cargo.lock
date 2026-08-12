@@ -1512,23 +1512,26 @@ dependencies = [
 
 [[package]]
 name = "worsier-cli"
-version = "0.1.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "clap",
  "ignore",
  "jsonc-parser",
+ "libc",
  "rayon",
  "serde",
  "serde_json",
  "serde_path_to_error",
  "tempfile",
+ "windows-sys",
  "worsier-formatter",
+ "xattr",
 ]
 
 [[package]]
 name = "worsier-formatter"
-version = "0.1.0"
+version = "1.0.1"
 dependencies = [
  "criterion",
  "oxc_allocator",
@@ -1543,7 +1546,7 @@ dependencies = [
 
 [[package]]
 name = "worsier-napi"
-version = "0.1.0"
+version = "1.0.1"
 dependencies = [
  "napi",
  "napi-build",
@@ -1552,6 +1555,16 @@ dependencies = [
  "serde_path_to_error",
  "worsier-cli",
  "worsier-formatter",
+]
+
+[[package]]
+name = "xattr"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
+dependencies = [
+ "libc",
+ "rustix",
 ]
 
 [[package]]

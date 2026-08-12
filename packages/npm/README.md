@@ -2,6 +2,7 @@
 
 A focused JavaScript, TypeScript, JSX, and TSX static-import formatter powered by Rust. Source text
 outside imports and their blank-line boundaries is preserved byte-for-byte.
+Node.js 24.0.0 or newer is required.
 
 ```sh
 pnpm add -D worsier

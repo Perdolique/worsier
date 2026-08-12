@@ -5,7 +5,34 @@
       "release-type": "node",
       "initial-version": "0.1.0",
       "include-component-in-tag": false,
-      "changelog-path": "/CHANGELOG.md"
+      "draft": true,
+      "force-tag-creation": true,
+      "changelog-path": "/CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "/Cargo.toml",
+          "jsonpath": "$.workspace.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value == 'worsier-cli' || @.name.value == 'worsier-formatter' || @.name.value == 'worsier-napi')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/fuzz/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value == 'worsier-formatter')].version"
+        },
+        "/npm/darwin-arm64/package.json",
+        "/npm/darwin-x64/package.json",
+        "/npm/linux-arm64-gnu/package.json",
+        "/npm/linux-arm64-musl/package.json",
+        "/npm/linux-x64-gnu/package.json",
+        "/npm/linux-x64-musl/package.json",
+        "/npm/win32-arm64-msvc/package.json",
+        "/npm/win32-x64-msvc/package.json"
+      ]
     }
   }
 }

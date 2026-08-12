@@ -10,26 +10,81 @@ on:
         required: true
         type: string
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 permissions:
-  contents: write
-  id-token: write
-  issues: write
-  pull-requests: write
+  contents: read
 
 jobs:
   release-please:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
     outputs:
       release_created: ${{ github.event_name == 'workflow_dispatch' || steps.release.outputs['packages/npm--release_created'] }}
-      sha: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || steps.release.outputs['packages/npm--sha'] }}
-      tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || steps.release.outputs['packages/npm--tag_name'] }}
+      sha: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.sha || steps.release.outputs['packages/npm--sha'] }}
+      tag_name: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.tag_name || steps.release.outputs['packages/npm--tag_name'] }}
     steps:
       - uses: googleapis/release-please-action@v4
         if: github.event_name == 'push'
         id: release
+      - uses: actions/checkout@v4
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          fetch-depth: 0
+      - name: Validate manual release target
+        if: github.event_name == 'workflow_dispatch'
+        id: manual
+        shell: bash
+        env:
+          TAG_NAME: ${{ inputs.tag_name }}
+        run: |
+          if [[ ! "${TAG_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release tag: ${TAG_NAME}" >&2
+            exit 1
+          fi
+
+          sha=$(git rev-parse --verify "refs/tags/${TAG_NAME}^{commit}")
+          git merge-base --is-ancestor "${sha}" origin/master
+          echo "sha=${sha}" >> "${GITHUB_OUTPUT}"
+          echo "tag_name=${TAG_NAME}" >> "${GITHUB_OUTPUT}"
+
+  validate:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.95.0
+          components: clippy,rustfmt
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.0.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check:versions
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - run: cargo check --manifest-path fuzz/Cargo.toml
+      - run: pnpm generate
+      - run: git diff --exit-code -- packages/npm/configuration_schema.json packages/npm/src/types.ts
+      - run: pnpm --filter worsier build
+      - run: pnpm --filter worsier build:native
+      - run: pnpm --filter worsier test
+      - run: pnpm --filter worsier test:packed
 
   native:
-    needs: release-please
+    needs: [release-please, validate]
     if: needs.release-please.outputs.release_created == 'true'
     name: ${{ matrix.target }}
     strategy:
@@ -76,7 +131,7 @@ jobs:
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v4
         with:
-          node-version: 22.12.0
+          node-version: 24.0.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - uses: mlugg/setup-zig@v2
@@ -103,7 +158,25 @@ jobs:
         run: node packages/npm/scripts/smoke-native.mjs artifacts/worsier.${{ matrix.platform }}.node
       - name: Runtime smoke on musl
         if: matrix.musl == true
-        run: docker run --rm -v "$PWD:/work" -w /work node:22-alpine node packages/npm/scripts/smoke-native.mjs artifacts/worsier.${{ matrix.platform }}.node
+        run: docker run --rm -v "$PWD:/work" -w /work node:24-alpine node packages/npm/scripts/smoke-native.mjs artifacts/worsier.${{ matrix.platform }}.node
+      - name: Stage addon for package smoke
+        if: matrix.musl != true && runner.os != 'Windows'
+        run: cp artifacts/worsier.${{ matrix.platform }}.node npm/${{ matrix.platform }}/
+      - name: Stage Windows addon for package smoke
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Copy-Item "artifacts/worsier.${{ matrix.platform }}.node" "npm/${{ matrix.platform }}/"
+      - name: Build package loader
+        if: matrix.musl != true
+        run: pnpm --filter worsier build
+      - name: Smoke packed public API and CLI
+        if: matrix.musl != true
+        run: pnpm --filter worsier test:packed
+      - name: Smoke packed public API and CLI on musl
+        if: matrix.musl == true
+        run: |
+          cp artifacts/worsier.${{ matrix.platform }}.node npm/${{ matrix.platform }}/
+          docker run --rm -v "$PWD:/work" -w /work node:24-alpine sh -c 'corepack enable && corepack prepare pnpm@9.4.0 --activate && node packages/npm/scripts/test-packed-package.mjs'
       - uses: actions/upload-artifact@v4
         with:
           name: binding-${{ matrix.platform }}
@@ -111,7 +184,7 @@ jobs:
           if-no-files-found: error
 
   benchmarks:
-    needs: release-please
+    needs: [release-please, validate]
     if: needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-24.04
     steps:
@@ -124,11 +197,12 @@ jobs:
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v4
         with:
-          node-version: 22.12.0
+          node-version: 24.0.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Run report-only benchmarks
-        run: cargo bench -p worsier-formatter --features benchmarking -- --noplot | tee benchmark-results.txt
+        shell: bash
+        run: cargo bench -p worsier-formatter --features benchmarking --bench formatter -- --noplot 2>&1 | tee benchmark-results.txt
       - run: pnpm --filter worsier build
       - run: pnpm --filter worsier build:native
       - name: Measure Node.js cold start
@@ -143,6 +217,8 @@ jobs:
     if: needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-24.04
     environment: npm
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -153,7 +229,7 @@ jobs:
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 24.0.0
           registry-url: https://registry.npmjs.org
           cache: pnpm
       - run: pnpm install --frozen-lockfile
@@ -187,25 +263,58 @@ jobs:
             cat "${publish_log}"
 
             if grep -Fq "You cannot publish over the previously published versions" "${publish_log}"; then
-              echo "::warning title=Skipped npm package::${package_name} is already published"
-              continue
-            fi
-
-            if grep -Fq "Package name triggered spam detection" "${publish_log}"; then
-              echo "::warning title=Skipped npm package::${package_name} was blocked by npm spam detection"
-              continue
+              package_version=$(node -p "require('./${package_dir}/package.json').version")
+              published_version=$(npm view "${package_name}@${package_version}" version)
+              if [[ "${published_version}" == "${package_version}" ]]; then
+                echo "::warning title=Skipped npm package::${package_name}@${package_version} is already published"
+                continue
+              fi
             fi
 
             exit 1
           done
+        shell: bash
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Verify all platform packages
+        shell: bash
+        run: |
+          for package_dir in npm/*; do
+            package_name=$(node -p "require('./${package_dir}/package.json').name")
+            package_version=$(node -p "require('./${package_dir}/package.json').version")
+            published_version=$(npm view "${package_name}@${package_version}" version)
+            [[ "${published_version}" == "${package_version}" ]]
+          done
       - name: Publish root package
         working-directory: packages/npm
-        run: npm publish --access public
+        shell: bash
+        run: |
+          publish_log="${RUNNER_TEMP}/npm-root-publish.log"
+          package_name=$(node -p "require('./package.json').name")
+          package_version=$(node -p "require('./package.json').version")
+
+          if npm publish --access public >"${publish_log}" 2>&1; then
+            cat "${publish_log}"
+            exit 0
+          fi
+
+          cat "${publish_log}"
+          if grep -Fq "You cannot publish over the previously published versions" "${publish_log}"; then
+            published_version=$(npm view "${package_name}@${package_version}" version)
+            [[ "${published_version}" == "${package_version}" ]]
+            exit 0
+          fi
+
+          exit 1
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Upload GitHub release assets
-        run: gh release upload "${{ needs.release-please.outputs.tag_name }}" benchmark-results.txt artifacts/*.node --clobber
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
+        run: gh release upload "${TAG_NAME}" benchmark-results.txt artifacts/*.node --clobber
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
+        run: gh release edit "${TAG_NAME}" --draft=false

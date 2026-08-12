@@ -10,7 +10,7 @@
   },
   "type": "module",
   "engines": {
-    "node": "^20.19.0 || >=22.12.0"
+    "node": ">=24.0.0"
   },
   "exports": {
     ".": {
@@ -26,11 +26,12 @@
     "bin",
     "dist",
     "configuration_schema.json",
+    "LICENSE",
     "README.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "build:native": "napi build --manifest-path ../../crates/napi/Cargo.toml --output-dir ../../npm/linux-x64-gnu --platform --release --no-js",
+    "build:native": "node scripts/build-native.mjs",
     "test": "node --test test/*.test.mjs",
     "test:packed": "node scripts/test-packed-package.mjs"
   },
@@ -48,14 +49,14 @@
     ]
   },
   "optionalDependencies": {
-    "worsier-darwin-arm64": "workspace:0.1.0",
-    "worsier-darwin-x64": "workspace:0.1.0",
-    "worsier-linux-arm64-gnu": "workspace:0.1.0",
-    "worsier-linux-arm64-musl": "workspace:0.1.0",
-    "worsier-linux-x64-gnu": "workspace:0.1.0",
-    "worsier-linux-x64-musl": "workspace:0.1.0",
-    "worsier-win32-arm64-msvc": "workspace:0.1.0",
-    "worsier-win32-x64-msvc": "workspace:0.1.0"
+    "worsier-darwin-arm64": "workspace:*",
+    "worsier-darwin-x64": "workspace:*",
+    "worsier-linux-arm64-gnu": "workspace:*",
+    "worsier-linux-arm64-musl": "workspace:*",
+    "worsier-linux-x64-gnu": "workspace:*",
+    "worsier-linux-x64-musl": "workspace:*",
+    "worsier-win32-arm64-msvc": "workspace:*",
+    "worsier-win32-x64-msvc": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "26.2.0",

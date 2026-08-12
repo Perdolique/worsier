@@ -22,5 +22,12 @@ serde_json.workspace = true
 tempfile.workspace = true
 worsier-formatter = { path = "../formatter" }
 
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+xattr.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+
 [lints]
 workspace = true
