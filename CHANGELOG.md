@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.6](https://github.com/Perdolique/worsier/compare/v1.0.5...v1.0.6) (2026-08-12)
+
+
+### Bug Fixes
+
+* **release:** require publishable platforms ([3a9c8a0](https://github.com/Perdolique/worsier/commit/3a9c8a04c48367b83d421fc015e0ab4143eafd1f))
+
 ## [1.0.5](https://github.com/Perdolique/worsier/compare/v1.0.4...v1.0.5) (2026-08-12)
 
 
