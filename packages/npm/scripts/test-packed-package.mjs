@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
+import { tarListingContains } from './tar-listing.mjs'
+
 const root = resolve(import.meta.dirname, '../../..')
 const packageDirectory = join(root, 'packages/npm')
 const platform = platformName()
@@ -64,8 +66,10 @@ function platformName() {
 
 function assertTarballIncludesLicense(tarball, packageName) {
   const listing = run('tar', ['-tzf', tarball])
-  const files = listing.stdout.split('\n')
-  assert.ok(files.includes('package/LICENSE'), `${packageName} tarball must contain LICENSE`)
+  assert.ok(
+    tarListingContains(listing.stdout, 'package/LICENSE'),
+    `${packageName} tarball must contain LICENSE`
+  )
 }
 
 function run(command, args, cwd = root) {
