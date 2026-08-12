@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/Perdolique/worsier/compare/v1.0.6...v1.1.0) (2026-08-12)
+
+
+### Features
+
+* **formatter:** format variable boundaries ([7a4634c](https://github.com/Perdolique/worsier/commit/7a4634cc0a54d91896267c0f0325a3e37f62f980))
+
 ## [1.0.6](https://github.com/Perdolique/worsier/compare/v1.0.5...v1.0.6) (2026-08-12)
 
 
