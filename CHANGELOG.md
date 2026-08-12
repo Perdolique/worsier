@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.1](https://github.com/Perdolique/worsier/compare/v1.0.0...v1.0.1) (2026-08-12)
+
+
+### Bug Fixes
+
+* **release:** scope smoke tests to npm ([a4cf67e](https://github.com/Perdolique/worsier/commit/a4cf67e6e72896ab8cf1e94a1f6ce90a686a72a5))
+* **release:** scope smoke tests to npm ([0bcc48a](https://github.com/Perdolique/worsier/commit/0bcc48a145163a1748b1ea46effa2609e7ac2a9b))
+
 ## [1.0.0](https://github.com/Perdolique/worsier/compare/v0.1.0...v1.0.0) (2026-08-12)
 
 
