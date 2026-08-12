@@ -1,7 +1,8 @@
 # Worsier
 
-A focused JavaScript, TypeScript, JSX, and TSX static-import formatter powered by Rust. Source text
-outside imports and their blank-line boundaries is preserved byte-for-byte.
+A focused JavaScript, TypeScript, JSX, and TSX formatter powered by Rust. It formats static imports
+and the boundaries around runtime variable declarations while preserving the declarations
+themselves.
 Node.js 24.0.0 or newer is required.
 Prebuilt Windows x64 binaries are temporarily unavailable while
 [npm package publication is restored](https://github.com/Perdolique/worsier/issues/11).

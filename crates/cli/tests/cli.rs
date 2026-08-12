@@ -144,6 +144,39 @@ fn nearest_config_wins_and_explicit_config_disables_discovery() {
 }
 
 #[test]
+fn partial_rule_configs_keep_sibling_defaults() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        &directory.path().join("worsier.jsonc"),
+        r#"{"rules":{"variables":false}}"#,
+    );
+    let source = "import{a}from'x';const first=1;let second=2;run();";
+    write(&directory.path().join("sample.ts"), source);
+
+    let imports_only = command(directory.path()).arg("sample.ts").output().unwrap();
+    assert!(imports_only.status.success(), "{}", stderr(&imports_only));
+    assert_eq!(
+        String::from_utf8(imports_only.stdout).unwrap(),
+        "import { a } from 'x';\n\nconst first=1;let second=2;run();"
+    );
+
+    write(
+        &directory.path().join("worsier.jsonc"),
+        r#"{"rules":{"imports":false}}"#,
+    );
+    let variables_only = command(directory.path()).arg("sample.ts").output().unwrap();
+    assert!(
+        variables_only.status.success(),
+        "{}",
+        stderr(&variables_only)
+    );
+    assert_eq!(
+        String::from_utf8(variables_only.stdout).unwrap(),
+        "import{a}from'x';\n\nconst first=1;\nlet second=2;\n\nrun();"
+    );
+}
+
+#[test]
 fn configuration_errors_include_the_nested_json_path() {
     let directory = tempfile::tempdir().unwrap();
     write(

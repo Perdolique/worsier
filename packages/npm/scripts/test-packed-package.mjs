@@ -32,6 +32,10 @@ const executable = join(project, 'node_modules/worsier/bin/worsier.js')
 const version = run(process.execPath, [executable, '--version'], project)
 assert.equal(version.stdout.trim(), `worsier ${rootVersion}`)
 run(process.execPath, [executable, '--init'], project)
+assert.equal(
+  await readFile(join(project, 'worsier.jsonc'), 'utf8'),
+  '{\n  "$schema": "./node_modules/worsier/configuration_schema.json",\n  "lineWidth": 120,\n  "verifyAst": true,\n  "rules": {\n    "imports": true,\n    "variables": true\n  },\n  "ignorePatterns": []\n}\n'
+)
 await writeFile(join(project, 'sample.ts'), "import{value}from'pkg';const raw={items:[1,2]};")
 run(process.execPath, [executable, '--write', 'sample.ts'], project)
 assert.equal(
@@ -49,6 +53,17 @@ const api = run(
   project
 )
 assert.equal(api.stdout, "import { packed } from 'pkg';\n\nconst raw=[1,2];\n")
+
+const variablesDisabled = run(
+  process.execPath,
+  [
+    '--input-type=module',
+    '--eval',
+    `import { format } from 'worsier'; console.log(await format('sample.ts', 'const first=1;let second=2;', { rules: { variables: false } }))`
+  ],
+  project
+)
+assert.equal(variablesDisabled.stdout, 'const first=1;let second=2;\n')
 
 console.log(`Packed installation smoke passed in ${basename(project)}`)
 

@@ -21,6 +21,7 @@ napi-build = "2.3.1"
 napi-derive = "3.6.3"
 oxc_allocator = "=0.144.0"
 oxc_ast = "=0.144.0"
+oxc_ast_visit = "=0.144.0"
 oxc_parser = { version = "=0.144.0", default-features = false }
 oxc_span = "=0.144.0"
 rayon = "1.11.0"

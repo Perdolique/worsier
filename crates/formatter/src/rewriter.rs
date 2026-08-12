@@ -1,7 +1,21 @@
+use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 
 use oxc_allocator::Allocator;
-use oxc_ast::ast::{Comment, CommentKind, CommentPosition, ImportDeclaration, Program, Statement};
+use oxc_ast::ast::{
+    BlockStatement, Comment, CommentKind, CommentPosition, Directive, FunctionBody,
+    ImportDeclaration, Program, Statement, StaticBlock, SwitchCase, SwitchStatement,
+    TSExternalModuleDeclaration, TSGlobalDeclaration, TSModuleBlock, TSNamespaceDeclaration,
+    VariableDeclarationKind,
+};
+use oxc_ast_visit::{
+    Visit,
+    walk::{
+        walk_block_statement, walk_function_body, walk_program, walk_statement, walk_static_block,
+        walk_switch_case, walk_switch_statement, walk_ts_external_module_declaration,
+        walk_ts_global_declaration, walk_ts_module_block, walk_ts_namespace_declaration,
+    },
+};
 use oxc_parser::{Kind, ParseOptions, Parser, Token, config::TokensParserConfig};
 use oxc_span::{ContentEq, GetSpan, SourceType, Span};
 
@@ -12,6 +26,7 @@ const BOM: char = '\u{feff}';
 #[cfg(test)]
 thread_local! {
     static SPAN_LOOKUP_COMPARISONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static INDENT_RESOLUTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static CORRUPT_REWRITE_FOR_TEST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
@@ -20,6 +35,12 @@ fn span_lookup_comparison(result: bool) -> bool {
     #[cfg(test)]
     SPAN_LOOKUP_COMPARISONS.set(SPAN_LOOKUP_COMPARISONS.get() + 1);
     result
+}
+
+#[inline]
+fn indent_resolution() {
+    #[cfg(test)]
+    INDENT_RESOLUTIONS.set(INDENT_RESOLUTIONS.get() + 1);
 }
 
 #[cfg(test)]
@@ -34,12 +55,13 @@ fn maybe_corrupt_rewrite_for_test(rewritten: &mut String) {
 #[cfg(not(test))]
 fn maybe_corrupt_rewrite_for_test(_: &mut String) {}
 
-/// Formats static import declarations in JavaScript, TypeScript, JSX, or TSX source text.
+/// Formats static imports and runtime variable declaration boundaries in JavaScript, TypeScript,
+/// JSX, or TSX source text.
 ///
 /// # Errors
 ///
 /// Returns a [`FormatError`] when the source type is unsupported, parsing fails, or semantic
-/// verification finds that an import rewrite changed the program AST.
+/// verification finds that a rewrite changed the program AST.
 pub fn format_text(
     file_name: &Path,
     source_text: &str,
@@ -57,7 +79,7 @@ pub fn format_text(
             message: "Flow is not supported".to_owned(),
         });
     }
-    if !config.imports_enabled() {
+    if !config.imports_enabled() && !config.variables_enabled() {
         return Ok(None);
     }
 
@@ -68,6 +90,8 @@ pub fn format_text(
         &parsed.tokens,
         config.line_width(),
         newline,
+        config.imports_enabled(),
+        config.variables_enabled() && !source_type.is_typescript_definition(),
     )?;
     if edits.is_empty() {
         return Ok(None);
@@ -183,7 +207,75 @@ struct Edit {
 #[derive(Clone, Copy, Debug)]
 struct StatementShape {
     span: Span,
-    import_multiline: Option<bool>,
+    target: StatementTarget,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StatementTarget {
+    Other,
+    Import { multiline: bool },
+    Variable { multiline: bool },
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ParentItem {
+    list_index: usize,
+    item_index: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ExpandedLayout {
+    List(usize),
+    Switch(usize),
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ListContainer {
+    Program {
+        span: Span,
+    },
+    Braced {
+        span: Span,
+        open: Span,
+        close: Span,
+    },
+    SwitchCase {
+        span: Span,
+        colon: Span,
+        switch_index: usize,
+    },
+}
+
+impl ListContainer {
+    const fn span(self) -> Span {
+        match self {
+            Self::Program { span } | Self::Braced { span, .. } | Self::SwitchCase { span, .. } => {
+                span
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+struct StatementList {
+    items: Vec<StatementShape>,
+    container: ListContainer,
+    layout_parent: Option<ExpandedLayout>,
+    parent_item: Option<ParentItem>,
+    original_multiline: bool,
+    expanded: bool,
+}
+
+#[derive(Debug)]
+struct SwitchLayout {
+    span: Span,
+    open: Span,
+    close: Span,
+    cases: Vec<Span>,
+    layout_parent: Option<ExpandedLayout>,
+    parent_item: Option<ParentItem>,
+    original_multiline: bool,
+    expanded: bool,
 }
 
 fn rewrite_edits(
@@ -192,20 +284,18 @@ fn rewrite_edits(
     tokens: &[Token],
     line_width: u32,
     newline: &str,
+    imports_enabled: bool,
+    variables_enabled: bool,
 ) -> Result<Vec<Edit>, FormatError> {
     let mut edits = Vec::new();
-    let mut statements = program
-        .directives
-        .iter()
-        .map(|directive| StatementShape {
-            span: directive.span(),
-            import_multiline: None,
-        })
-        .collect::<Vec<_>>();
+    let mut formatted_imports = HashMap::new();
 
-    for statement in &program.body {
-        let span = statement.span();
-        let import_multiline = if let Statement::ImportDeclaration(declaration) = statement {
+    if imports_enabled {
+        for statement in &program.body {
+            let Statement::ImportDeclaration(declaration) = statement else {
+                continue;
+            };
+            let span = statement.span();
             let declaration_tokens = tokens_in_span(tokens, span);
             let declaration_comments = comments_in_span(&program.comments, span);
             let formatted = format_import(
@@ -224,49 +314,712 @@ fn rewrite_edits(
                     replacement: formatted.text,
                 });
             }
-            Some(formatted.multiline)
-        } else {
-            None
-        };
-        statements.push(StatementShape {
-            span,
-            import_multiline,
-        });
+            formatted_imports.insert(span.start, formatted.multiline);
+        }
     }
 
-    statements.sort_by_key(|statement| statement.span.start);
-    for pair in statements.windows(2) {
-        let [previous, next] = pair else {
-            unreachable!("windows(2) always contains two statements")
-        };
-        if previous.import_multiline.is_none() && next.import_multiline.is_none() {
-            continue;
-        }
-        let blank_line = match (previous.import_multiline, next.import_multiline) {
-            (Some(false), Some(false)) => false,
-            (None, None) => unreachable!("non-import boundaries were skipped"),
-            _ => true,
-        };
-        let replacement = if blank_line {
-            newline.repeat(2)
-        } else {
-            newline.to_owned()
-        };
-        let separator_span = Span::new(previous.span.end, next.span.start);
-        let separator = source_slice(source, separator_span)?;
-        let formatted_separator =
-            format_boundary_separator(source, separator_span, &program.comments, &replacement)?;
-        if separator != formatted_separator {
-            edits.push(Edit {
-                start: previous.span.end,
-                end: next.span.start,
-                replacement: formatted_separator,
-            });
-        }
-    }
+    let mut collector = StatementCollector {
+        source,
+        tokens,
+        formatted_imports: &formatted_imports,
+        variables_enabled,
+        ambient_depth: 0,
+        current_list: None,
+        current_layout: None,
+        current_item: None,
+        current_switch: None,
+        lists: Vec::new(),
+        switches: Vec::new(),
+    };
+    collector.visit_program(program);
+    mark_expanded_layouts(&mut collector.lists, &mut collector.switches);
+    append_layout_edits(
+        source,
+        &program.comments,
+        newline,
+        &collector.lists,
+        &collector.switches,
+        &mut edits,
+    )?;
 
     edits.sort_by_key(|edit| (edit.start, edit.end));
     Ok(edits)
+}
+
+struct StatementCollector<'s> {
+    source: &'s str,
+    tokens: &'s [Token],
+    formatted_imports: &'s HashMap<u32, bool>,
+    variables_enabled: bool,
+    ambient_depth: usize,
+    current_list: Option<usize>,
+    current_layout: Option<ExpandedLayout>,
+    current_item: Option<ParentItem>,
+    current_switch: Option<usize>,
+    lists: Vec<StatementList>,
+    switches: Vec<SwitchLayout>,
+}
+
+impl StatementCollector<'_> {
+    fn record_list<'a>(
+        &mut self,
+        directives: &[Directive<'a>],
+        statements: &[Statement<'a>],
+        container: ListContainer,
+    ) -> Option<usize> {
+        let mut items = directives
+            .iter()
+            .map(|directive| StatementShape {
+                span: directive.span(),
+                target: StatementTarget::Other,
+            })
+            .collect::<Vec<_>>();
+        items.extend(
+            statements
+                .iter()
+                .map(|statement| self.statement_shape(statement)),
+        );
+        items.sort_by_key(|item| item.span.start);
+        if items.is_empty() {
+            return None;
+        }
+        let original_multiline =
+            source_slice(self.source, container.span()).is_ok_and(contains_line_break);
+        let list_index = self.lists.len();
+        self.lists.push(StatementList {
+            items,
+            container,
+            layout_parent: self.current_layout,
+            parent_item: self.current_item,
+            original_multiline,
+            expanded: false,
+        });
+        Some(list_index)
+    }
+
+    fn statement_shape(&self, statement: &Statement<'_>) -> StatementShape {
+        let span = statement.span();
+        let target = if let Some(multiline) = self.formatted_imports.get(&span.start) {
+            StatementTarget::Import {
+                multiline: *multiline,
+            }
+        } else if self.variables_enabled
+            && self.ambient_depth == 0
+            && matches!(
+                statement,
+                Statement::VariableDeclaration(declaration)
+                    if !declaration.declare
+                        && matches!(
+                            declaration.kind,
+                            VariableDeclarationKind::Var
+                                | VariableDeclarationKind::Let
+                                | VariableDeclarationKind::Const
+                        )
+            )
+        {
+            StatementTarget::Variable {
+                multiline: source_slice(self.source, span).is_ok_and(contains_line_break),
+            }
+        } else {
+            StatementTarget::Other
+        };
+        StatementShape { span, target }
+    }
+
+    fn braced_container(&self, span: Span) -> Option<ListContainer> {
+        let (open, close) = brace_tokens(self.tokens, span)?;
+        Some(ListContainer::Braced { span, open, close })
+    }
+
+    fn direct_item(&self, statement: &Statement<'_>) -> Option<ParentItem> {
+        let list_index = self.current_list?;
+        let statement_span = statement.span();
+        let items = &self.lists[list_index].items;
+        let item_index = items
+            .binary_search_by_key(&statement_span.start, |item| item.span.start)
+            .ok()?;
+        let item_span = items[item_index].span;
+        if item_span.start != statement_span.start || item_span.end != statement_span.end {
+            return None;
+        }
+        Some(ParentItem {
+            list_index,
+            item_index,
+        })
+    }
+}
+
+impl<'a> Visit<'a> for StatementCollector<'_> {
+    fn visit_program(&mut self, program: &Program<'a>) {
+        let span = sequence_span(&program.directives, &program.body).unwrap_or(program.span);
+        let previous_list = self.current_list;
+        let previous_layout = self.current_layout;
+        self.current_list = self.record_list(
+            &program.directives,
+            &program.body,
+            ListContainer::Program { span },
+        );
+        self.current_layout = self.current_list.map(ExpandedLayout::List);
+        walk_program(self, program);
+        self.current_list = previous_list;
+        self.current_layout = previous_layout;
+    }
+
+    fn visit_statement(&mut self, statement: &Statement<'a>) {
+        let previous_item = self.current_item;
+        if let Some(item) = self.direct_item(statement) {
+            self.current_item = Some(item);
+        }
+        walk_statement(self, statement);
+        self.current_item = previous_item;
+    }
+
+    fn visit_function_body(&mut self, body: &FunctionBody<'a>) {
+        let previous_list = self.current_list;
+        let previous_layout = self.current_layout;
+        self.current_list = self
+            .braced_container(body.span)
+            .and_then(|container| self.record_list(&body.directives, &body.statements, container));
+        self.current_layout = self.current_list.map(ExpandedLayout::List);
+        walk_function_body(self, body);
+        self.current_list = previous_list;
+        self.current_layout = previous_layout;
+    }
+
+    fn visit_block_statement(&mut self, block: &BlockStatement<'a>) {
+        let previous_list = self.current_list;
+        let previous_layout = self.current_layout;
+        self.current_list = self
+            .braced_container(block.span)
+            .and_then(|container| self.record_list(&[], &block.body, container));
+        self.current_layout = self.current_list.map(ExpandedLayout::List);
+        walk_block_statement(self, block);
+        self.current_list = previous_list;
+        self.current_layout = previous_layout;
+    }
+
+    fn visit_static_block(&mut self, block: &StaticBlock<'a>) {
+        let previous_list = self.current_list;
+        let previous_layout = self.current_layout;
+        self.current_list = self
+            .braced_container(block.span)
+            .and_then(|container| self.record_list(&[], &block.body, container));
+        self.current_layout = self.current_list.map(ExpandedLayout::List);
+        walk_static_block(self, block);
+        self.current_list = previous_list;
+        self.current_layout = previous_layout;
+    }
+
+    fn visit_ts_module_block(&mut self, block: &TSModuleBlock<'a>) {
+        let previous_list = self.current_list;
+        let previous_layout = self.current_layout;
+        self.current_list = self
+            .braced_container(block.span)
+            .and_then(|container| self.record_list(&block.directives, &block.body, container));
+        self.current_layout = self.current_list.map(ExpandedLayout::List);
+        walk_ts_module_block(self, block);
+        self.current_list = previous_list;
+        self.current_layout = previous_layout;
+    }
+
+    fn visit_switch_statement(&mut self, statement: &SwitchStatement<'a>) {
+        let Some((open, close)) = switch_brace_tokens(self.tokens, statement) else {
+            walk_switch_statement(self, statement);
+            return;
+        };
+        let switch_index = self.switches.len();
+        self.switches.push(SwitchLayout {
+            span: statement.span,
+            open,
+            close,
+            cases: statement.cases.iter().map(GetSpan::span).collect(),
+            layout_parent: self.current_layout,
+            parent_item: self.current_item,
+            original_multiline: source_slice(self.source, statement.span)
+                .is_ok_and(contains_line_break),
+            expanded: false,
+        });
+        let previous_switch = self.current_switch.replace(switch_index);
+        let previous_layout = self
+            .current_layout
+            .replace(ExpandedLayout::Switch(switch_index));
+        walk_switch_statement(self, statement);
+        self.current_layout = previous_layout;
+        self.current_switch = previous_switch;
+    }
+
+    fn visit_switch_case(&mut self, case: &SwitchCase<'a>) {
+        let previous_list = self.current_list;
+        let previous_layout = self.current_layout;
+        self.current_list = if !case.consequent.is_empty()
+            && let Some(switch_index) = self.current_switch
+            && let Some(colon) = case_colon(self.tokens, case)
+        {
+            self.record_list(
+                &[],
+                &case.consequent,
+                ListContainer::SwitchCase {
+                    span: case.span,
+                    colon,
+                    switch_index,
+                },
+            )
+        } else {
+            None
+        };
+        self.current_layout = self.current_list.map(ExpandedLayout::List);
+        walk_switch_case(self, case);
+        self.current_list = previous_list;
+        self.current_layout = previous_layout;
+    }
+
+    fn visit_ts_external_module_declaration(
+        &mut self,
+        declaration: &TSExternalModuleDeclaration<'a>,
+    ) {
+        let ambient = declaration.declare;
+        self.ambient_depth += usize::from(ambient);
+        walk_ts_external_module_declaration(self, declaration);
+        self.ambient_depth -= usize::from(ambient);
+    }
+
+    fn visit_ts_namespace_declaration(&mut self, declaration: &TSNamespaceDeclaration<'a>) {
+        let ambient = declaration.declare;
+        self.ambient_depth += usize::from(ambient);
+        walk_ts_namespace_declaration(self, declaration);
+        self.ambient_depth -= usize::from(ambient);
+    }
+
+    fn visit_ts_global_declaration(&mut self, declaration: &TSGlobalDeclaration<'a>) {
+        let ambient = declaration.declare;
+        self.ambient_depth += usize::from(ambient);
+        walk_ts_global_declaration(self, declaration);
+        self.ambient_depth -= usize::from(ambient);
+    }
+}
+
+fn sequence_span(directives: &[Directive<'_>], statements: &[Statement<'_>]) -> Option<Span> {
+    let start = directives
+        .first()
+        .map(GetSpan::span)
+        .or_else(|| statements.first().map(GetSpan::span))?;
+    let end = statements
+        .last()
+        .map(GetSpan::span)
+        .or_else(|| directives.last().map(GetSpan::span))?;
+    Some(Span::new(start.start, end.end))
+}
+
+fn brace_tokens(tokens: &[Token], span: Span) -> Option<(Span, Span)> {
+    let tokens = tokens_in_span(tokens, span);
+    let open = tokens
+        .iter()
+        .find(|token| token.kind() == Kind::LCurly)?
+        .span();
+    let close = tokens
+        .iter()
+        .rfind(|token| token.kind() == Kind::RCurly)?
+        .span();
+    Some((open, close))
+}
+
+fn switch_brace_tokens(tokens: &[Token], statement: &SwitchStatement<'_>) -> Option<(Span, Span)> {
+    let body_span = Span::new(statement.discriminant.span().end, statement.span.end);
+    brace_tokens(tokens, body_span)
+}
+
+fn case_colon(tokens: &[Token], case: &SwitchCase<'_>) -> Option<Span> {
+    let first_statement_start = case
+        .consequent
+        .first()
+        .map_or(case.span.end, |statement| statement.span().start);
+    tokens_in_span(tokens, Span::new(case.span.start, first_statement_start))
+        .iter()
+        .rfind(|token| token.kind() == Kind::Colon)
+        .map(Token::span)
+}
+
+fn mark_expanded_layouts(lists: &mut [StatementList], switches: &mut [SwitchLayout]) {
+    let mut pending = VecDeque::new();
+    for (list_index, list) in lists.iter_mut().enumerate() {
+        list.expanded = !list.original_multiline
+            && list.items.len() >= 2
+            && list
+                .items
+                .iter()
+                .any(|item| matches!(item.target, StatementTarget::Variable { .. }));
+        if list.expanded {
+            pending.push_back(ExpandedLayout::List(list_index));
+        }
+    }
+
+    while let Some(layout) = pending.pop_front() {
+        let parent = match layout {
+            ExpandedLayout::List(list_index) => lists[list_index].layout_parent,
+            ExpandedLayout::Switch(switch_index) => switches[switch_index].layout_parent,
+        };
+        match parent {
+            Some(ExpandedLayout::List(list_index)) => {
+                let parent_list = &mut lists[list_index];
+                if !parent_list.expanded && !parent_list.original_multiline {
+                    parent_list.expanded = true;
+                    pending.push_back(ExpandedLayout::List(list_index));
+                }
+            }
+            Some(ExpandedLayout::Switch(switch_index)) => {
+                let parent_switch = &mut switches[switch_index];
+                if !parent_switch.expanded && !parent_switch.original_multiline {
+                    parent_switch.expanded = true;
+                    pending.push_back(ExpandedLayout::Switch(switch_index));
+                }
+            }
+            None => {}
+        }
+    }
+}
+
+fn append_layout_edits(
+    source: &str,
+    comments: &[Comment],
+    newline: &str,
+    lists: &[StatementList],
+    switches: &[SwitchLayout],
+    edits: &mut Vec<Edit>,
+) -> Result<(), FormatError> {
+    let mut indents = LayoutIndents::new(lists.len(), switches.len());
+    append_list_layout_edits(
+        source,
+        comments,
+        newline,
+        lists,
+        switches,
+        &mut indents,
+        edits,
+    )?;
+    append_switch_layout_edits(
+        source,
+        comments,
+        newline,
+        lists,
+        switches,
+        &mut indents,
+        edits,
+    )
+}
+
+fn append_list_layout_edits(
+    source: &str,
+    comments: &[Comment],
+    newline: &str,
+    lists: &[StatementList],
+    switches: &[SwitchLayout],
+    indents: &mut LayoutIndents,
+    edits: &mut Vec<Edit>,
+) -> Result<(), FormatError> {
+    for (list_index, list) in lists.iter().enumerate() {
+        let item_indent = if list.expanded {
+            indents.item_indent(source, lists, switches, list_index)
+        } else {
+            String::new()
+        };
+
+        if list.expanded {
+            match list.container {
+                ListContainer::Program { .. } => {}
+                ListContainer::Braced { open, .. } => append_boundary_edit(
+                    source,
+                    comments,
+                    Span::new(open.end, list.items[0].span.start),
+                    newline,
+                    &item_indent,
+                    edits,
+                )?,
+                ListContainer::SwitchCase { colon, .. } => append_boundary_edit(
+                    source,
+                    comments,
+                    Span::new(colon.end, list.items[0].span.start),
+                    newline,
+                    &item_indent,
+                    edits,
+                )?,
+            }
+        }
+
+        for pair in list.items.windows(2) {
+            let [previous, next] = pair else {
+                unreachable!("windows(2) always contains two statements")
+            };
+            let Some(blank_line) = boundary_blank_line(previous.target, next.target, list.expanded)
+            else {
+                continue;
+            };
+            let separator = if blank_line {
+                newline.repeat(2)
+            } else {
+                newline.to_owned()
+            };
+            let span = Span::new(previous.span.end, next.span.start);
+            let indent = if list.expanded {
+                item_indent.clone()
+            } else {
+                existing_boundary_indent(
+                    source,
+                    comments,
+                    span,
+                    previous.span.start,
+                    next.span.start,
+                )
+            };
+            append_boundary_edit(source, comments, span, &separator, &indent, edits)?;
+        }
+
+        if list.expanded
+            && let ListContainer::Braced { close, .. } = list.container
+        {
+            let base_indent = indents.list_base_indent(source, lists, switches, list_index);
+            append_boundary_edit(
+                source,
+                comments,
+                Span::new(list.items.last().unwrap().span.end, close.start),
+                newline,
+                &base_indent,
+                edits,
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+fn append_switch_layout_edits(
+    source: &str,
+    comments: &[Comment],
+    newline: &str,
+    lists: &[StatementList],
+    switches: &[SwitchLayout],
+    indents: &mut LayoutIndents,
+    edits: &mut Vec<Edit>,
+) -> Result<(), FormatError> {
+    for (switch_index, switch) in switches
+        .iter()
+        .enumerate()
+        .filter(|(_, switch)| switch.expanded)
+    {
+        if switch.cases.is_empty() {
+            continue;
+        }
+        let switch_indent = indents.switch_indent(source, lists, switches, switch_index);
+        let case_indent = format!("{switch_indent}  ");
+        append_boundary_edit(
+            source,
+            comments,
+            Span::new(switch.open.end, switch.cases[0].start),
+            newline,
+            &case_indent,
+            edits,
+        )?;
+        for pair in switch.cases.windows(2) {
+            append_boundary_edit(
+                source,
+                comments,
+                Span::new(pair[0].end, pair[1].start),
+                newline,
+                &case_indent,
+                edits,
+            )?;
+        }
+        append_boundary_edit(
+            source,
+            comments,
+            Span::new(switch.cases.last().unwrap().end, switch.close.start),
+            newline,
+            &switch_indent,
+            edits,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn boundary_blank_line(
+    previous: StatementTarget,
+    next: StatementTarget,
+    expanded: bool,
+) -> Option<bool> {
+    match (previous, next) {
+        (StatementTarget::Other, StatementTarget::Other) => expanded.then_some(false),
+        (
+            StatementTarget::Import { multiline: false },
+            StatementTarget::Import { multiline: false },
+        )
+        | (
+            StatementTarget::Variable { multiline: false },
+            StatementTarget::Variable { multiline: false },
+        ) => Some(false),
+        _ => Some(true),
+    }
+}
+
+fn append_boundary_edit(
+    source: &str,
+    comments: &[Comment],
+    span: Span,
+    separator: &str,
+    indent: &str,
+    edits: &mut Vec<Edit>,
+) -> Result<(), FormatError> {
+    let original = source_slice(source, span)?;
+    let formatted = format_boundary_separator(source, span, comments, separator, indent)?;
+    if original != formatted {
+        edits.push(Edit {
+            start: span.start,
+            end: span.end,
+            replacement: formatted,
+        });
+    }
+    Ok(())
+}
+
+fn existing_boundary_indent(
+    source: &str,
+    comments: &[Comment],
+    span: Span,
+    previous_start: u32,
+    next_start: u32,
+) -> String {
+    let anchor = comments_in_span(comments, span)
+        .iter()
+        .find(|comment| comment.position == CommentPosition::Leading)
+        .map_or(next_start, |comment| comment.span.start);
+    let indent = line_indent_at(source, anchor);
+    let boundary_is_multiline = source
+        .get(span.start as usize..span.end as usize)
+        .is_some_and(contains_line_break);
+    if !indent.is_empty() || boundary_is_multiline {
+        return indent;
+    }
+    line_indent_at(source, previous_start)
+}
+
+struct LayoutIndents {
+    list_bases: Vec<Option<String>>,
+    list_items: Vec<Option<String>>,
+    switches: Vec<Option<String>>,
+}
+
+impl LayoutIndents {
+    fn new(list_count: usize, switch_count: usize) -> Self {
+        Self {
+            list_bases: vec![None; list_count],
+            list_items: vec![None; list_count],
+            switches: vec![None; switch_count],
+        }
+    }
+
+    fn item_indent(
+        &mut self,
+        source: &str,
+        lists: &[StatementList],
+        switches: &[SwitchLayout],
+        list_index: usize,
+    ) -> String {
+        if let Some(indent) = self.list_items[list_index].clone() {
+            return indent;
+        }
+        indent_resolution();
+        let indent = match lists[list_index].container {
+            ListContainer::Program { .. } => String::new(),
+            ListContainer::Braced { .. } => {
+                format!(
+                    "{}  ",
+                    self.list_base_indent(source, lists, switches, list_index)
+                )
+            }
+            ListContainer::SwitchCase { switch_index, .. } => {
+                format!(
+                    "{}    ",
+                    self.switch_indent(source, lists, switches, switch_index)
+                )
+            }
+        };
+        self.list_items[list_index] = Some(indent.clone());
+        indent
+    }
+
+    fn list_base_indent(
+        &mut self,
+        source: &str,
+        lists: &[StatementList],
+        switches: &[SwitchLayout],
+        list_index: usize,
+    ) -> String {
+        if let Some(indent) = self.list_bases[list_index].clone() {
+            return indent;
+        }
+        indent_resolution();
+        let indent = match lists[list_index].parent_item {
+            Some(parent) => {
+                if lists[parent.list_index].expanded {
+                    self.item_indent(source, lists, switches, parent.list_index)
+                } else {
+                    line_indent_at(
+                        source,
+                        lists[parent.list_index].items[parent.item_index].span.start,
+                    )
+                }
+            }
+            None => match lists[list_index].container {
+                ListContainer::Program { .. } => String::new(),
+                ListContainer::Braced { open, .. } => line_indent_at(source, open.start),
+                ListContainer::SwitchCase { switch_index, .. } => {
+                    self.switch_indent(source, lists, switches, switch_index)
+                }
+            },
+        };
+        self.list_bases[list_index] = Some(indent.clone());
+        indent
+    }
+
+    fn switch_indent(
+        &mut self,
+        source: &str,
+        lists: &[StatementList],
+        switches: &[SwitchLayout],
+        switch_index: usize,
+    ) -> String {
+        if let Some(indent) = self.switches[switch_index].clone() {
+            return indent;
+        }
+        indent_resolution();
+        let switch = &switches[switch_index];
+        let indent = if let Some(parent) = switch.parent_item {
+            if lists[parent.list_index].expanded {
+                self.item_indent(source, lists, switches, parent.list_index)
+            } else {
+                line_indent_at(
+                    source,
+                    lists[parent.list_index].items[parent.item_index].span.start,
+                )
+            }
+        } else {
+            line_indent_at(source, switch.span.start)
+        };
+        self.switches[switch_index] = Some(indent.clone());
+        indent
+    }
+}
+
+fn line_indent_at(source: &str, offset: u32) -> String {
+    let prefix = source.get(..offset as usize).unwrap_or(source);
+    let line = prefix.rsplit_once('\n').map_or(prefix, |(_, line)| line);
+    if line
+        .chars()
+        .all(|character| matches!(character, ' ' | '\t' | '\r'))
+    {
+        line.trim_end_matches('\r').to_owned()
+    } else {
+        String::new()
+    }
 }
 
 fn format_boundary_separator(
@@ -274,12 +1027,13 @@ fn format_boundary_separator(
     span: Span,
     comments: &[Comment],
     statement_separator: &str,
+    indent: &str,
 ) -> Result<String, FormatError> {
     let boundary_comments = comments_in_span(comments, span);
     if boundary_comments.is_empty() {
         let separator = source_slice(source, span)?;
         return if separator.chars().all(char::is_whitespace) {
-            Ok(statement_separator.to_owned())
+            Ok(format!("{statement_separator}{indent}"))
         } else {
             Ok(separator.to_owned())
         };
@@ -301,6 +1055,7 @@ fn format_boundary_separator(
     let mut output = String::new();
     output.push_str(source_slice(source, Span::new(span.start, trailing_end))?);
     output.push_str(statement_separator);
+    output.push_str(indent);
     output.push_str(source_slice(source, Span::new(leading_start, span.end))?);
     Ok(output)
 }
@@ -713,7 +1468,10 @@ mod tests {
 
     use oxc_allocator::Allocator;
 
-    use super::{CORRUPT_REWRITE_FOR_TEST, SPAN_LOOKUP_COMPARISONS, parse, source_type, verify};
+    use super::{
+        CORRUPT_REWRITE_FOR_TEST, INDENT_RESOLUTIONS, SPAN_LOOKUP_COMPARISONS, parse, source_type,
+        verify,
+    };
     use crate::{FormatConfig, RulesConfig, format_text, resolve_config};
 
     fn format(source: &str) -> String {
@@ -721,8 +1479,12 @@ mod tests {
     }
 
     fn format_with(source: &str, config: FormatConfig) -> String {
+        format_file_with("sample.ts", source, config)
+    }
+
+    fn format_file_with(file_name: &str, source: &str, config: FormatConfig) -> String {
         let config = resolve_config(config).unwrap();
-        format_text(Path::new("sample.ts"), source, &config)
+        format_text(Path::new(file_name), source, &config)
             .unwrap()
             .unwrap_or_else(|| source.to_owned())
     }
@@ -839,7 +1601,7 @@ mod tests {
         let output = format(source);
         assert_eq!(
             output,
-            "import { a, b } from \"pkg\";\n\nconst odd={ untouched :true,nested:[1,  2] };\nexport{odd};\nconst quote=\"double\""
+            "import { a, b } from \"pkg\";\n\nconst odd={ untouched :true,nested:[1,  2] };\n\nexport{odd};\n\nconst quote=\"double\""
         );
         assert!(!output.ends_with('\n'));
     }
@@ -876,10 +1638,13 @@ mod tests {
     }
 
     #[test]
-    fn disabling_imports_preserves_the_complete_source() {
+    fn disabling_all_rules_preserves_the_complete_source() {
         let source = "import{a,b}from'x';const value={raw:true};";
         let config = resolve_config(FormatConfig {
-            rules: RulesConfig { imports: false },
+            rules: RulesConfig {
+                imports: false,
+                variables: false,
+            },
             ..FormatConfig::default()
         })
         .unwrap();
@@ -962,6 +1727,33 @@ mod tests {
     }
 
     #[test]
+    fn nested_layout_indent_resolution_stays_linear() {
+        let depth = 128;
+        let mut source = String::new();
+        for index in 0..depth {
+            write!(source, "function f{index}(){{").unwrap();
+        }
+        source.push_str("const value=1;work();");
+        for _ in 0..depth {
+            source.push_str("finish();}");
+        }
+        let config = resolve_config(FormatConfig {
+            verify_ast: false,
+            ..FormatConfig::default()
+        })
+        .unwrap();
+
+        INDENT_RESOLUTIONS.set(0);
+        format_text(Path::new("nested-functions.ts"), &source, &config).unwrap();
+        let resolutions = INDENT_RESOLUTIONS.get();
+        assert!(resolutions > depth);
+        assert!(
+            resolutions < depth * 4,
+            "indent resolution performed {resolutions} steps for {depth} nested functions"
+        );
+    }
+
+    #[test]
     fn keeps_boundary_comments_attached_while_normalizing_import_spacing() {
         let source = "import a from'a'; // trailing\n// leading\nconst value={raw:true};";
         let output = format(source);
@@ -979,6 +1771,191 @@ mod tests {
             format("'use strict';import value from'pkg';"),
             "'use strict';\n\nimport value from 'pkg';"
         );
+    }
+
+    #[test]
+    fn applies_the_variable_spacing_matrix_in_both_directions() {
+        let source = "const a=1;let b=2;\nvar c={\n x:1\n};const d=4;\nrun();let e=5;";
+        let expected =
+            "const a=1;\nlet b=2;\n\nvar c={\n x:1\n};\n\nconst d=4;\n\nrun();\n\nlet e=5;";
+        assert_eq!(format(source), expected);
+        assert_eq!(format(expected), expected);
+    }
+
+    #[test]
+    fn preserves_variable_declaration_contents_and_line_width_scope() {
+        let source = "const { a,\n b }: Value = make(  1,2), other=[1,  2];let next=3;";
+        let output = format_with(
+            source,
+            FormatConfig {
+                line_width: 1,
+                ..FormatConfig::default()
+            },
+        );
+        assert_eq!(
+            output,
+            "const { a,\n b }: Value = make(  1,2), other=[1,  2];\n\nlet next=3;"
+        );
+        assert!(output.contains("make(  1,2), other=[1,  2]"));
+    }
+
+    #[test]
+    fn keeps_import_and_variable_rules_independent() {
+        let source = "import{a}from'x';const b=1;let c=2;run();";
+        let variables_only = format_with(
+            source,
+            FormatConfig {
+                rules: RulesConfig {
+                    imports: false,
+                    variables: true,
+                },
+                ..FormatConfig::default()
+            },
+        );
+        assert_eq!(
+            variables_only,
+            "import{a}from'x';\n\nconst b=1;\nlet c=2;\n\nrun();"
+        );
+
+        let imports_only = format_with(
+            source,
+            FormatConfig {
+                rules: RulesConfig {
+                    imports: true,
+                    variables: false,
+                },
+                ..FormatConfig::default()
+            },
+        );
+        assert_eq!(
+            imports_only,
+            "import { a } from 'x';\n\nconst b=1;let c=2;run();"
+        );
+
+        assert_eq!(
+            format("const before=1;import{value}from'pkg';const after=2;"),
+            "const before=1;\n\nimport { value } from 'pkg';\n\nconst after=2;"
+        );
+    }
+
+    #[test]
+    fn unfolds_inline_blocks_and_cascades_two_space_indentation() {
+        let source = "function outer(){if(ok){const a=1;work();}finish();}";
+        let expected =
+            "function outer(){\n  if(ok){\n    const a=1;\n\n    work();\n  }\n  finish();\n}";
+        assert_eq!(format(source), expected);
+        assert_eq!(format(expected), expected);
+
+        assert_eq!(
+            format("function f(){const a=1;}"),
+            "function f(){const a=1;}"
+        );
+        assert_eq!(
+            format("function f(){work();finish();}"),
+            "function f(){work();finish();}"
+        );
+
+        let multiline_parent = "function outer() {\n  if(ok){const a=1;work();}\n}";
+        let multiline_expected =
+            "function outer() {\n  if(ok){\n    const a=1;\n\n    work();\n  }\n}";
+        assert_eq!(format(multiline_parent), multiline_expected);
+    }
+
+    #[test]
+    fn unfolds_switch_cases_with_label_and_consequent_indentation() {
+        let source = "switch(x){case 1: const a=1;run();case 2: let b=2;done();}";
+        let expected = "switch(x){\n  case 1:\n    const a=1;\n\n    run();\n  case 2:\n    let b=2;\n\n    done();\n}";
+        assert_eq!(format(source), expected);
+        assert_eq!(format(expected), expected);
+
+        let nested = "function f(){switch(x){case 1: const a=1;run();}finish();}";
+        let nested_expected = "function f(){\n  switch(x){\n    case 1:\n      const a=1;\n\n      run();\n  }\n  finish();\n}";
+        assert_eq!(format(nested), nested_expected);
+
+        let object_discriminant = "switch({x:1}){case 1: const a=1;run();}";
+        let object_expected = "switch({x:1}){\n  case 1:\n    const a=1;\n\n    run();\n}";
+        assert_eq!(format(object_discriminant), object_expected);
+    }
+
+    #[test]
+    fn formats_existing_nested_statement_lists_without_reindenting_them() {
+        let source = "function f() {\n    before();\n  const a=1;\n      after();\n}";
+        let expected = "function f() {\n    before();\n\n  const a=1;\n\n      after();\n}";
+        assert_eq!(format(source), expected);
+
+        let containers = "class C { static {\nconst a=1;work();\n} }\nnamespace Live {\nconst b=2;work();\n}\ntry {\nlet c=3;work();\n} catch {\nvar d=4;work();\n} finally {\nconst e=5;work();\n}";
+        let output = format(containers);
+        for declaration in [
+            "const a=1;",
+            "const b=2;",
+            "let c=3;",
+            "var d=4;",
+            "const e=5;",
+        ] {
+            assert!(
+                output.contains(&format!("{declaration}\n\nwork();")),
+                "{output}"
+            );
+        }
+    }
+
+    #[test]
+    fn preserves_existing_indent_when_splitting_inline_boundaries() {
+        let source = "function f() {\n  const a=1;work();\n}\nswitch(x) {\n  case 1:\n    let b=2;done();\n}";
+        let expected = "function f() {\n  const a=1;\n\n  work();\n}\nswitch(x) {\n  case 1:\n    let b=2;\n\n    done();\n}";
+        assert_eq!(format(source), expected);
+        assert_eq!(format(expected), expected);
+    }
+
+    #[test]
+    fn excludes_non_runtime_and_ambient_variable_declarations() {
+        let source = "export const exported=1;export let mutable=2;export var legacy=3;declare const ambient:number;using resource=get();await using asyncResource=getAsync();for(let i=0;i<1;i++)work();for(const item of items)use(item);";
+        assert_eq!(format(source), source);
+
+        for ambient in [
+            "declare namespace Ambient { const value:number; function work():void; }",
+            "declare module 'pkg' { const value:number; function work():void; }",
+            "declare global { const value:number; function work():void; }",
+        ] {
+            assert_eq!(format(ambient), ambient);
+        }
+
+        let definition = "const first:number;const second:string;";
+        for file_name in ["types.d.ts", "types.d.mts", "types.d.cts"] {
+            assert_eq!(
+                format_file_with(file_name, definition, FormatConfig::default()),
+                definition
+            );
+        }
+    }
+
+    #[test]
+    fn formats_runtime_variables_in_ordinary_typescript_namespaces() {
+        assert_eq!(
+            format("namespace Live { const value=1;work(); }"),
+            "namespace Live {\n  const value=1;\n\n  work();\n}"
+        );
+    }
+
+    #[test]
+    fn treats_directives_as_non_variable_siblings() {
+        assert_eq!(
+            format("function f(){'use strict';const value=1;}"),
+            "function f(){\n  'use strict';\n\n  const value=1;\n}"
+        );
+    }
+
+    #[test]
+    fn preserves_comments_bom_crlf_semicolons_and_eof_shape_for_variables() {
+        let source =
+            "\u{feff}function f(){const a=1; // trailing\r\n// leading\r\nlet b=2}\r\nconst c=3";
+        let output = format(source);
+        assert_eq!(
+            output,
+            "\u{feff}function f(){const a=1; // trailing\r\n// leading\r\nlet b=2}\r\n\r\nconst c=3"
+        );
+        assert!(!output.replace("\r\n", "").contains('\n'));
+        assert!(!output.ends_with('\n'));
     }
 
     #[test]

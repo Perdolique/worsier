@@ -23,7 +23,7 @@ const CONFIG_FILE: &str = "worsier.jsonc";
 #[command(
     name = "worsier",
     version,
-    about = "Format JavaScript and TypeScript imports with Worsier"
+    about = "Format JavaScript and TypeScript imports and variable boundaries with Worsier"
 )]
 struct Args {
     /// Create a complete worsier.jsonc in the current directory.
@@ -671,7 +671,7 @@ mod tests {
         assert!(load_config_with_override(&path, false).is_ok());
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
-            "{\n  \"$schema\": \"./node_modules/worsier/configuration_schema.json\",\n  \"lineWidth\": 120,\n  \"verifyAst\": true,\n  \"rules\": {\n    \"imports\": true\n  },\n  \"ignorePatterns\": []\n}\n"
+            "{\n  \"$schema\": \"./node_modules/worsier/configuration_schema.json\",\n  \"lineWidth\": 120,\n  \"verifyAst\": true,\n  \"rules\": {\n    \"imports\": true,\n    \"variables\": true\n  },\n  \"ignorePatterns\": []\n}\n"
         );
         assert!(init_config(directory.path()).is_err());
     }

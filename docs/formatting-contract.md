@@ -1,7 +1,7 @@
 # Worsier formatting contract
 
-Worsier rewrites static `import` declarations. Every source range outside an import declaration
-or an import statement boundary is preserved byte-for-byte.
+Worsier rewrites static `import` declarations and whitespace boundaries around direct runtime
+variable declarations. It does not rewrite the contents of those variable declarations.
 
 ## Import layout
 
@@ -23,27 +23,48 @@ import {
 } from 'package-with-a-long-name'
 ```
 
-## Import boundaries
+## Statement boundaries
 
-Final statement shapes determine the separator:
+Final import shapes and original variable-declaration shapes determine the separator. When both
+rules apply, the stronger separator wins:
 
 | Adjacent statements | Separator |
 | --- | --- |
 | single-line import to single-line import | one line break |
-| single-line import next to multiline import | one blank line |
-| multiline import to multiline import | one blank line |
+| import to import when either import is multiline | one blank line |
 | any import next to non-import code | one blank line |
-| non-import to non-import | original source |
+| single-line variable to single-line variable | one line break |
+| variable to variable when either declaration is multiline | one blank line |
+| any variable next to other code | one blank line |
+| other code to other code | original source, or one line break in an unfolded inline list |
 
 One blank line means exactly two LF or CRLF sequences with no whitespace on the empty line. Worsier
 does not add whitespace at the start or end of a file.
 
+## Runtime variable declarations
+
+- `rules.variables` applies only to direct statement-list `const`, `let`, and `var` declarations.
+- The declaration span is preserved: initializers, destructuring, types, comments, commas,
+  semicolons, and multi-declarator statements are not reformatted or split.
+- Exported declarations, explicit `declare` declarations, declaration files, declarations inside
+  declared namespaces/modules/globals, `using`, `await using`, and declarations in `for` headers
+  are excluded. Ambient declarations may be supported in the future, but are not part of this rule;
+  no separate future configuration key is reserved.
+- Statement lists include files, function bodies, ordinary blocks, `try`/`catch`/`finally` blocks,
+  class static blocks, TypeScript module/namespace blocks, and each switch-case consequent.
+- A single-line list with at least two items and a direct runtime variable is unfolded. Every
+  sibling gets its own line, variable boundaries follow the table above, and nested inline
+  containers cascade outward with two-space indentation. Switch labels use one indentation level
+  and their consequent statements use two.
+- A lone runtime variable in an inline block does not unfold that block. Existing multiline
+  containers keep their current indentation.
+
 ## Source and semantic guarantees
 
-- Object literals, destructuring, exports, type literals, arrays, quote choices, semicolons,
-  indentation, and the final newline outside static imports are preserved byte-for-byte.
-- Existing LF or CRLF line endings are used for rewritten imports and separators. A UTF-8 BOM is
-  preserved.
+- Variable declaration contents and source outside static imports or rewritten whitespace
+  boundaries are preserved byte-for-byte.
+- Existing LF or CRLF line endings are used for rewritten imports and boundaries. A UTF-8 BOM is
+  preserved, as are semicolons and the presence or absence of a final newline.
 - When `verifyAst` is enabled, Worsier reparses the output and requires Oxc `Program::content_eq`
   with the input.
 - Formatting an already formatted source produces no further change.
@@ -56,11 +77,13 @@ does not add whitespace at the start or end of a file.
   "lineWidth": 120,
   "verifyAst": true,
   "rules": {
-    "imports": true
+    "imports": true,
+    "variables": true
   },
   "ignorePatterns": []
 }
 ```
 
-Unknown keys are configuration errors. `rules.imports: false` disables both import layout and import
-boundary spacing. The CLI flag `--no-verify` disables AST verification for one invocation.
+Unknown keys are configuration errors. `rules.imports` and `rules.variables` independently control
+their layouts and boundary spacing; disabling both returns the source unchanged. `lineWidth` only
+controls import layout. The CLI flag `--no-verify` disables AST verification for one invocation.
