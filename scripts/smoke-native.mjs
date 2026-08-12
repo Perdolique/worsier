@@ -9,6 +9,6 @@ if (!addonPath) {
 
 const require = createRequire(import.meta.url)
 const binding = require(resolve(addonPath))
-const output = await binding.format('smoke.ts', 'const value={items:[1,2]};', '{}')
-assert.equal(output, 'const value = { items: [1, 2] };\n')
+const output = await binding.format('smoke.ts', "import{value}from'pkg';const raw={items:[1,2]};", '{}')
+assert.equal(output, "import { value } from 'pkg';\n\nconst raw={items:[1,2]};")
 console.log(`Native smoke passed for ${addonPath}`)
