@@ -1,14 +1,23 @@
 {
   "name": "worsier-linux-x64-gnu",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Perdolique/worsier.git"
   },
-  "os": ["linux"],
-  "cpu": ["x64"],
-  "libc": ["glibc"],
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "libc": [
+    "glibc"
+  ],
   "main": "worsier.linux-x64-gnu.node",
-  "files": ["worsier.linux-x64-gnu.node", "LICENSE"]
+  "files": [
+    "worsier.linux-x64-gnu.node",
+    "LICENSE"
+  ]
 }

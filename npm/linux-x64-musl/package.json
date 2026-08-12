@@ -1,14 +1,23 @@
 {
   "name": "worsier-linux-x64-musl",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Perdolique/worsier.git"
   },
-  "os": ["linux"],
-  "cpu": ["x64"],
-  "libc": ["musl"],
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "libc": [
+    "musl"
+  ],
   "main": "worsier.linux-x64-musl.node",
-  "files": ["worsier.linux-x64-musl.node", "LICENSE"]
+  "files": [
+    "worsier.linux-x64-musl.node",
+    "LICENSE"
+  ]
 }
