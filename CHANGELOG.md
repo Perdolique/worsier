@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.4](https://github.com/Perdolique/worsier/compare/v1.0.3...v1.0.4) (2026-08-12)
+
+
+### Bug Fixes
+
+* **release:** trigger patch release ([e9c652e](https://github.com/Perdolique/worsier/commit/e9c652e8d81b74b0d156198c0aaa9eb3143c32d4))
+
 ## [1.0.3](https://github.com/Perdolique/worsier/compare/v1.0.2...v1.0.3) (2026-08-12)
 
 
