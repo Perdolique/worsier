@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.0.0](https://github.com/Perdolique/worsier/compare/v1.1.0...v2.0.0) (2026-08-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* **formatter:** rules.imports and rules.variables were removed. Use rules.importLayout and rules.statementSpacing instead.
+
+### Features
+
+* **formatter:** split layout and spacing ([252513f](https://github.com/Perdolique/worsier/commit/252513fbcd1a3b26c25d255a1b53c0e93ff41702))
+* **formatter:** split layout and spacing rules ([0790671](https://github.com/Perdolique/worsier/commit/0790671963e6ce3d46a6ae7b327d4d58c5d840dd))
+
+
+### Bug Fixes
+
+* **formatter:** harden spacing rules ([b670106](https://github.com/Perdolique/worsier/commit/b670106aab82c3a5ca7b9ee0c064a5a202b4856f))
+
 ## [1.1.0](https://github.com/Perdolique/worsier/compare/v1.0.6...v1.1.0) (2026-08-12)
 
 
