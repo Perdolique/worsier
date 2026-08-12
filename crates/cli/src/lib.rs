@@ -23,7 +23,7 @@ const CONFIG_FILE: &str = "worsier.jsonc";
 #[command(
     name = "worsier",
     version,
-    about = "Format JavaScript and TypeScript with Worsier"
+    about = "Format JavaScript and TypeScript imports with Worsier"
 )]
 struct Args {
     /// Create a complete worsier.jsonc in the current directory.
@@ -213,11 +213,10 @@ fn init_config(directory: &Path) -> Result<()> {
     if path.exists() {
         bail!("{} already exists", path.display());
     }
-    let mut config = FormatConfig {
+    let config = FormatConfig {
         schema: Some("./node_modules/worsier/configuration_schema.json".to_owned()),
         ..FormatConfig::default()
     };
-    config.statement_spacing = Vec::new();
     let json = serde_json::to_string_pretty(&config)?;
     fs::write(&path, format!("{json}\n"))?;
     println!("Created {}", path.display());
@@ -454,6 +453,8 @@ fn atomic_write(path: &Path, output: &[u8]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::{CONFIG_FILE, init_config, load_config_with_override};
 
     #[test]
@@ -462,6 +463,10 @@ mod tests {
         init_config(directory.path()).unwrap();
         let path = directory.path().join(CONFIG_FILE);
         assert!(load_config_with_override(&path, false).is_ok());
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "{\n  \"$schema\": \"./node_modules/worsier/configuration_schema.json\",\n  \"lineWidth\": 120,\n  \"verifyAst\": true,\n  \"rules\": {\n    \"imports\": true\n  },\n  \"ignorePatterns\": []\n}\n"
+        );
         assert!(init_config(directory.path()).is_err());
     }
 }

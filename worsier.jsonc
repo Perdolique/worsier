@@ -1,29 +1,9 @@
 {
   "$schema": "./packages/npm/configuration_schema.json",
-  "lineWidth": 100,
-  "indentStyle": "space",
-  "indentWidth": 2,
-  "lineEnding": "preserve",
-  "quoteStyle": "single",
-  "semicolons": "always",
-  "trailingCommas": "multiline",
-  "bracketSpacing": true,
-  "arrowParentheses": "always",
-  "finalNewline": true,
+  "lineWidth": 120,
   "verifyAst": true,
-  "objects": {
-    "layout": "auto",
-    "propertyLayout": "auto",
-    "whenArrayElement": "inherit"
+  "rules": {
+    "imports": true
   },
-  "arrays": {
-    "layout": "auto",
-    "elementLayout": "auto",
-    "objectElements": "inherit"
-  },
-  "imports": {
-    "specifierLayout": "auto"
-  },
-  "statementSpacing": [],
   "ignorePatterns": []
 }

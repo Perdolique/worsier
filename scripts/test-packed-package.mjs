@@ -22,11 +22,11 @@ await writeFile(join(project, 'package.json'), '{"type":"module","private":true}
 run('npm', ['install', '--ignore-scripts', rootTarball, platformTarball], project)
 
 run(join(project, 'node_modules/.bin/worsier'), ['--init'], project)
-await writeFile(join(project, 'sample.ts'), 'const value={items:[1,2]};')
+await writeFile(join(project, 'sample.ts'), "import{value}from'pkg';const raw={items:[1,2]};")
 run(join(project, 'node_modules/.bin/worsier'), ['--write', 'sample.ts'], project)
 assert.equal(
   await readFile(join(project, 'sample.ts'), 'utf8'),
-  'const value = { items: [1, 2] };\n'
+  "import { value } from 'pkg';\n\nconst raw={items:[1,2]};"
 )
 
 const api = run(
@@ -34,11 +34,11 @@ const api = run(
   [
     '--input-type=module',
     '--eval',
-    "import { format } from 'worsier'; console.log(await format('sample.ts', 'const packed=[1,2];', {}))"
+    `import { format } from 'worsier'; console.log(await format('sample.ts', "import{packed}from'pkg';const raw=[1,2];", {}))`
   ],
   project
 )
-assert.equal(api.stdout, 'const packed = [1, 2];\n\n')
+assert.equal(api.stdout, "import { packed } from 'pkg';\n\nconst raw=[1,2];\n")
 
 console.log(`Packed installation smoke passed in ${basename(project)}`)
 

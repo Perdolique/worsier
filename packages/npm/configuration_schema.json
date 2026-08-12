@@ -9,26 +9,6 @@
         "null"
       ]
     },
-    "arrays": {
-      "$ref": "#/$defs/ArrayConfig",
-      "default": {
-        "elementLayout": "auto",
-        "layout": "auto",
-        "objectElements": "inherit"
-      }
-    },
-    "arrowParentheses": {
-      "$ref": "#/$defs/ArrowParentheses",
-      "default": "always"
-    },
-    "bracketSpacing": {
-      "type": "boolean",
-      "default": true
-    },
-    "finalNewline": {
-      "type": "boolean",
-      "default": true
-    },
     "ignorePatterns": {
       "type": "array",
       "default": [],
@@ -36,60 +16,17 @@
         "type": "string"
       }
     },
-    "imports": {
-      "$ref": "#/$defs/ImportConfig",
-      "default": {
-        "specifierLayout": "auto"
-      }
-    },
-    "indentStyle": {
-      "$ref": "#/$defs/IndentStyle",
-      "default": "space"
-    },
-    "indentWidth": {
-      "type": "integer",
-      "format": "uint8",
-      "default": 2,
-      "maximum": 24,
-      "minimum": 0
-    },
-    "lineEnding": {
-      "$ref": "#/$defs/LineEnding",
-      "default": "preserve"
-    },
     "lineWidth": {
       "type": "integer",
-      "format": "uint16",
-      "default": 100,
-      "maximum": 320,
+      "format": "uint32",
+      "default": 120,
       "minimum": 1
     },
-    "objects": {
-      "$ref": "#/$defs/ObjectConfig",
+    "rules": {
+      "$ref": "#/$defs/RulesConfig",
       "default": {
-        "layout": "auto",
-        "propertyLayout": "auto",
-        "whenArrayElement": "inherit"
+        "imports": true
       }
-    },
-    "quoteStyle": {
-      "$ref": "#/$defs/QuoteStyle",
-      "default": "single"
-    },
-    "semicolons": {
-      "$ref": "#/$defs/Semicolons",
-      "default": "always"
-    },
-    "statementSpacing": {
-      "type": "array",
-      "default": [],
-      "items": {
-        "$ref": "#/$defs/StatementSpacingRule"
-      }
-    },
-    "trailingCommas": {
-      "$ref": "#/$defs/TrailingCommas",
-      "default": "multiline"
     },
     "verifyAst": {
       "type": "boolean",
@@ -98,201 +35,15 @@
   },
   "additionalProperties": false,
   "$defs": {
-    "ArrayConfig": {
+    "RulesConfig": {
       "type": "object",
       "properties": {
-        "elementLayout": {
-          "$ref": "#/$defs/CollectionItemLayout",
-          "default": "auto"
-        },
-        "layout": {
-          "$ref": "#/$defs/CollectionLayout",
-          "default": "auto"
-        },
-        "objectElements": {
-          "$ref": "#/$defs/ArrayObjectLayout",
-          "default": "inherit"
+        "imports": {
+          "type": "boolean",
+          "default": true
         }
       },
       "additionalProperties": false
-    },
-    "ArrayObjectLayout": {
-      "type": "string",
-      "enum": [
-        "inherit",
-        "onePerLine"
-      ]
-    },
-    "ArrowParentheses": {
-      "type": "string",
-      "enum": [
-        "always",
-        "asNeeded"
-      ]
-    },
-    "CollectionItemLayout": {
-      "type": "string",
-      "enum": [
-        "auto",
-        "preserve",
-        "onePerLine"
-      ]
-    },
-    "CollectionLayout": {
-      "type": "string",
-      "enum": [
-        "auto",
-        "preserve",
-        "singleLine",
-        "multiLine"
-      ]
-    },
-    "ImportConfig": {
-      "type": "object",
-      "properties": {
-        "specifierLayout": {
-          "$ref": "#/$defs/CollectionItemLayout",
-          "default": "auto"
-        }
-      },
-      "additionalProperties": false
-    },
-    "IndentStyle": {
-      "type": "string",
-      "enum": [
-        "space",
-        "tab"
-      ]
-    },
-    "LineEnding": {
-      "type": "string",
-      "enum": [
-        "preserve",
-        "lf",
-        "crlf"
-      ]
-    },
-    "LineShape": {
-      "type": "string",
-      "enum": [
-        "any",
-        "singleLine",
-        "multiLine"
-      ]
-    },
-    "ObjectArrayLayout": {
-      "type": "string",
-      "enum": [
-        "inherit",
-        "multiLine"
-      ]
-    },
-    "ObjectConfig": {
-      "type": "object",
-      "properties": {
-        "layout": {
-          "$ref": "#/$defs/CollectionLayout",
-          "default": "auto"
-        },
-        "propertyLayout": {
-          "$ref": "#/$defs/CollectionItemLayout",
-          "default": "auto"
-        },
-        "whenArrayElement": {
-          "$ref": "#/$defs/ObjectArrayLayout",
-          "default": "inherit"
-        }
-      },
-      "additionalProperties": false
-    },
-    "QuoteStyle": {
-      "type": "string",
-      "enum": [
-        "single",
-        "double"
-      ]
-    },
-    "Semicolons": {
-      "type": "string",
-      "enum": [
-        "always",
-        "asNeeded"
-      ]
-    },
-    "StatementKind": {
-      "type": "string",
-      "enum": [
-        "any",
-        "import",
-        "export",
-        "const",
-        "let",
-        "var",
-        "function",
-        "class",
-        "type",
-        "interface",
-        "enum",
-        "namespace",
-        "other"
-      ]
-    },
-    "StatementScope": {
-      "type": "string",
-      "enum": [
-        "any",
-        "topLevel",
-        "block"
-      ]
-    },
-    "StatementSelector": {
-      "type": "object",
-      "properties": {
-        "kind": {
-          "$ref": "#/$defs/StatementKind",
-          "default": "any"
-        },
-        "lineShape": {
-          "$ref": "#/$defs/LineShape",
-          "default": "any"
-        }
-      },
-      "additionalProperties": false
-    },
-    "StatementSpacingRule": {
-      "type": "object",
-      "properties": {
-        "blankLines": {
-          "type": "integer",
-          "format": "uint8",
-          "maximum": 255,
-          "minimum": 0
-        },
-        "next": {
-          "$ref": "#/$defs/StatementSelector"
-        },
-        "previous": {
-          "$ref": "#/$defs/StatementSelector"
-        },
-        "scope": {
-          "$ref": "#/$defs/StatementScope",
-          "default": "any"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "previous",
-        "next",
-        "blankLines"
-      ]
-    },
-    "TrailingCommas": {
-      "type": "string",
-      "enum": [
-        "none",
-        "multiline",
-        "all"
-      ]
     }
   }
 }

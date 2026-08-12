@@ -13,7 +13,6 @@ version = "0.1.0"
 [workspace.dependencies]
 anyhow = "1.0.100"
 clap = { version = "4.5.54", features = ["derive"] }
-dprint-core = { version = "=0.68.3", default-features = false, features = ["formatting"] }
 ignore = "0.4.25"
 jsonc-parser = { version = "0.33.1", features = ["serde"] }
 napi = { version = "3.12.1", default-features = false, features = ["napi8", "tokio_rt"] }
@@ -21,11 +20,8 @@ napi-build = "2.3.1"
 napi-derive = "3.6.3"
 oxc_allocator = "=0.144.0"
 oxc_ast = "=0.144.0"
-oxc_ast_visit = "=0.144.0"
-oxc_diagnostics = "=0.144.0"
 oxc_parser = { version = "=0.144.0", default-features = false }
 oxc_span = "=0.144.0"
-oxc_syntax = "=0.144.0"
 rayon = "1.11.0"
 schemars = "1.2.2"
 serde = { version = "1.0.228", features = ["derive"] }
