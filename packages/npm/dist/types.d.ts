@@ -1,4 +1,3 @@
-export type StatementSpacingMode = 'separate' | 'compact' | 'off';
 export interface FormatConfig {
     $schema?: string | null;
     ignorePatterns?: string[];
@@ -11,6 +10,6 @@ export interface RulesConfig {
     statementSpacing?: StatementSpacingConfig;
 }
 export interface StatementSpacingConfig {
-    imports?: StatementSpacingMode;
-    variableDeclarations?: StatementSpacingMode;
+    imports?: 'separate' | 'compact' | 'off';
+    variableDeclarations?: 'separate' | 'compact' | 'off';
 }

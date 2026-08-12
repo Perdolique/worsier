@@ -105,6 +105,15 @@ break.
 ```
 
 Unknown keys and unknown spacing modes are configuration errors. The removed `rules.imports` and
-`rules.variables` keys are not aliases. When import layout is `false` and both spacing modes are
-`"off"`, formatting returns the source unchanged. `lineWidth` only controls import layout. The CLI
-flag `--no-verify` disables AST verification for one invocation.
+`rules.variables` keys are not aliases. Migrate them with the following exact replacements:
+
+| Removed setting | Replacement |
+| --- | --- |
+| `rules.imports: true` | `rules.importLayout: true` and `rules.statementSpacing.imports: "separate"` |
+| `rules.imports: false` | `rules.importLayout: false` and `rules.statementSpacing.imports: "off"` |
+| `rules.variables: true` | `rules.statementSpacing.variableDeclarations: "separate"` |
+| `rules.variables: false` | `rules.statementSpacing.variableDeclarations: "off"` |
+
+When import layout is `false` and both spacing modes are `"off"`, formatting returns the source
+unchanged. `lineWidth` only controls import layout. The CLI flag `--no-verify` disables AST
+verification for one invocation.

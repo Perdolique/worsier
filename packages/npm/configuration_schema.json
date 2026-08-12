@@ -71,7 +71,6 @@
       "additionalProperties": false
     },
     "StatementSpacingMode": {
-      "title": "StatementSpacingMode",
       "type": "string",
       "enum": [
         "separate",

@@ -60,7 +60,6 @@ impl Default for StatementSpacingConfig {
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
-#[schemars(title = "StatementSpacingMode")]
 #[serde(rename_all = "camelCase")]
 pub enum StatementSpacingMode {
     #[default]
