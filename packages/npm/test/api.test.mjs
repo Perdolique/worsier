@@ -13,7 +13,10 @@ test('formats through the asynchronous native API', async () => {
   assert.equal(output, "import { one, type Two } from 'pkg';\n\nconst value={items:[1,2]};")
 
   const variablesOnly = await format('sample.ts', source, {
-    rules: { imports: false }
+    rules: {
+      importLayout: false,
+      statementSpacing: { imports: 'off' }
+    }
   })
   assert.equal(
     variablesOnly,
@@ -23,14 +26,22 @@ test('formats through the asynchronous native API', async () => {
   const importsOnly = await format(
     'sample.ts',
     "import{value}from'pkg';const first=1;let second=2;",
-    { rules: { variables: false } }
+    { rules: { statementSpacing: { variableDeclarations: 'off' } } }
   )
   assert.equal(importsOnly, "import { value } from 'pkg';\n\nconst first=1;let second=2;")
 
   const disabled = await format('sample.ts', source, {
-    rules: { imports: false, variables: false }
+    rules: {
+      importLayout: false,
+      statementSpacing: { imports: 'off', variableDeclarations: 'off' }
+    }
   })
   assert.equal(disabled, source)
+
+  const partialNested = await format('sample.ts', 'const first=1;work();', {
+    rules: { statementSpacing: { imports: 'compact' } }
+  })
+  assert.equal(partialNested, 'const first=1;\n\nwork();')
 })
 
 test('maps native failures to stable error codes', async () => {
@@ -47,6 +58,17 @@ test('maps native failures to stable error codes', async () => {
     format('sample.ts', 'const value = 1;', { quoteStyle: 'single' }),
     (error) => error.code === 'CONFIG_ERROR' && error.message.includes('quoteStyle')
   )
+  for (const [rules, path] of [
+    [{ imports: true }, 'rules.imports'],
+    [{ variables: true }, 'rules.variables'],
+    [{ statementSpacing: { imports: 'preserve' } }, 'rules.statementSpacing.imports'],
+    [{ statementSpacing: { extra: 'off' } }, 'rules.statementSpacing.extra']
+  ]) {
+    await assert.rejects(
+      format('sample.ts', 'const value = 1;', { rules }),
+      (error) => error.code === 'CONFIG_ERROR' && error.message.includes(path)
+    )
+  }
 })
 
 test('binding import is lazy and missing packages have a targeted diagnostic', async () => {

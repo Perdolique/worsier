@@ -2,7 +2,10 @@ mod config;
 mod error;
 mod rewriter;
 
-pub use config::{FormatConfig, ResolvedConfig, RulesConfig, resolve_config};
+pub use config::{
+    FormatConfig, ResolvedConfig, RulesConfig, StatementSpacingConfig, StatementSpacingMode,
+    resolve_config,
+};
 pub use error::FormatError;
 pub use rewriter::format_text;
 

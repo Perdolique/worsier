@@ -148,7 +148,7 @@ fn partial_rule_configs_keep_sibling_defaults() {
     let directory = tempfile::tempdir().unwrap();
     write(
         &directory.path().join("worsier.jsonc"),
-        r#"{"rules":{"variables":false}}"#,
+        r#"{"rules":{"statementSpacing":{"variableDeclarations":"off"}}}"#,
     );
     let source = "import{a}from'x';const first=1;let second=2;run();";
     write(&directory.path().join("sample.ts"), source);
@@ -162,7 +162,7 @@ fn partial_rule_configs_keep_sibling_defaults() {
 
     write(
         &directory.path().join("worsier.jsonc"),
-        r#"{"rules":{"imports":false}}"#,
+        r#"{"rules":{"importLayout":false,"statementSpacing":{"imports":"off"}}}"#,
     );
     let variables_only = command(directory.path()).arg("sample.ts").output().unwrap();
     assert!(
@@ -179,23 +179,26 @@ fn partial_rule_configs_keep_sibling_defaults() {
 #[test]
 fn configuration_errors_include_the_nested_json_path() {
     let directory = tempfile::tempdir().unwrap();
-    write(
-        &directory.path().join("worsier.jsonc"),
-        r#"{"rules":{"unknown":true}}"#,
-    );
     write(&directory.path().join("sample.ts"), "const value=1;");
 
-    let output = command(directory.path()).arg("sample.ts").output().unwrap();
-    assert_eq!(output.status.code(), Some(2));
-    assert!(stderr(&output).contains("rules.unknown"));
-
-    write(
-        &directory.path().join("worsier.jsonc"),
-        r#"{"quoteStyle":"single"}"#,
-    );
-    let removed = command(directory.path()).arg("sample.ts").output().unwrap();
-    assert_eq!(removed.status.code(), Some(2));
-    assert!(stderr(&removed).contains("quoteStyle"));
+    for (config, path) in [
+        (r#"{"rules":{"imports":true}}"#, "rules.imports"),
+        (r#"{"rules":{"variables":true}}"#, "rules.variables"),
+        (
+            r#"{"rules":{"statementSpacing":{"imports":"preserve"}}}"#,
+            "rules.statementSpacing.imports",
+        ),
+        (
+            r#"{"rules":{"statementSpacing":{"unknown":"off"}}}"#,
+            "rules.statementSpacing.unknown",
+        ),
+        (r#"{"quoteStyle":"single"}"#, "quoteStyle"),
+    ] {
+        write(&directory.path().join("worsier.jsonc"), config);
+        let output = command(directory.path()).arg("sample.ts").output().unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        assert!(stderr(&output).contains(path), "{}", stderr(&output));
+    }
 }
 
 #[test]

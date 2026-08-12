@@ -3,8 +3,11 @@
   "lineWidth": 120,
   "verifyAst": true,
   "rules": {
-    "imports": true,
-    "variables": true
+    "importLayout": true,
+    "statementSpacing": {
+      "imports": "separate",
+      "variableDeclarations": "separate"
+    }
   },
   "ignorePatterns": []
 }

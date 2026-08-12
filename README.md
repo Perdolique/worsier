@@ -20,7 +20,13 @@ import { format } from 'worsier'
 
 const output = await format('example.ts', "import{answer,type Value}from'pkg'", {
   lineWidth: 120,
-  rules: { imports: true, variables: true }
+  rules: {
+    importLayout: true,
+    statementSpacing: {
+      imports: 'separate',
+      variableDeclarations: 'separate'
+    }
+  }
 })
 ```
 
