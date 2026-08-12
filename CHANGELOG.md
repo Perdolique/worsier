@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.3](https://github.com/Perdolique/worsier/compare/v1.0.2...v1.0.3) (2026-08-12)
+
+
+### Bug Fixes
+
+* **npm:** handle Windows tar line endings ([88e04f6](https://github.com/Perdolique/worsier/commit/88e04f6c7dda6a5c54e8f1b559a00497f8105875))
+
 ## [1.0.2](https://github.com/Perdolique/worsier/compare/v1.0.1...v1.0.2) (2026-08-12)
 
 

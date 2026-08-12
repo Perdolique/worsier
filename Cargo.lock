@@ -1512,7 +1512,7 @@ dependencies = [
 
 [[package]]
 name = "worsier-cli"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -1531,7 +1531,7 @@ dependencies = [
 
 [[package]]
 name = "worsier-formatter"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "criterion",
  "oxc_allocator",
@@ -1546,7 +1546,7 @@ dependencies = [
 
 [[package]]
 name = "worsier-napi"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "napi",
  "napi-build",
