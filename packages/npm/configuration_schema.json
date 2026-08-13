@@ -29,7 +29,8 @@
         "statementSpacing": {
           "imports": "separate",
           "variableDeclarations": "separate"
-        }
+        },
+        "trailingCommas": "never"
       }
     },
     "verifyAst": {
@@ -52,6 +53,10 @@
             "imports": "separate",
             "variableDeclarations": "separate"
           }
+        },
+        "trailingCommas": {
+          "$ref": "#/$defs/TrailingCommaMode",
+          "default": "never"
         }
       },
       "additionalProperties": false
@@ -75,6 +80,14 @@
       "enum": [
         "separate",
         "compact",
+        "off"
+      ]
+    },
+    "TrailingCommaMode": {
+      "type": "string",
+      "enum": [
+        "always",
+        "never",
         "off"
       ]
     }

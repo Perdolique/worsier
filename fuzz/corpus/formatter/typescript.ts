@@ -7,3 +7,15 @@ const value = { item: 'text' } satisfies Value<string>;
 namespace Runtime { const first: Value<string> = value; work(); }
 
 switch (value.item) { case 'text': let result: ImportResult; consume(result); }
+
+type Pair<
+  Left,
+  Right,
+> = [
+  Left,
+  Right,
+];
+
+enum State {
+  Ready,
+}

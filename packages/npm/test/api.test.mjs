@@ -34,7 +34,8 @@ test('formats through the asynchronous native API', async () => {
   const disabled = await format('sample.ts', source, {
     rules: {
       importLayout: false,
-      statementSpacing: { imports: 'off', variableDeclarations: 'off' }
+      statementSpacing: { imports: 'off', variableDeclarations: 'off' },
+      trailingCommas: 'off'
     }
   })
   assert.equal(disabled, source)
@@ -43,6 +44,29 @@ test('formats through the asynchronous native API', async () => {
     rules: { statementSpacing: { imports: 'compact' } }
   })
   assert.equal(partialNested, 'const first=1;\n\nwork();')
+})
+
+test('formats trailing commas through the native API', async () => {
+  const withoutCommas = 'const value = {\n  items: [\n    1\n  ]\n};'
+  const withCommas = 'const value = {\n  items: [\n    1,\n  ],\n};'
+  const disabledRules = {
+    importLayout: false,
+    statementSpacing: { imports: 'off', variableDeclarations: 'off' }
+  }
+
+  assert.equal(await format('sample.ts', withCommas, { rules: disabledRules }), withoutCommas)
+  assert.equal(
+    await format('sample.ts', withoutCommas, {
+      rules: { ...disabledRules, trailingCommas: 'always' }
+    }),
+    withCommas
+  )
+  assert.equal(
+    await format('sample.ts', withCommas, {
+      rules: { ...disabledRules, trailingCommas: 'off' }
+    }),
+    withCommas
+  )
 })
 
 test('maps native failures to stable error codes', async () => {
@@ -62,6 +86,7 @@ test('maps native failures to stable error codes', async () => {
   for (const [rules, path] of [
     [{ imports: true }, 'rules.imports'],
     [{ variables: true }, 'rules.variables'],
+    [{ trailingCommas: 'multiline' }, 'rules.trailingCommas'],
     [{ statementSpacing: { imports: 'preserve' } }, 'rules.statementSpacing.imports'],
     [{ statementSpacing: { extra: 'off' } }, 'rules.statementSpacing.extra']
   ]) {

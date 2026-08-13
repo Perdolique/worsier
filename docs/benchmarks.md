@@ -13,9 +13,12 @@ pnpm --filter worsier build:native
 pnpm benchmark:node
 ```
 
-The Criterion suite reports a single parse, end-to-end formatting without verification, and
-parse-plus-verification. It covers import-heavy small, 50 KB, and 1 MB generated inputs. The Node.js
-benchmark measures API and CLI cold starts in fresh processes, separately from Rust throughput.
+The Criterion suite reports a single parse, parse-plus-verification, and end-to-end formatting
+without verification for both the default `trailingCommas: "never"` mode and an otherwise identical
+`trailingCommas: "off"` configuration. It covers import-heavy small, 50 KB, and 1 MB generated
+inputs so the default comma pass can be compared directly with the no-comma-rule baseline. The
+Node.js benchmark measures API and CLI cold starts in fresh processes, separately from Rust
+throughput.
 
 No regression threshold is enforced yet. A committed threshold should be
 introduced only after release measurements establish a stable baseline across

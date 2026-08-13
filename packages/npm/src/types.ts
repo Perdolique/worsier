@@ -10,6 +10,7 @@ export interface FormatConfig {
 export interface RulesConfig {
   importLayout?: boolean
   statementSpacing?: StatementSpacingConfig
+  trailingCommas?: 'always' | 'never' | 'off'
 }
 export interface StatementSpacingConfig {
   imports?: 'separate' | 'compact' | 'off'

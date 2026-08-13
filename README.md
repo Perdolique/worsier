@@ -1,8 +1,8 @@
 # Worsier
 
 Worsier is a focused JavaScript, TypeScript, JSX, and TSX formatter backed by a Rust engine.
-It formats static imports and the boundaries around runtime variable declarations while preserving
-the declarations themselves.
+It formats static imports, trailing commas, and the boundaries around runtime variable declarations
+while preserving source text outside the enabled rules.
 Node.js 24.0.0 or newer is required for the CLI and programmatic API.
 
 ```sh
@@ -26,3 +26,13 @@ discover configuration files. See
 [`docs/formatting-contract.md`](docs/formatting-contract.md) for the canonical
 layout and semantic guarantees, and [`docs/benchmarks.md`](docs/benchmarks.md)
 for the report-only performance baseline.
+
+## Broader alternatives
+
+[Prettier](https://prettier.io/docs/) is a mature opinionated formatter that prints the complete
+source, while [Oxfmt](https://oxc.rs/docs/guide/usage/formatter.html) is a fast,
+Prettier-compatible formatter with broader language and formatting coverage. Both provide selected
+configuration options, including [Prettier](https://prettier.io/docs/options#trailing-commas) and
+[Oxfmt](https://oxc.rs/docs/guide/usage/formatter/config-file-reference#trailingcomma)
+trailing-comma modes. Worsier instead focuses on independently configurable source-rewrite rules
+and preserves text outside the selected rules.
