@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.0](https://github.com/Perdolique/worsier/compare/v2.1.0...v2.2.0) (2026-08-13)
+
+
+### Features
+
+* **formatter:** add trailing comma formatting ([613a3eb](https://github.com/Perdolique/worsier/commit/613a3eb521c9df8ea60c191b797ae24cb48eea9c))
+
 ## [2.1.0](https://github.com/Perdolique/worsier/compare/v2.0.0...v2.1.0) (2026-08-13)
 
 
