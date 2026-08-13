@@ -21,13 +21,20 @@ fn stderr(output: &Output) -> String {
 }
 
 #[test]
-fn reports_missing_config_and_init_refuses_to_overwrite() {
+fn uses_defaults_without_config_and_init_refuses_to_overwrite() {
     let directory = tempfile::tempdir().unwrap();
-    write(&directory.path().join("sample.ts"), "const value=1;");
+    fs::create_dir(directory.path().join(".git")).unwrap();
+    write(
+        &directory.path().join("sample.ts"),
+        "import{value}from'pkg';const raw=[1,2];",
+    );
 
-    let missing = command(directory.path()).arg("sample.ts").output().unwrap();
-    assert_eq!(missing.status.code(), Some(2));
-    assert!(stderr(&missing).contains("npx worsier --init"));
+    let output = command(directory.path()).arg("sample.ts").output().unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "import { value } from 'pkg';\n\nconst raw=[1,2];"
+    );
 
     let initialized = command(directory.path()).arg("--init").output().unwrap();
     assert!(initialized.status.success());
@@ -46,7 +53,7 @@ fn reports_missing_config_and_init_refuses_to_overwrite() {
 #[test]
 fn supports_stdout_stdin_check_and_atomic_write() {
     let directory = tempfile::tempdir().unwrap();
-    write(&directory.path().join("worsier.jsonc"), "{}");
+    fs::create_dir(directory.path().join(".git")).unwrap();
     write(
         &directory.path().join("sample.ts"),
         "import{answer,type Value}from'pkg';const value={answer:42};",
@@ -60,7 +67,7 @@ fn supports_stdout_stdin_check_and_atomic_write() {
     );
 
     let check = command(directory.path())
-        .args(["--check", "sample.ts"])
+        .args(["--check", "."])
         .output()
         .unwrap();
     assert_eq!(check.status.code(), Some(1));
@@ -80,7 +87,7 @@ fn supports_stdout_stdin_check_and_atomic_write() {
     );
     assert!(
         command(directory.path())
-            .args(["--check", "sample.ts"])
+            .args(["--check", "."])
             .status()
             .unwrap()
             .success()
@@ -103,6 +110,30 @@ fn supports_stdout_stdin_check_and_atomic_write() {
     assert_eq!(
         String::from_utf8(stdin.stdout).unwrap(),
         "import { stdinValue } from 'pkg';\n\nconst raw=[1,2];"
+    );
+}
+
+#[test]
+fn config_discovery_stops_at_a_repository_without_config() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        &directory.path().join("worsier.jsonc"),
+        r#"{"lineWidth":20}"#,
+    );
+    fs::create_dir_all(directory.path().join("repository/.git")).unwrap();
+    write(
+        &directory.path().join("repository/sample.ts"),
+        "import{one,two}from'package';",
+    );
+
+    let output = command(directory.path())
+        .arg("repository/sample.ts")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "import { one, two } from 'package';"
     );
 }
 
@@ -199,6 +230,20 @@ fn configuration_errors_include_the_nested_json_path() {
         assert_eq!(output.status.code(), Some(2));
         assert!(stderr(&output).contains(path), "{}", stderr(&output));
     }
+}
+
+#[test]
+fn explicit_config_errors_when_inputs_are_empty() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::create_dir(directory.path().join("empty")).unwrap();
+
+    let output = command(directory.path())
+        .args(["--config", "missing.jsonc", "--check", "empty"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stderr(&output).contains("failed to resolve configuration"));
 }
 
 #[test]

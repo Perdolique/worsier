@@ -2179,6 +2179,16 @@ mod tests {
     }
 
     #[test]
+    fn preserves_a_typed_class_field_before_its_constructor() {
+        let source = "import{type BaseIssue}from'valibot'\nclass RegistryUserValidationError extends Error {\n  readonly fieldErrors: RegistryUserFieldErrors\n\n  constructor(fieldErrors: RegistryUserFieldErrors) {\n    const details = String(fieldErrors)\n    super(details)\n    this.fieldErrors = fieldErrors\n  }\n}";
+        let expected = "import { type BaseIssue } from 'valibot'\n\nclass RegistryUserValidationError extends Error {\n  readonly fieldErrors: RegistryUserFieldErrors\n\n  constructor(fieldErrors: RegistryUserFieldErrors) {\n    const details = String(fieldErrors)\n\n    super(details)\n    this.fieldErrors = fieldErrors\n  }\n}";
+
+        let output = format(source);
+        assert_eq!(output, expected);
+        assert_eq!(format(&output), output);
+    }
+
+    #[test]
     fn keeps_import_layout_and_statement_spacing_independent() {
         let source = "import{a}from'x';const b=1;let c=2;run();";
         let variables_only = format_with(
@@ -2383,6 +2393,36 @@ mod tests {
                 definition
             );
         }
+    }
+
+    #[test]
+    fn preserves_a_definition_union_with_a_final_line_comment() {
+        let declaration = "type VectorizeIndexConfig = {\n  dimensions: number;\n} | {\n  preset: string; // keep this generic\n};";
+        assert_eq!(
+            format_file_with(
+                "worker-configuration.d.ts",
+                declaration,
+                FormatConfig::default()
+            ),
+            declaration
+        );
+
+        let source = format!("import{{type Value}}from'pkg'\n{declaration}");
+        let expected = format!("import {{ type Value }} from 'pkg'\n\n{declaration}");
+        let output = format_file_with(
+            "worker-configuration.d.ts",
+            &source,
+            FormatConfig::default(),
+        );
+        assert_eq!(output, expected);
+        assert_eq!(
+            format_file_with(
+                "worker-configuration.d.ts",
+                &output,
+                FormatConfig::default()
+            ),
+            output
+        );
     }
 
     #[test]

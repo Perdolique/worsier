@@ -9,8 +9,9 @@ import { format } from '../dist/index.js'
 
 test('formats through the asynchronous native API', async () => {
   const source = "import{one,type Two}from'pkg';const value={items:[1,2]};"
-  const output = await format('sample.ts', source, {})
+  const output = await format('sample.ts', source)
   assert.equal(output, "import { one, type Two } from 'pkg';\n\nconst value={items:[1,2]};")
+  assert.equal(await format('sample.ts', source, {}), output)
 
   const variablesOnly = await format('sample.ts', source, {
     rules: {

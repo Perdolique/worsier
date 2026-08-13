@@ -9,13 +9,18 @@ Prebuilt Windows x64 binaries are temporarily unavailable while
 
 ```sh
 pnpm add -D worsier
-pnpm exec worsier --init
 pnpm exec worsier --check .
 pnpm exec worsier --write .
 ```
 
+The CLI uses its opinionated defaults without a configuration file. An optional `worsier.jsonc`
+can override them; run `pnpm exec worsier --init` to create the complete typed configuration.
+
 ```js
 import { format } from 'worsier'
 
-const output = await format('example.ts', "import{answer,type Value}from'pkg'", {})
+const output = await format('example.ts', "import{answer,type Value}from'pkg'")
 ```
+
+Pass an optional third `FormatConfig` argument to override the programmatic defaults. The
+programmatic API does not discover configuration files.

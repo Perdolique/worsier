@@ -3,7 +3,7 @@ import type { FormatConfig } from './types.js'
 
 export type { FormatConfig } from './types.js'
 
-export async function format(fileName: string, sourceText: string, config: FormatConfig): Promise<string> {
+export async function format(fileName: string, sourceText: string, config: FormatConfig = {}): Promise<string> {
   const configJson = JSON.stringify(config)
   try {
     return await loadBinding().format(fileName, sourceText, configJson)

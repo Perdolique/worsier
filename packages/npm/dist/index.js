@@ -1,5 +1,5 @@
 import { loadBinding } from './binding.js';
-export async function format(fileName, sourceText, config) {
+export async function format(fileName, sourceText, config = {}) {
     const configJson = JSON.stringify(config);
     try {
         return await loadBinding().format(fileName, sourceText, configJson);
