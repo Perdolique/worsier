@@ -1,34 +1,39 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
     ArrayAssignmentTarget, ArrayExpression, ArrayExpressionElement, ArrayPattern,
-    ArrowFunctionExpression, BlockStatement, CallExpression, Comment, CommentKind, CommentPosition,
-    Directive, ExportFromDeclaration, ExportNamedDeclaration, FormalParameters, FunctionBody,
-    ImportDeclaration, NewExpression, ObjectAssignmentTarget, ObjectExpression, ObjectPattern,
-    Program, Statement, StaticBlock, SwitchCase, SwitchStatement, TSEnumBody,
-    TSExternalModuleDeclaration, TSGlobalDeclaration, TSModuleBlock, TSNamespaceDeclaration,
-    TSTupleElement, TSTupleType, TSTypeParameterDeclaration, VariableDeclarationKind, WithClause,
+    ArrowFunctionExpression, BlockStatement, CallExpression, ClassBody, ClassElement, Comment,
+    CommentKind, CommentPosition, Directive, ExportFromDeclaration, ExportNamedDeclaration,
+    FormalParameters, FunctionBody, ImportDeclaration, NewExpression, ObjectAssignmentTarget,
+    ObjectExpression, ObjectPattern, Program, Statement, StaticBlock, SwitchCase, SwitchStatement,
+    TSEnumBody, TSExternalModuleDeclaration, TSGlobalDeclaration, TSModuleBlock,
+    TSNamespaceDeclaration, TSTupleElement, TSTupleType, TSTypeParameterDeclaration,
+    VariableDeclarationKind, WithClause,
 };
 use oxc_ast_visit::{
     Visit,
     walk::{
-        walk_array_assignment_target, walk_array_expression, walk_array_pattern,
-        walk_arrow_function_expression, walk_block_statement, walk_call_expression,
-        walk_export_from_declaration, walk_export_named_declaration, walk_formal_parameters,
-        walk_function_body, walk_import_declaration, walk_new_expression,
+        walk_accessor_property, walk_array_assignment_target, walk_array_expression,
+        walk_array_pattern, walk_arrow_function_expression, walk_block_statement,
+        walk_call_expression, walk_class_body, walk_directive, walk_export_from_declaration,
+        walk_export_named_declaration, walk_formal_parameters, walk_function_body,
+        walk_import_declaration, walk_method_definition, walk_new_expression,
         walk_object_assignment_target, walk_object_expression, walk_object_pattern, walk_program,
-        walk_statement, walk_static_block, walk_switch_case, walk_switch_statement,
-        walk_ts_enum_body, walk_ts_external_module_declaration, walk_ts_global_declaration,
-        walk_ts_module_block, walk_ts_namespace_declaration, walk_ts_tuple_type,
+        walk_property_definition, walk_statement, walk_static_block, walk_switch_case,
+        walk_switch_statement, walk_ts_call_signature_declaration,
+        walk_ts_construct_signature_declaration, walk_ts_enum_body,
+        walk_ts_external_module_declaration, walk_ts_global_declaration, walk_ts_index_signature,
+        walk_ts_mapped_type, walk_ts_method_signature, walk_ts_module_block,
+        walk_ts_namespace_declaration, walk_ts_property_signature, walk_ts_tuple_type,
         walk_ts_type_parameter_declaration, walk_with_clause,
     },
 };
 use oxc_parser::{Kind, ParseOptions, Parser, Token, config::TokensParserConfig};
 use oxc_span::{ContentEq, FileExtension, GetSpan, SourceType, Span};
 
-use crate::{FormatError, ResolvedConfig, StatementSpacingMode, TrailingCommaMode};
+use crate::{FormatError, ResolvedConfig, SemicolonMode, StatementSpacingMode, TrailingCommaMode};
 
 const BOM: char = '\u{feff}';
 
@@ -86,8 +91,8 @@ fn maybe_corrupt_rewrite_for_test(rewritten: &mut String) {
 #[cfg(not(test))]
 fn maybe_corrupt_rewrite_for_test(_: &mut String) {}
 
-/// Formats static imports, trailing commas, and runtime variable declaration boundaries in
-/// JavaScript, TypeScript, JSX, or TSX source text.
+/// Formats static imports, statement and member semicolons, trailing commas, and runtime variable
+/// declaration boundaries in JavaScript, TypeScript, JSX, or TSX source text.
 ///
 /// # Errors
 ///
@@ -114,6 +119,9 @@ pub fn format_text(
         && config.import_spacing() == StatementSpacingMode::Off
         && config.variable_declaration_spacing() == StatementSpacingMode::Off
         && config.trailing_commas() == TrailingCommaMode::Off
+        && config.statement_semicolons() == SemicolonMode::Off
+        && config.class_member_semicolons() == SemicolonMode::Off
+        && config.type_member_semicolons() == SemicolonMode::Off
     {
         return Ok(None);
     }
@@ -138,47 +146,37 @@ pub fn format_text(
             single_arrow_comma,
         },
     )?;
-    let intermediate = if edits.is_empty() {
+    let mut rewritten = if edits.is_empty() {
         None
     } else {
         Some(apply_edits(source, &edits)?)
     };
-    let mut rewritten = match (intermediate, config.trailing_commas()) {
-        (None, TrailingCommaMode::Off | TrailingCommaMode::Never) => return Ok(None),
-        (Some(rewritten), TrailingCommaMode::Off | TrailingCommaMode::Never) => rewritten,
-        (None, mode @ TrailingCommaMode::Always) => {
-            let comma_edits = trailing_comma_edits(
-                source,
-                &parsed.program,
-                &parsed.tokens,
-                mode,
-                single_arrow_comma,
-                false,
-            );
-            if comma_edits.is_empty() {
-                return Ok(None);
-            }
-            apply_edits(source, &comma_edits)?
-        }
-        (Some(intermediate), mode @ TrailingCommaMode::Always) => {
-            let comma_allocator = Allocator::default();
-            let comma_parsed = parse_tokens(&comma_allocator, &intermediate, source_type)?;
-            let comma_edits = trailing_comma_edits(
-                &intermediate,
-                &comma_parsed.program,
-                &comma_parsed.tokens,
-                mode,
-                single_arrow_comma,
-                false,
-            );
-            if comma_edits.is_empty() {
-                intermediate
-            } else {
-                apply_edits(&intermediate, &comma_edits)?
-            }
-        }
+    rewritten = apply_always_trailing_commas(
+        source,
+        rewritten,
+        &parsed,
+        source_type,
+        config.trailing_commas(),
+        single_arrow_comma,
+    )?;
+
+    rewritten = apply_semicolons(
+        source,
+        rewritten,
+        &parsed,
+        source_type,
+        config.statement_semicolons(),
+        config.class_member_semicolons(),
+        config.type_member_semicolons(),
+    )?;
+
+    let Some(mut rewritten) = rewritten else {
+        return Ok(None);
     };
     maybe_corrupt_rewrite_for_test(&mut rewritten);
+    if rewritten == source {
+        return Ok(None);
+    }
     if config.verify_ast() {
         verify(file_name, source_type, &parsed.program, &rewritten)?;
     }
@@ -191,6 +189,90 @@ pub fn format_text(
     output.push_str(bom);
     output.push_str(&rewritten);
     Ok(Some(output))
+}
+
+fn apply_always_trailing_commas(
+    source: &str,
+    rewritten: Option<String>,
+    parsed: &oxc_parser::ParserReturn<'_>,
+    source_type: SourceType,
+    mode: TrailingCommaMode,
+    single_arrow_comma: SingleArrowCommaRule,
+) -> Result<Option<String>, FormatError> {
+    if mode != TrailingCommaMode::Always {
+        return Ok(rewritten);
+    }
+    let current = rewritten.as_deref().unwrap_or(source);
+    let comma_edits = if rewritten.is_none() {
+        trailing_comma_edits(
+            current,
+            &parsed.program,
+            &parsed.tokens,
+            mode,
+            single_arrow_comma,
+            false,
+        )
+    } else {
+        let allocator = Allocator::default();
+        let parsed = parse_tokens(&allocator, current, source_type)?;
+        trailing_comma_edits(
+            current,
+            &parsed.program,
+            &parsed.tokens,
+            mode,
+            single_arrow_comma,
+            false,
+        )
+    };
+    if comma_edits.is_empty() {
+        Ok(rewritten)
+    } else {
+        Ok(Some(apply_edits(current, &comma_edits)?))
+    }
+}
+
+fn apply_semicolons(
+    source: &str,
+    rewritten: Option<String>,
+    parsed: &oxc_parser::ParserReturn<'_>,
+    source_type: SourceType,
+    statements: SemicolonMode,
+    class_members: SemicolonMode,
+    type_members: SemicolonMode,
+) -> Result<Option<String>, FormatError> {
+    if statements == SemicolonMode::Off
+        && class_members == SemicolonMode::Off
+        && type_members == SemicolonMode::Off
+    {
+        return Ok(rewritten);
+    }
+    let current = rewritten.as_deref().unwrap_or(source);
+    let edits = if rewritten.is_none() {
+        semicolon_edits(
+            current,
+            &parsed.program,
+            &parsed.tokens,
+            statements,
+            class_members,
+            type_members,
+        )
+    } else {
+        let allocator = Allocator::default();
+        let parsed = parse_tokens(&allocator, current, source_type)?;
+        semicolon_edits(
+            current,
+            &parsed.program,
+            &parsed.tokens,
+            statements,
+            class_members,
+            type_members,
+        )
+    };
+    if edits.is_empty() {
+        Ok(rewritten)
+    } else {
+        Ok(Some(apply_edits(current, &edits)?))
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -314,6 +396,348 @@ struct Edit {
     start: u32,
     end: u32,
     replacement: String,
+}
+
+fn semicolon_edits(
+    source: &str,
+    program: &Program<'_>,
+    tokens: &[Token],
+    statements: SemicolonMode,
+    class_members: SemicolonMode,
+    type_members: SemicolonMode,
+) -> Vec<Edit> {
+    let mut collector = SemicolonCollector {
+        source,
+        tokens,
+        statements,
+        class_members,
+        type_members,
+        class_index_signatures: HashSet::new(),
+        preserved_semicolons: HashSet::new(),
+        edits: Vec::new(),
+    };
+    collector.visit_program(program);
+    collector.edits.sort_by_key(|edit| (edit.start, edit.end));
+    collector.edits
+}
+
+struct SemicolonCollector<'s> {
+    source: &'s str,
+    tokens: &'s [Token],
+    statements: SemicolonMode,
+    class_members: SemicolonMode,
+    type_members: SemicolonMode,
+    class_index_signatures: HashSet<u32>,
+    preserved_semicolons: HashSet<u32>,
+    edits: Vec<Edit>,
+}
+
+impl SemicolonCollector<'_> {
+    fn record(&mut self, span: Span, mode: SemicolonMode) {
+        if mode == SemicolonMode::Off {
+            return;
+        }
+        let Some(last) = tokens_in_span(self.tokens, span).last() else {
+            return;
+        };
+        match (mode, last.kind()) {
+            (SemicolonMode::Always, Kind::Semicolon | Kind::Comma) => {}
+            (SemicolonMode::Always, _) => self.edits.push(Edit {
+                start: span.end,
+                end: span.end,
+                replacement: ";".to_owned(),
+            }),
+            (SemicolonMode::AsNeeded, Kind::Semicolon)
+                if !self.preserved_semicolons.contains(&last.start())
+                    && can_remove_trailing_semicolon(self.source, self.tokens, last.span()) =>
+            {
+                self.edits.push(Edit {
+                    start: last.start(),
+                    end: last.end(),
+                    replacement: String::new(),
+                });
+            }
+            (SemicolonMode::AsNeeded | SemicolonMode::Off, _) => {}
+        }
+    }
+
+    fn record_mapped_type_member(&mut self, span: Span) {
+        if self.type_members == SemicolonMode::Off {
+            return;
+        }
+        let tokens = tokens_in_span(self.tokens, span);
+        let Some(close_index) = tokens
+            .iter()
+            .rposition(|token| token.kind() == Kind::RCurly)
+        else {
+            return;
+        };
+        let Some(last) = close_index
+            .checked_sub(1)
+            .and_then(|index| tokens.get(index))
+        else {
+            return;
+        };
+        self.record(Span::new(span.start, last.end()), self.type_members);
+    }
+
+    fn append_statement_guards(&mut self, directives: &[Directive<'_>], body: &[Statement<'_>]) {
+        if self.statements != SemicolonMode::AsNeeded {
+            return;
+        }
+        for (index, statement) in body.iter().enumerate() {
+            if !statement_starts_hazardously(statement, self.tokens) {
+                continue;
+            }
+            let previous = index
+                .checked_sub(1)
+                .and_then(|index| body.get(index))
+                .map(|statement| (statement.span(), statement_semicolon_eligible(statement)))
+                .or_else(|| directives.last().map(|directive| (directive.span, true)));
+            let Some((previous_span, previous_is_candidate)) = previous else {
+                continue;
+            };
+            self.append_guard(previous_span, previous_is_candidate, statement.span().start);
+        }
+    }
+
+    fn append_class_guards(&mut self, body: &ClassBody<'_>) {
+        if self.class_members != SemicolonMode::AsNeeded {
+            return;
+        }
+        for pair in body.body.windows(2) {
+            let [previous, current] = pair else {
+                unreachable!("windows(2) always contains two class elements")
+            };
+            let current_span = current.span();
+            if first_token_in_span(self.tokens, current_span)
+                .is_none_or(|token| !matches!(token.kind(), Kind::LBrack | Kind::Star))
+            {
+                continue;
+            }
+            self.append_guard(
+                previous.span(),
+                class_element_semicolon_eligible(previous),
+                current_span.start,
+            );
+        }
+    }
+
+    fn append_guard(
+        &mut self,
+        previous_span: Span,
+        previous_is_candidate: bool,
+        current_start: u32,
+    ) {
+        let boundary = Span::new(previous_span.end, current_start);
+        if tokens_in_span(self.tokens, boundary)
+            .iter()
+            .any(|token| token.kind() == Kind::Semicolon)
+        {
+            return;
+        }
+        let Some(last) = tokens_in_span(self.tokens, previous_span).last() else {
+            return;
+        };
+        if !previous_is_candidate {
+            if last.kind() == Kind::Semicolon {
+                self.preserved_semicolons.insert(last.start());
+            }
+            return;
+        }
+        if last.kind() == Kind::Semicolon
+            && !can_remove_trailing_semicolon(self.source, self.tokens, last.span())
+        {
+            return;
+        }
+        self.edits.push(Edit {
+            start: current_start,
+            end: current_start,
+            replacement: ";".to_owned(),
+        });
+    }
+}
+
+impl<'a> Visit<'a> for SemicolonCollector<'_> {
+    fn visit_program(&mut self, program: &Program<'a>) {
+        self.append_statement_guards(&program.directives, &program.body);
+        walk_program(self, program);
+    }
+
+    fn visit_function_body(&mut self, body: &FunctionBody<'a>) {
+        self.append_statement_guards(&body.directives, &body.statements);
+        walk_function_body(self, body);
+    }
+
+    fn visit_block_statement(&mut self, block: &BlockStatement<'a>) {
+        self.append_statement_guards(&[], &block.body);
+        walk_block_statement(self, block);
+    }
+
+    fn visit_static_block(&mut self, block: &StaticBlock<'a>) {
+        self.append_statement_guards(&[], &block.body);
+        walk_static_block(self, block);
+    }
+
+    fn visit_ts_module_block(&mut self, block: &TSModuleBlock<'a>) {
+        self.append_statement_guards(&block.directives, &block.body);
+        walk_ts_module_block(self, block);
+    }
+
+    fn visit_switch_case(&mut self, case: &SwitchCase<'a>) {
+        self.append_statement_guards(&[], &case.consequent);
+        walk_switch_case(self, case);
+    }
+
+    fn visit_directive(&mut self, directive: &Directive<'a>) {
+        self.record(directive.span, self.statements);
+        walk_directive(self, directive);
+    }
+
+    fn visit_statement(&mut self, statement: &Statement<'a>) {
+        if statement_semicolon_eligible(statement) {
+            self.record(statement.span(), self.statements);
+        }
+        walk_statement(self, statement);
+    }
+
+    fn visit_class_body(&mut self, body: &ClassBody<'a>) {
+        self.append_class_guards(body);
+        for element in &body.body {
+            if let ClassElement::TSIndexSignature(signature) = element {
+                self.class_index_signatures.insert(signature.span.start);
+            }
+        }
+        walk_class_body(self, body);
+    }
+
+    fn visit_property_definition(&mut self, property: &oxc_ast::ast::PropertyDefinition<'a>) {
+        self.record(property.span, self.class_members);
+        walk_property_definition(self, property);
+    }
+
+    fn visit_accessor_property(&mut self, property: &oxc_ast::ast::AccessorProperty<'a>) {
+        self.record(property.span, self.class_members);
+        walk_accessor_property(self, property);
+    }
+
+    fn visit_method_definition(&mut self, method: &oxc_ast::ast::MethodDefinition<'a>) {
+        if method.value.body.is_none() {
+            self.record(method.span, self.class_members);
+        }
+        walk_method_definition(self, method);
+    }
+
+    fn visit_ts_property_signature(&mut self, signature: &oxc_ast::ast::TSPropertySignature<'a>) {
+        self.record(signature.span, self.type_members);
+        walk_ts_property_signature(self, signature);
+    }
+
+    fn visit_ts_index_signature(&mut self, signature: &oxc_ast::ast::TSIndexSignature<'a>) {
+        let mode = if self.class_index_signatures.contains(&signature.span.start) {
+            self.class_members
+        } else {
+            self.type_members
+        };
+        self.record(signature.span, mode);
+        walk_ts_index_signature(self, signature);
+    }
+
+    fn visit_ts_call_signature_declaration(
+        &mut self,
+        signature: &oxc_ast::ast::TSCallSignatureDeclaration<'a>,
+    ) {
+        self.record(signature.span, self.type_members);
+        walk_ts_call_signature_declaration(self, signature);
+    }
+
+    fn visit_ts_construct_signature_declaration(
+        &mut self,
+        signature: &oxc_ast::ast::TSConstructSignatureDeclaration<'a>,
+    ) {
+        self.record(signature.span, self.type_members);
+        walk_ts_construct_signature_declaration(self, signature);
+    }
+
+    fn visit_ts_method_signature(&mut self, signature: &oxc_ast::ast::TSMethodSignature<'a>) {
+        self.record(signature.span, self.type_members);
+        walk_ts_method_signature(self, signature);
+    }
+
+    fn visit_ts_mapped_type(&mut self, mapped: &oxc_ast::ast::TSMappedType<'a>) {
+        self.record_mapped_type_member(mapped.span);
+        walk_ts_mapped_type(self, mapped);
+    }
+}
+
+fn statement_semicolon_eligible(statement: &Statement<'_>) -> bool {
+    match statement {
+        Statement::VariableDeclaration(_)
+        | Statement::ExpressionStatement(_)
+        | Statement::DoWhileStatement(_)
+        | Statement::BreakStatement(_)
+        | Statement::ContinueStatement(_)
+        | Statement::ReturnStatement(_)
+        | Statement::ThrowStatement(_)
+        | Statement::DebuggerStatement(_)
+        | Statement::ImportDeclaration(_)
+        | Statement::ExportNamedDeclaration(_)
+        | Statement::ExportFromDeclaration(_)
+        | Statement::ExportAllDeclaration(_)
+        | Statement::TSTypeAliasDeclaration(_)
+        | Statement::TSImportEqualsDeclaration(_)
+        | Statement::TSExportAssignment(_)
+        | Statement::TSNamespaceExportDeclaration(_) => true,
+        Statement::FunctionDeclaration(function) => function.body.is_none(),
+        Statement::TSExternalModuleDeclaration(declaration) => declaration.body.is_none(),
+        Statement::ExportDefaultDeclaration(declaration) => declaration.declaration.is_expression(),
+        Statement::ExportDeclaration(declaration) => {
+            statement_semicolon_eligible(declaration.declaration.as_statement())
+        }
+        _ => false,
+    }
+}
+
+fn class_element_semicolon_eligible(element: &ClassElement<'_>) -> bool {
+    match element {
+        ClassElement::PropertyDefinition(_)
+        | ClassElement::AccessorProperty(_)
+        | ClassElement::TSIndexSignature(_) => true,
+        ClassElement::MethodDefinition(method) => method.value.body.is_none(),
+        ClassElement::StaticBlock(_) => false,
+    }
+}
+
+fn statement_starts_hazardously(statement: &Statement<'_>, tokens: &[Token]) -> bool {
+    matches!(statement, Statement::ExpressionStatement(_))
+        && first_token_in_span(tokens, statement.span()).is_some_and(|token| {
+            matches!(
+                token.kind(),
+                Kind::LParen
+                    | Kind::LBrack
+                    | Kind::Plus
+                    | Kind::Minus
+                    | Kind::RegExp
+                    | Kind::NoSubstitutionTemplate
+                    | Kind::TemplateHead
+                    | Kind::LAngle
+            )
+        })
+}
+
+fn first_token_in_span(tokens: &[Token], span: Span) -> Option<&Token> {
+    tokens_in_span(tokens, span).first()
+}
+
+fn can_remove_trailing_semicolon(source: &str, tokens: &[Token], semicolon: Span) -> bool {
+    let next_index = tokens.partition_point(|token| token.start() < semicolon.end);
+    let Some(next) = tokens.get(next_index) else {
+        return true;
+    };
+    matches!(next.kind(), Kind::RCurly | Kind::Eof)
+        || source
+            .get(semicolon.end as usize..next.start() as usize)
+            .is_some_and(contains_line_break)
 }
 
 fn trailing_comma_edits(
@@ -884,11 +1308,12 @@ fn rewrite_edits(
             let Statement::ImportDeclaration(declaration) = statement else {
                 continue;
             };
-            let span = statement.span();
+            let span = statement_syntax_span(source, tokens, statement.span());
             let declaration_tokens = tokens_in_span(tokens, span);
             let declaration_comments = comments_in_span(&program.comments, span);
             let formatted = format_import(
                 declaration,
+                span,
                 source,
                 declaration_tokens,
                 declaration_comments,
@@ -991,7 +1416,7 @@ impl StatementCollector<'_> {
         let mut items = directives
             .iter()
             .map(|directive| StatementShape {
-                span: directive.span(),
+                span: statement_syntax_span(self.source, self.tokens, directive.span()),
                 target: StatementTarget::Other,
             })
             .collect::<Vec<_>>();
@@ -1019,7 +1444,7 @@ impl StatementCollector<'_> {
     }
 
     fn statement_shape(&self, statement: &Statement<'_>) -> StatementShape {
-        let span = statement.span();
+        let span = statement_syntax_span(self.source, self.tokens, statement.span());
         let target = if self.import_spacing != StatementSpacingMode::Off
             && matches!(statement, Statement::ImportDeclaration(_))
         {
@@ -1062,7 +1487,7 @@ impl StatementCollector<'_> {
 
     fn direct_item(&self, statement: &Statement<'_>) -> Option<ParentItem> {
         let list_index = self.current_list?;
-        let statement_span = statement.span();
+        let statement_span = statement_syntax_span(self.source, self.tokens, statement.span());
         let items = &self.lists[list_index].items;
         let item_index = items
             .binary_search_by_key(&statement_span.start, |item| item.span.start)
@@ -1075,6 +1500,22 @@ impl StatementCollector<'_> {
             list_index,
             item_index,
         })
+    }
+}
+
+fn statement_syntax_span(source: &str, tokens: &[Token], span: Span) -> Span {
+    let tokens = tokens_in_span(tokens, span);
+    let [.., previous, semicolon] = tokens else {
+        return span;
+    };
+    if semicolon.kind() == Kind::Semicolon
+        && source
+            .get(previous.end() as usize..semicolon.start() as usize)
+            .is_some_and(contains_line_break)
+    {
+        Span::new(span.start, previous.end())
+    } else {
+        span
     }
 }
 
@@ -1712,11 +2153,17 @@ fn format_boundary_separator(
 ) -> Result<String, FormatError> {
     let boundary_comments = comments_in_span(comments, span);
     if boundary_comments.is_empty() {
-        let separator = source_slice(source, span)?;
-        return if separator.chars().all(char::is_whitespace) {
+        let original = source_slice(source, span)?;
+        return if original.chars().all(char::is_whitespace) {
             Ok(format!("{statement_separator}{indent}"))
+        } else if original
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .eq([';'])
+        {
+            Ok(format!(";{statement_separator}{indent}"))
         } else {
-            Ok(separator.to_owned())
+            Ok(original.to_owned())
         };
     }
 
@@ -1733,6 +2180,33 @@ fn format_boundary_separator(
         return Ok(source_slice(source, span)?.to_owned());
     }
 
+    if let Some(trailing) = boundary_comments
+        .iter()
+        .rev()
+        .find(|comment| comment.position == CommentPosition::Trailing)
+    {
+        let prefix = source_slice(source, Span::new(span.start, trailing.span.start))?;
+        if prefix
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .eq([';'])
+            && let Some(relative_start) = prefix.find(';')
+        {
+            let relative_start = u32::try_from(relative_start)
+                .map_err(|_| FormatError::internal("statement boundary exceeded source spans"))?;
+            let semicolon_start = span
+                .start
+                .checked_add(relative_start)
+                .ok_or_else(|| FormatError::internal("statement boundary exceeded source spans"))?;
+            let mut output =
+                source_slice(source, Span::new(semicolon_start, trailing.span.end))?.to_owned();
+            output.push_str(statement_separator);
+            output.push_str(indent);
+            output.push_str(source_slice(source, Span::new(leading_start, span.end))?);
+            return Ok(output);
+        }
+    }
+
     let mut output = String::new();
     output.push_str(source_slice(source, Span::new(span.start, trailing_end))?);
     output.push_str(statement_separator);
@@ -1746,8 +2220,13 @@ struct FormattedImport {
     multiline: bool,
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the import formatter needs both AST and effective source-span evidence"
+)]
 fn format_import(
     declaration: &ImportDeclaration<'_>,
+    span: Span,
     source: &str,
     tokens: &[Token],
     comments: &[Comment],
@@ -1761,7 +2240,7 @@ fn format_import(
     let named_braces = named_braces(declaration, tokens);
     let text = if let Some((left_brace, right_brace)) = named_braces {
         let flat = format_named_import(
-            declaration.span,
+            span,
             left_brace,
             right_brace,
             source,
@@ -1774,7 +2253,7 @@ fn format_import(
         )?;
         if contains_line_break(&flat) || flat.chars().count() > line_width as usize {
             format_named_import(
-                declaration.span,
+                span,
                 left_brace,
                 right_brace,
                 source,
@@ -1790,7 +2269,7 @@ fn format_import(
         }
     } else {
         canonicalize_range(
-            declaration.span,
+            span,
             source,
             tokens,
             comments,
@@ -2166,7 +2645,7 @@ pub fn benchmark_parse(file_name: &Path, source: &str) -> Result<(), FormatError
 }
 
 #[cfg(feature = "benchmarking")]
-/// Runs import rewriting with the supplied configuration.
+/// Runs source rewriting with the supplied configuration.
 ///
 /// # Errors
 ///
@@ -2206,15 +2685,16 @@ mod tests {
         VARIABLE_MULTILINE_SCANS, parse, source_type, verify,
     };
     use crate::{
-        FormatConfig, RulesConfig, StatementSpacingConfig, StatementSpacingMode, TrailingCommaMode,
-        format_text, resolve_config,
+        FormatConfig, RulesConfig, SemicolonConfig, SemicolonMode, StatementSpacingConfig,
+        StatementSpacingMode, TrailingCommaMode, format_text, resolve_config,
     };
 
     fn format(source: &str) -> String {
-        format_with(source, FormatConfig::default())
+        format_with_semicolons_off(source, FormatConfig::default())
     }
 
-    fn format_with(source: &str, config: FormatConfig) -> String {
+    fn format_with_semicolons_off(source: &str, mut config: FormatConfig) -> String {
+        config.rules.semicolons = semicolons_off();
         format_file_with("sample.ts", source, config)
     }
 
@@ -2225,13 +2705,40 @@ mod tests {
             .unwrap_or_else(|| source.to_owned())
     }
 
+    fn semicolons_off() -> SemicolonConfig {
+        SemicolonConfig {
+            statements: SemicolonMode::Off,
+            class_members: SemicolonMode::Off,
+            type_members: SemicolonMode::Off,
+        }
+    }
+
+    fn format_semicolons(file_name: &str, source: &str, semicolons: SemicolonConfig) -> String {
+        format_file_with(
+            file_name,
+            source,
+            FormatConfig {
+                rules: RulesConfig {
+                    import_layout: false,
+                    statement_spacing: StatementSpacingConfig {
+                        imports: StatementSpacingMode::Off,
+                        variable_declarations: StatementSpacingMode::Off,
+                    },
+                    semicolons,
+                    trailing_commas: TrailingCommaMode::Off,
+                },
+                ..FormatConfig::default()
+            },
+        )
+    }
+
     fn format_with_rules(
         source: &str,
         import_layout: bool,
         imports: StatementSpacingMode,
         variable_declarations: StatementSpacingMode,
     ) -> String {
-        format_with(
+        format_with_semicolons_off(
             source,
             FormatConfig {
                 rules: RulesConfig {
@@ -2248,7 +2755,7 @@ mod tests {
     }
 
     fn format_trailing(source: &str, mode: TrailingCommaMode) -> String {
-        format_with(
+        format_with_semicolons_off(
             source,
             FormatConfig {
                 rules: RulesConfig {
@@ -2257,6 +2764,7 @@ mod tests {
                         imports: StatementSpacingMode::Off,
                         variable_declarations: StatementSpacingMode::Off,
                     },
+                    semicolons: semicolons_off(),
                     trailing_commas: mode,
                 },
                 ..FormatConfig::default()
@@ -2275,6 +2783,7 @@ mod tests {
                         imports: StatementSpacingMode::Off,
                         variable_declarations: StatementSpacingMode::Off,
                     },
+                    semicolons: semicolons_off(),
                     trailing_commas: mode,
                 },
                 ..FormatConfig::default()
@@ -2287,6 +2796,229 @@ mod tests {
         let source = "import{z as local,type A,b}from\"pkg\";\nimport type{Foo,Bar as Baz}from'x'\nimport value,*as space from\"ns\";\nimport\"side\";";
         let expected = "import { z as local, type A, b } from \"pkg\";\nimport type { Foo, Bar as Baz } from 'x'\nimport value, * as space from \"ns\";\nimport \"side\";";
         assert_eq!(format(source), expected);
+    }
+
+    #[test]
+    fn formats_statement_semicolons_in_all_modes_with_asi_guards() {
+        let as_needed = SemicolonConfig {
+            statements: SemicolonMode::AsNeeded,
+            class_members: SemicolonMode::Off,
+            type_members: SemicolonMode::Off,
+        };
+        let source = "const value=1;\n[one,two].forEach(work);\n(foo)();\n+value;\n-value;\n/regex/.test(text);\n`template`;";
+        let expected = "const value=1\n;[one,two].forEach(work)\n;(foo)()\n;+value\n;-value\n;/regex/.test(text)\n;`template`";
+        assert_eq!(format_semicolons("sample.js", source, as_needed), expected);
+        assert_eq!(
+            format_semicolons("sample.js", expected, as_needed),
+            expected
+        );
+
+        assert_eq!(
+            format_semicolons("sample.js", "const first=1;const second=2;", as_needed),
+            "const first=1;const second=2"
+        );
+        assert_eq!(
+            format_semicolons(
+                "sample.js",
+                "const value=1\nwork()\ndebugger",
+                SemicolonConfig {
+                    statements: SemicolonMode::Always,
+                    class_members: SemicolonMode::Off,
+                    type_members: SemicolonMode::Off,
+                },
+            ),
+            "const value=1;\nwork();\ndebugger;"
+        );
+
+        let preserved = "const value=1;\n[one,two];";
+        assert_eq!(
+            format_semicolons("sample.js", preserved, semicolons_off()),
+            preserved
+        );
+    }
+
+    #[test]
+    fn preserves_wrapper_boundaries_and_only_guards_eligible_direct_siblings() {
+        let as_needed = SemicolonConfig {
+            statements: SemicolonMode::AsNeeded,
+            class_members: SemicolonMode::AsNeeded,
+            type_members: SemicolonMode::Off,
+        };
+        let cases = [
+            (
+                "sample.js",
+                "if (condition) work();\n[one].map(use);",
+                "if (condition) work();\n[one].map(use)",
+            ),
+            (
+                "sample.js",
+                "if (condition) { work(); }\n[one].map(use);",
+                "if (condition) { work() }\n[one].map(use)",
+            ),
+            (
+                "sample.js",
+                "class C {\n  method() {}\n  [key] = 1;\n}",
+                "class C {\n  method() {}\n  [key] = 1\n}",
+            ),
+            (
+                "sample.js",
+                "class C {\n  field = value;\n  *gen() {}\n}",
+                "class C {\n  field = value\n  ;*gen() {}\n}",
+            ),
+        ];
+
+        for (file_name, source, expected) in cases {
+            let output = format_semicolons(file_name, source, as_needed);
+            assert_eq!(output, expected);
+            assert_eq!(format_semicolons(file_name, &output, as_needed), output);
+        }
+    }
+
+    #[test]
+    fn configures_statement_class_and_type_member_semicolons_independently() {
+        let source = "const runtime=1;\nabstract class Example {\n  field=1;\n  [key]=2;\n  accessor item=3;\n  abstract method(): void;\n}\ninterface Shape {\n  value: string;\n  method(): void,\n  other: number\n}\ntype Copy<T> = {\n  [K in keyof T]: T[K];\n};";
+        let output = format_semicolons(
+            "sample.ts",
+            source,
+            SemicolonConfig {
+                statements: SemicolonMode::Off,
+                class_members: SemicolonMode::AsNeeded,
+                type_members: SemicolonMode::Always,
+            },
+        );
+        assert_eq!(
+            output,
+            "const runtime=1;\nabstract class Example {\n  field=1\n  ;[key]=2\n  accessor item=3\n  abstract method(): void\n}\ninterface Shape {\n  value: string;\n  method(): void,\n  other: number;\n}\ntype Copy<T> = {\n  [K in keyof T]: T[K];\n};"
+        );
+
+        let removed = format_semicolons(
+            "sample.ts",
+            source,
+            SemicolonConfig {
+                statements: SemicolonMode::AsNeeded,
+                class_members: SemicolonMode::Off,
+                type_members: SemicolonMode::AsNeeded,
+            },
+        );
+        assert_eq!(
+            removed,
+            "const runtime=1\nabstract class Example {\n  field=1;\n  [key]=2;\n  accessor item=3;\n  abstract method(): void;\n}\ninterface Shape {\n  value: string\n  method(): void,\n  other: number\n}\ntype Copy<T> = {\n  [K in keyof T]: T[K]\n}"
+        );
+
+        let always_source = "abstract class Always {\n  field=1\n  concrete() {}\n  [key: string]: unknown\n  abstract method(): void\n}";
+        let always = format_semicolons(
+            "sample.ts",
+            always_source,
+            SemicolonConfig {
+                statements: SemicolonMode::Off,
+                class_members: SemicolonMode::Always,
+                type_members: SemicolonMode::Off,
+            },
+        );
+        assert_eq!(
+            always,
+            "abstract class Always {\n  field=1;\n  concrete() {}\n  [key: string]: unknown;\n  abstract method(): void;\n}"
+        );
+        assert_eq!(
+            format_semicolons(
+                "sample.ts",
+                &always,
+                SemicolonConfig {
+                    statements: SemicolonMode::Off,
+                    class_members: SemicolonMode::Always,
+                    type_members: SemicolonMode::Off,
+                },
+            ),
+            always
+        );
+    }
+
+    #[test]
+    fn formats_static_export_semicolons_in_both_active_modes() {
+        let without_semicolons = "export { value }\nexport { item } from 'pkg'\nexport * from 'other'\nexport default create()";
+        let with_semicolons = "export { value };\nexport { item } from 'pkg';\nexport * from 'other';\nexport default create();";
+        let as_needed = SemicolonConfig {
+            statements: SemicolonMode::AsNeeded,
+            class_members: SemicolonMode::Off,
+            type_members: SemicolonMode::Off,
+        };
+        let always = SemicolonConfig {
+            statements: SemicolonMode::Always,
+            class_members: SemicolonMode::Off,
+            type_members: SemicolonMode::Off,
+        };
+
+        assert_eq!(
+            format_semicolons("sample.js", with_semicolons, as_needed),
+            without_semicolons
+        );
+        assert_eq!(
+            format_semicolons("sample.js", without_semicolons, always),
+            with_semicolons
+        );
+        assert_eq!(
+            format_semicolons("sample.js", with_semicolons, always),
+            with_semicolons
+        );
+    }
+
+    #[test]
+    fn detached_semicolons_do_not_overlap_layout_edits_or_change_spacing_shape() {
+        let import_with_comment = "import{x}from'x'\n; // between\nconst y=1;";
+        let expected_import = "import { x } from 'x' // between\n\nconst y=1";
+        let output = format_file_with("sample.ts", import_with_comment, FormatConfig::default());
+        assert_eq!(output, expected_import);
+        assert_eq!(
+            format_file_with("sample.ts", &output, FormatConfig::default()),
+            output
+        );
+
+        let variables = "const first=1\n;\nconst second=2";
+        let expected_variables = "const first=1\nconst second=2";
+        let output = format_file_with("sample.ts", variables, FormatConfig::default());
+        assert_eq!(output, expected_variables);
+        assert_eq!(
+            format_file_with("sample.ts", &output, FormatConfig::default()),
+            output
+        );
+    }
+
+    #[test]
+    fn semicolon_rewrite_preserves_comments_bom_crlf_and_eof_shape() {
+        let source = "\u{feff}const value=1; // trailing\r\n// leading\r\n[one,two];";
+        let expected = "\u{feff}const value=1 // trailing\r\n// leading\r\n;[one,two]";
+        let semicolons = SemicolonConfig {
+            statements: SemicolonMode::AsNeeded,
+            class_members: SemicolonMode::AsNeeded,
+            type_members: SemicolonMode::AsNeeded,
+        };
+        assert_eq!(format_semicolons("sample.ts", source, semicolons), expected);
+        assert_eq!(
+            format_semicolons("sample.ts", expected, semicolons),
+            expected
+        );
+    }
+
+    #[test]
+    fn default_semicolons_run_after_layout_spacing_and_trailing_commas() {
+        let source = "import{one,two,}from'long-package';const value={\n  item: true,\n};";
+        let output = format_file_with("sample.ts", source, FormatConfig::default());
+        assert_eq!(
+            output,
+            "import { one, two } from 'long-package'\n\nconst value={\n  item: true\n}"
+        );
+        assert_eq!(
+            format_file_with("sample.ts", &output, FormatConfig::default()),
+            output
+        );
+
+        let jsx_source = "const rendered=<View />;\n<View />;";
+        let jsx_output = format_file_with("sample.tsx", jsx_source, FormatConfig::default());
+        assert_eq!(jsx_output, "const rendered=<View />\n\n;<View />");
+        assert_eq!(
+            format_file_with("sample.tsx", &jsx_output, FormatConfig::default()),
+            jsx_output
+        );
     }
 
     #[test]
@@ -2431,9 +3163,9 @@ mod tests {
                 },
                 ..FormatConfig::default()
             };
-            let output = format_with(source, config.clone());
+            let output = format_with_semicolons_off(source, config.clone());
             assert_eq!(output, expected);
-            assert_eq!(format_with(&output, config), output);
+            assert_eq!(format_with_semicolons_off(&output, config), output);
         }
     }
 
@@ -2592,7 +3324,7 @@ mod tests {
     #[test]
     fn off_preserves_import_commas_through_layout() {
         let source = "import{one,two,}from'a-very-long-package-name';";
-        let output = format_with(
+        let output = format_with_semicolons_off(
             source,
             FormatConfig {
                 line_width: 20,
@@ -2615,6 +3347,11 @@ mod tests {
                     imports: StatementSpacingMode::Off,
                     variable_declarations: StatementSpacingMode::Off,
                 },
+                semicolons: SemicolonConfig {
+                    statements: SemicolonMode::Off,
+                    class_members: SemicolonMode::Off,
+                    type_members: SemicolonMode::Off,
+                },
                 trailing_commas: TrailingCommaMode::Off,
             },
             ..FormatConfig::default()
@@ -2629,7 +3366,7 @@ mod tests {
 
     #[test]
     fn trailing_commas_use_the_final_import_layout() {
-        let expanded = format_with(
+        let expanded = format_with_semicolons_off(
             "import{one,two}from'a-very-long-package-name';",
             FormatConfig {
                 line_width: 20,
@@ -2645,7 +3382,7 @@ mod tests {
             "import {\n  one,\n  two,\n} from 'a-very-long-package-name';"
         );
 
-        let flattened = format_with(
+        let flattened = format_with_semicolons_off(
             "import {\n  one,\n  two,\n} from 'pkg';",
             FormatConfig {
                 rules: RulesConfig {
@@ -2673,7 +3410,7 @@ mod tests {
         let flat = "import React, { useState, type ComponentType as Type } from 'react';";
         assert_eq!(format(source), flat);
 
-        let multiline = format_with(
+        let multiline = format_with_semicolons_off(
             source,
             FormatConfig {
                 line_width: 30,
@@ -2685,7 +3422,7 @@ mod tests {
             "import React, {\n  useState,\n  type ComponentType as Type\n} from 'react';"
         );
         assert_eq!(
-            format_with(
+            format_with_semicolons_off(
                 &multiline,
                 FormatConfig {
                     line_width: 30,
@@ -2707,13 +3444,13 @@ mod tests {
             verify_ast: false,
             ..FormatConfig::default()
         };
-        assert_eq!(format_with(source, no_verify), expected);
+        assert_eq!(format_with_semicolons_off(source, no_verify), expected);
     }
 
     #[test]
     fn breaks_named_imports_one_specifier_per_line() {
         let source = "import { one } from 'a-very-long-package-name'";
-        let output = format_with(
+        let output = format_with_semicolons_off(
             source,
             FormatConfig {
                 line_width: 20,
@@ -2729,7 +3466,7 @@ mod tests {
         let flat = "import { a, b } from 'x'";
         let flat_width = u32::try_from(flat.chars().count()).unwrap();
         assert_eq!(
-            format_with(
+            format_with_semicolons_off(
                 source,
                 FormatConfig {
                     line_width: flat_width,
@@ -2739,7 +3476,7 @@ mod tests {
             flat
         );
         assert_eq!(
-            format_with(
+            format_with_semicolons_off(
                 source,
                 FormatConfig {
                     line_width: flat_width - 1,
@@ -2762,6 +3499,7 @@ mod tests {
                     imports: StatementSpacingMode::Off,
                     variable_declarations: StatementSpacingMode::Off,
                 },
+                semicolons: SemicolonConfig::default(),
                 trailing_commas: TrailingCommaMode::Never,
             },
             ..FormatConfig::default()
@@ -2782,7 +3520,7 @@ mod tests {
     #[test]
     fn applies_the_import_spacing_matrix_in_both_directions() {
         let source = "const before={raw:true};\n\n\nimport a from'a'\n\nimport{one,two}from'long-package'\nimport{three,four}from'other-long-package'\n\nimport b from'b'\n\nconst after=[1,2];";
-        let output = format_with(
+        let output = format_with_semicolons_off(
             source,
             FormatConfig {
                 line_width: 25,
@@ -2831,7 +3569,7 @@ mod tests {
     #[test]
     fn import_spacing_uses_the_final_shape_only_when_layout_is_enabled() {
         let source = "import{one,two}from'long-package';import value from'x';";
-        let without_layout = format_with(
+        let without_layout = format_with_semicolons_off(
             source,
             FormatConfig {
                 line_width: 20,
@@ -2851,7 +3589,7 @@ mod tests {
             "import{one,two}from'long-package';\nimport value from'x';"
         );
 
-        let with_layout = format_with(
+        let with_layout = format_with_semicolons_off(
             source,
             FormatConfig {
                 line_width: 20,
@@ -2929,7 +3667,7 @@ mod tests {
     #[test]
     fn leaves_default_namespace_side_effect_and_dynamic_imports_on_one_line() {
         let source = "import defaultValue from'a-package-name-that-is-long';\nimport*as values from'another-package-name-that-is-long';\nimport'side-effect-package-name-that-is-long';\nconst loaded=import('dynamic');";
-        let output = format_with(
+        let output = format_with_semicolons_off(
             source,
             FormatConfig {
                 line_width: 10,
@@ -2952,6 +3690,11 @@ mod tests {
                     imports: StatementSpacingMode::Off,
                     variable_declarations: StatementSpacingMode::Off,
                 },
+                semicolons: SemicolonConfig {
+                    statements: SemicolonMode::Off,
+                    class_members: SemicolonMode::Off,
+                    type_members: SemicolonMode::Off,
+                },
                 trailing_commas: TrailingCommaMode::Off,
             },
             ..FormatConfig::default()
@@ -2968,7 +3711,14 @@ mod tests {
     fn output_is_idempotent_and_ast_verified() {
         let source = "import{type A,b as c,d}from'x'assert{type:'json'};\nconst value={raw:true};";
         let output = format(source);
-        let config = resolve_config(FormatConfig::default()).unwrap();
+        let config = resolve_config(FormatConfig {
+            rules: RulesConfig {
+                semicolons: semicolons_off(),
+                ..RulesConfig::default()
+            },
+            ..FormatConfig::default()
+        })
+        .unwrap();
         assert!(
             format_text(Path::new("sample.ts"), &output, &config)
                 .unwrap()
@@ -2981,6 +3731,7 @@ mod tests {
         let config = resolve_config(FormatConfig {
             verify_ast: false,
             rules: RulesConfig {
+                semicolons: semicolons_off(),
                 trailing_commas: TrailingCommaMode::Never,
                 ..RulesConfig::default()
             },
@@ -3006,6 +3757,7 @@ mod tests {
         let config = resolve_config(FormatConfig {
             verify_ast: false,
             rules: RulesConfig {
+                semicolons: semicolons_off(),
                 trailing_commas: TrailingCommaMode::Always,
                 ..RulesConfig::default()
             },
@@ -3306,7 +4058,7 @@ mod tests {
     #[test]
     fn preserves_variable_declaration_contents_and_line_width_scope() {
         let source = "const { a,\n b }: Value = make(  1,2), other=[1,  2];let next=3;";
-        let output = format_with(
+        let output = format_with_semicolons_off(
             source,
             FormatConfig {
                 line_width: 1,
@@ -3333,7 +4085,7 @@ mod tests {
     #[test]
     fn keeps_import_layout_and_statement_spacing_independent() {
         let source = "import{a}from'x';const b=1;let c=2;run();";
-        let variables_only = format_with(
+        let variables_only = format_with_semicolons_off(
             source,
             FormatConfig {
                 rules: RulesConfig {
@@ -3352,7 +4104,7 @@ mod tests {
             "import{a}from'x';\n\nconst b=1;\nlet c=2;\n\nrun();"
         );
 
-        let imports_only = format_with(
+        let imports_only = format_with_semicolons_off(
             source,
             FormatConfig {
                 rules: RulesConfig {
@@ -3533,7 +4285,17 @@ mod tests {
         let definition = "const first:number;const second:string;";
         for file_name in ["types.d.ts", "types.d.mts", "types.d.cts"] {
             assert_eq!(
-                format_file_with(file_name, definition, FormatConfig::default()),
+                format_file_with(
+                    file_name,
+                    definition,
+                    FormatConfig {
+                        rules: RulesConfig {
+                            semicolons: semicolons_off(),
+                            ..RulesConfig::default()
+                        },
+                        ..FormatConfig::default()
+                    },
+                ),
                 definition
             );
         }
@@ -3546,7 +4308,13 @@ mod tests {
             format_file_with(
                 "worker-configuration.d.ts",
                 declaration,
-                FormatConfig::default()
+                FormatConfig {
+                    rules: RulesConfig {
+                        semicolons: semicolons_off(),
+                        ..RulesConfig::default()
+                    },
+                    ..FormatConfig::default()
+                }
             ),
             declaration
         );
@@ -3556,14 +4324,26 @@ mod tests {
         let output = format_file_with(
             "worker-configuration.d.ts",
             &source,
-            FormatConfig::default(),
+            FormatConfig {
+                rules: RulesConfig {
+                    semicolons: semicolons_off(),
+                    ..RulesConfig::default()
+                },
+                ..FormatConfig::default()
+            },
         );
         assert_eq!(output, expected);
         assert_eq!(
             format_file_with(
                 "worker-configuration.d.ts",
                 &output,
-                FormatConfig::default()
+                FormatConfig {
+                    rules: RulesConfig {
+                        semicolons: semicolons_off(),
+                        ..RulesConfig::default()
+                    },
+                    ..FormatConfig::default()
+                }
             ),
             output
         );

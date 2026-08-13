@@ -32,6 +32,7 @@ impl Default for FormatConfig {
 pub struct RulesConfig {
     pub import_layout: bool,
     pub statement_spacing: StatementSpacingConfig,
+    pub semicolons: SemicolonConfig,
     pub trailing_commas: TrailingCommaMode,
 }
 
@@ -40,9 +41,27 @@ impl Default for RulesConfig {
         Self {
             import_layout: true,
             statement_spacing: StatementSpacingConfig::default(),
+            semicolons: SemicolonConfig::default(),
             trailing_commas: TrailingCommaMode::Never,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema, Serialize)]
+#[serde(default, deny_unknown_fields, rename_all = "camelCase")]
+pub struct SemicolonConfig {
+    pub statements: SemicolonMode,
+    pub class_members: SemicolonMode,
+    pub type_members: SemicolonMode,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SemicolonMode {
+    Always,
+    #[default]
+    AsNeeded,
+    Off,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, JsonSchema, Serialize)]
@@ -111,6 +130,21 @@ impl ResolvedConfig {
     }
 
     #[must_use]
+    pub const fn statement_semicolons(&self) -> SemicolonMode {
+        self.value.rules.semicolons.statements
+    }
+
+    #[must_use]
+    pub const fn class_member_semicolons(&self) -> SemicolonMode {
+        self.value.rules.semicolons.class_members
+    }
+
+    #[must_use]
+    pub const fn type_member_semicolons(&self) -> SemicolonMode {
+        self.value.rules.semicolons.type_members
+    }
+
+    #[must_use]
     pub const fn trailing_commas(&self) -> TrailingCommaMode {
         self.value.rules.trailing_commas
     }
@@ -138,7 +172,9 @@ pub fn resolve_config(config: FormatConfig) -> Result<ResolvedConfig, FormatErro
 
 #[cfg(test)]
 mod tests {
-    use super::{FormatConfig, StatementSpacingMode, TrailingCommaMode, resolve_config};
+    use super::{
+        FormatConfig, SemicolonMode, StatementSpacingMode, TrailingCommaMode, resolve_config,
+    };
 
     #[test]
     fn resolves_documented_defaults() {
@@ -151,6 +187,9 @@ mod tests {
             config.variable_declaration_spacing(),
             StatementSpacingMode::Separate
         );
+        assert_eq!(config.statement_semicolons(), SemicolonMode::AsNeeded);
+        assert_eq!(config.class_member_semicolons(), SemicolonMode::AsNeeded);
+        assert_eq!(config.type_member_semicolons(), SemicolonMode::AsNeeded);
         assert_eq!(config.trailing_commas(), TrailingCommaMode::Never);
     }
 
@@ -173,7 +212,11 @@ mod tests {
             r#"{"rules":{"imports":true}}"#,
             r#"{"rules":{"variables":true}}"#,
             r#"{"trailingCommas":"always"}"#,
+            r#"{"semicolons":"always"}"#,
             r#"{"rules":{"trailingCommas":"multiline"}}"#,
+            r#"{"rules":{"semicolons":"always"}}"#,
+            r#"{"rules":{"semicolons":{"statements":"never"}}}"#,
+            r#"{"rules":{"semicolons":{"extra":"off"}}}"#,
             r#"{"rules":{"statementSpacing":{"imports":"preserve"}}}"#,
             r#"{"rules":{"statementSpacing":{"variables":"compact"}}}"#,
         ] {
@@ -181,6 +224,7 @@ mod tests {
             assert!(
                 error.to_string().contains("unknown field")
                     || error.to_string().contains("unknown variant")
+                    || error.to_string().contains("invalid type")
             );
         }
     }
@@ -188,7 +232,7 @@ mod tests {
     #[test]
     fn partial_nested_configs_keep_their_own_defaults() {
         let config: FormatConfig = serde_json::from_str(
-            r#"{"rules":{"importLayout":false,"statementSpacing":{"imports":"compact"}}}"#,
+            r#"{"rules":{"importLayout":false,"statementSpacing":{"imports":"compact"},"semicolons":{"typeMembers":"always"}}}"#,
         )
         .unwrap();
         let config = resolve_config(config).unwrap();
@@ -199,7 +243,28 @@ mod tests {
             config.variable_declaration_spacing(),
             StatementSpacingMode::Separate
         );
+        assert_eq!(config.statement_semicolons(), SemicolonMode::AsNeeded);
+        assert_eq!(config.class_member_semicolons(), SemicolonMode::AsNeeded);
+        assert_eq!(config.type_member_semicolons(), SemicolonMode::Always);
         assert_eq!(config.trailing_commas(), TrailingCommaMode::Never);
+    }
+
+    #[test]
+    fn accepts_all_semicolon_modes_for_each_group() {
+        for (value, expected) in [
+            ("always", SemicolonMode::Always),
+            ("asNeeded", SemicolonMode::AsNeeded),
+            ("off", SemicolonMode::Off),
+        ] {
+            let source = format!(
+                r#"{{"rules":{{"semicolons":{{"statements":"{value}","classMembers":"{value}","typeMembers":"{value}"}}}}}}"#
+            );
+            let config: FormatConfig = serde_json::from_str(&source).unwrap();
+            let config = resolve_config(config).unwrap();
+            assert_eq!(config.statement_semicolons(), expected);
+            assert_eq!(config.class_member_semicolons(), expected);
+            assert_eq!(config.type_member_semicolons(), expected);
+        }
     }
 
     #[test]

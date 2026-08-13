@@ -4,19 +4,32 @@ use std::path::Path;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use worsier_formatter::{
-    FormatConfig, RulesConfig, TrailingCommaMode, benchmark_parse, benchmark_rewrite,
-    benchmark_verify, resolve_config,
+    FormatConfig, RulesConfig, SemicolonConfig, SemicolonMode, TrailingCommaMode, benchmark_parse,
+    benchmark_rewrite, benchmark_verify, resolve_config,
 };
 
 fn formatter_benchmarks(criterion: &mut Criterion) {
     let mut group = criterion.benchmark_group("formatter");
     group.sample_size(10);
-    let no_verify_never = resolve_config(FormatConfig {
+    let no_verify_default = resolve_config(FormatConfig {
         verify_ast: false,
         ..FormatConfig::default()
     })
     .unwrap();
-    let no_verify_off = resolve_config(FormatConfig {
+    let no_verify_semicolons_off = resolve_config(FormatConfig {
+        verify_ast: false,
+        rules: RulesConfig {
+            semicolons: SemicolonConfig {
+                statements: SemicolonMode::Off,
+                class_members: SemicolonMode::Off,
+                type_members: SemicolonMode::Off,
+            },
+            ..RulesConfig::default()
+        },
+        ..FormatConfig::default()
+    })
+    .unwrap();
+    let no_verify_trailing_commas_off = resolve_config(FormatConfig {
         verify_ast: false,
         rules: RulesConfig {
             trailing_commas: TrailingCommaMode::Off,
@@ -39,26 +52,44 @@ fn formatter_benchmarks(criterion: &mut Criterion) {
             },
         );
         group.bench_with_input(
-            BenchmarkId::new("format_no_verify_never", name),
+            BenchmarkId::new("format_no_verify_default", name),
             &source,
             |bencher, source| {
                 bencher.iter(|| {
                     benchmark_rewrite(
                         Path::new("benchmark.ts"),
                         black_box(source),
-                        &no_verify_never,
+                        &no_verify_default,
                     )
                     .unwrap();
                 });
             },
         );
         group.bench_with_input(
-            BenchmarkId::new("format_no_verify_off", name),
+            BenchmarkId::new("format_no_verify_semicolons_off", name),
             &source,
             |bencher, source| {
                 bencher.iter(|| {
-                    benchmark_rewrite(Path::new("benchmark.ts"), black_box(source), &no_verify_off)
-                        .unwrap();
+                    benchmark_rewrite(
+                        Path::new("benchmark.ts"),
+                        black_box(source),
+                        &no_verify_semicolons_off,
+                    )
+                    .unwrap();
+                });
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new("format_no_verify_trailing_commas_off", name),
+            &source,
+            |bencher, source| {
+                bencher.iter(|| {
+                    benchmark_rewrite(
+                        Path::new("benchmark.ts"),
+                        black_box(source),
+                        &no_verify_trailing_commas_off,
+                    )
+                    .unwrap();
                 });
             },
         );

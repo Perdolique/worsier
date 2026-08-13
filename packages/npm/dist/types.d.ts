@@ -7,8 +7,14 @@ export interface FormatConfig {
 }
 export interface RulesConfig {
     importLayout?: boolean;
+    semicolons?: SemicolonConfig;
     statementSpacing?: StatementSpacingConfig;
     trailingCommas?: 'always' | 'never' | 'off';
+}
+export interface SemicolonConfig {
+    classMembers?: 'always' | 'asNeeded' | 'off';
+    statements?: 'always' | 'asNeeded' | 'off';
+    typeMembers?: 'always' | 'asNeeded' | 'off';
 }
 export interface StatementSpacingConfig {
     imports?: 'separate' | 'compact' | 'off';

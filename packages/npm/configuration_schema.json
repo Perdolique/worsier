@@ -26,6 +26,11 @@
       "$ref": "#/$defs/RulesConfig",
       "default": {
         "importLayout": true,
+        "semicolons": {
+          "classMembers": "asNeeded",
+          "statements": "asNeeded",
+          "typeMembers": "asNeeded"
+        },
         "statementSpacing": {
           "imports": "separate",
           "variableDeclarations": "separate"
@@ -47,6 +52,14 @@
           "type": "boolean",
           "default": true
         },
+        "semicolons": {
+          "$ref": "#/$defs/SemicolonConfig",
+          "default": {
+            "classMembers": "asNeeded",
+            "statements": "asNeeded",
+            "typeMembers": "asNeeded"
+          }
+        },
         "statementSpacing": {
           "$ref": "#/$defs/StatementSpacingConfig",
           "default": {
@@ -60,6 +73,32 @@
         }
       },
       "additionalProperties": false
+    },
+    "SemicolonConfig": {
+      "type": "object",
+      "properties": {
+        "classMembers": {
+          "$ref": "#/$defs/SemicolonMode",
+          "default": "asNeeded"
+        },
+        "statements": {
+          "$ref": "#/$defs/SemicolonMode",
+          "default": "asNeeded"
+        },
+        "typeMembers": {
+          "$ref": "#/$defs/SemicolonMode",
+          "default": "asNeeded"
+        }
+      },
+      "additionalProperties": false
+    },
+    "SemicolonMode": {
+      "type": "string",
+      "enum": [
+        "always",
+        "asNeeded",
+        "off"
+      ]
     },
     "StatementSpacingConfig": {
       "type": "object",

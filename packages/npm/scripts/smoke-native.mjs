@@ -10,17 +10,17 @@ if (!addonPath) {
 const require = createRequire(import.meta.url)
 const binding = require(resolve(addonPath))
 const output = await binding.format('smoke.ts', "import{value}from'pkg';const raw={items:[1,2]};", '{}')
-assert.equal(output, "import { value } from 'pkg';\n\nconst raw={items:[1,2]};")
+assert.equal(output, "import { value } from 'pkg'\n\nconst raw={items:[1,2]}")
 const variablesDisabled = await binding.format(
   'smoke.ts',
   'const first=1;let second=2;',
   '{"rules":{"statementSpacing":{"variableDeclarations":"off"}}}'
 )
-assert.equal(variablesDisabled, 'const first=1;let second=2;')
+assert.equal(variablesDisabled, 'const first=1;let second=2')
 const trailingAlways = await binding.format(
   'smoke.ts',
   'const value={\n  item: true\n};',
-  '{"rules":{"importLayout":false,"statementSpacing":{"imports":"off","variableDeclarations":"off"},"trailingCommas":"always"}}'
+  '{"rules":{"importLayout":false,"statementSpacing":{"imports":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"always"}}'
 )
 assert.equal(trailingAlways, 'const value={\n  item: true,\n};')
 console.log(`Native smoke passed for ${addonPath}`)

@@ -7,3 +7,6 @@ const identity = <Value,>(value: Value) => value;
 const props = {
   title: identity('Worsier'),
 };
+
+const rendered = <View {...props} />;
+<View {...props} />;

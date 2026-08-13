@@ -14,3 +14,11 @@ const nestedLists = {
 consume(
   nestedLists,
 );
+
+const guarded = load();
+[guarded].forEach(consume);
+
+class Registry {
+  value = guarded;
+  [guarded] = value;
+}

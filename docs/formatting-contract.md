@@ -1,15 +1,16 @@
 # Worsier formatting contract
 
-Worsier rewrites static `import` declarations, trailing commas in supported lists, and whitespace
-boundaries around direct runtime variable declarations. It does not otherwise rewrite the contents
-of those declarations or lists.
+Worsier rewrites static `import` declarations, statement and member semicolons, trailing commas in
+supported lists, and whitespace boundaries around direct runtime variable declarations. It does
+not otherwise rewrite the contents of those declarations or lists.
 
 ## Import layout
 
 - `rules.importLayout` defaults to `true` and controls only the contents of static imports.
 - `lineWidth` defaults to `120`. A flat import whose length equals the limit stays on one line.
 - Named imports use `{ a, b }` spacing and retain specifier order, aliases, `type` modifiers,
-  module-specifier quotes, semicolons, import attributes, and comments.
+  module-specifier quotes, semicolons, import attributes, and comments. The separate
+  `rules.semicolons.statements` rule may then normalize the semicolon.
 - A named import that exceeds `lineWidth` places every specifier on its own line with two spaces of
   indentation. Import layout preserves whether the named list had a trailing comma; the separate
   `rules.trailingCommas` rule may then normalize it.
@@ -62,6 +63,37 @@ const value = {
 }
 ```
 
+## Semicolons
+
+`rules.semicolons` configures three independent syntax groups. Every group accepts `"always"`,
+`"asNeeded"`, or `"off"` and defaults to `"asNeeded"`.
+
+- `statements` covers directives, runtime statements, static imports and exports, and terminable
+  TypeScript declarations.
+- `classMembers` covers fields, accessor properties, index signatures, and declarations or
+  overloads without a body. Concrete methods with a body are unchanged.
+- `typeMembers` covers members of interfaces and object types, including mapped types.
+
+`"always"` adds a semicolon to every eligible ending. `"asNeeded"` removes an optional trailing
+semicolon when automatic semicolon insertion can separate the syntax. When the next statement or
+computed class member could merge with the previous one, the separator is moved to the beginning
+of that item instead:
+
+```ts
+const values = load()
+;[first, second].forEach(use)
+
+class Example {
+  value = load()
+  ;[key] = other
+}
+```
+
+`"off"` preserves semicolons in that group. Commas between TypeScript type members are always
+preserved and count as existing separators in `"always"` mode. Semicolons required on the same
+line, semicolons inside `for` headers, and standalone empty statements are not removed. The rule
+does not add a leading guard before the first item in a statement or class-member list.
+
 ## Statement boundaries
 
 `rules.statementSpacing.imports` and `rules.statementSpacing.variableDeclarations` each accept
@@ -99,7 +131,8 @@ break.
   `let`, and `var` declarations.
 - Statement spacing does not rewrite declaration contents. The trailing-comma rule may independently
   change a supported list inside a declaration; all other initializers, destructuring, types,
-  comments, semicolons, and multi-declarator structure are preserved.
+  comments, semicolons, and multi-declarator structure are preserved. The separate semicolon rule
+  may then normalize the statement ending.
 - Exported declarations, explicit `declare` declarations, declaration files, declarations inside
   declared namespaces/modules/globals, `using`, `await using`, and declarations in `for` headers
   are excluded. Ambient declarations may be supported in the future, but are not part of this rule;
@@ -116,10 +149,10 @@ break.
 
 ## Source and semantic guarantees
 
-- Source outside static imports, trailing-comma tokens, or rewritten whitespace boundaries is
-  preserved byte-for-byte.
-- Existing LF or CRLF line endings are used for rewritten imports and boundaries. A UTF-8 BOM is
-  preserved, as are semicolons and the presence or absence of a final newline.
+- Source outside static imports, semicolon tokens or guards, trailing-comma tokens, or rewritten
+  whitespace boundaries is preserved byte-for-byte.
+- Existing LF or CRLF line endings are used for rewritten imports and boundaries. A UTF-8 BOM and
+  the presence or absence of a final newline are preserved.
 - When `verifyAst` is enabled, Worsier reparses the output and requires Oxc `Program::content_eq`
   with the input.
 - Formatting an already formatted source produces no further change.
@@ -145,15 +178,20 @@ argument is omitted. It does not discover configuration files.
       "imports": "separate",
       "variableDeclarations": "separate"
     },
+    "semicolons": {
+      "statements": "asNeeded",
+      "classMembers": "asNeeded",
+      "typeMembers": "asNeeded"
+    },
     "trailingCommas": "never"
   },
   "ignorePatterns": []
 }
 ```
 
-Unknown keys, spacing modes, and trailing-comma modes are configuration errors. The removed
-top-level `trailingCommas`, `rules.imports`, and `rules.variables` keys are not aliases. Migrate the
-old rule keys with the following exact replacements:
+Unknown keys, spacing modes, semicolon modes, and trailing-comma modes are configuration errors.
+The removed top-level `semicolons` and `trailingCommas`, `rules.imports`, and `rules.variables` keys
+are not aliases. Migrate the old rule keys with the following exact replacements:
 
 | Removed setting | Replacement |
 | --- | --- |
@@ -162,6 +200,6 @@ old rule keys with the following exact replacements:
 | `rules.variables: true` | `rules.statementSpacing.variableDeclarations: "separate"` |
 | `rules.variables: false` | `rules.statementSpacing.variableDeclarations: "off"` |
 
-When import layout is `false`, both spacing modes are `"off"`, and trailing commas are `"off"`,
-formatting returns the source unchanged. `lineWidth` only controls import layout. The CLI flag
-`--no-verify` disables AST verification for one invocation.
+When import layout is `false`, both spacing modes are `"off"`, all semicolon groups are `"off"`,
+and trailing commas are `"off"`, formatting returns the source unchanged. `lineWidth` only controls
+import layout. The CLI flag `--no-verify` disables AST verification for one invocation.
