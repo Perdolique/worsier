@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.0](https://github.com/Perdolique/worsier/compare/v2.2.0...v2.3.0) (2026-08-13)
+
+
+### Features
+
+* **formatter:** add semicolon rules ([d3d586c](https://github.com/Perdolique/worsier/commit/d3d586c14cc500ec3a62e36e54ca426f1b1c01ff))
+
 ## [2.2.0](https://github.com/Perdolique/worsier/compare/v2.1.0...v2.2.0) (2026-08-13)
 
 
