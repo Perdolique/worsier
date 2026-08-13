@@ -3,7 +3,6 @@ import { readFile, readdir } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 
 const root = new URL('..', import.meta.url)
-const nodeVersion = (await readFile(new URL('.node-version', root), 'utf8')).trim()
 const cargo = await readFile(new URL('Cargo.toml', root), 'utf8')
 const license = await readFile(new URL('LICENSE', root), 'utf8')
 const cargoVersion = cargo.match(/^version = "([^"]+)"$/m)?.[1]
@@ -11,12 +10,6 @@ assert.ok(cargoVersion, 'Cargo.toml must define workspace.package.version')
 
 const npmPackage = JSON.parse(await readFile(new URL('packages/npm/package.json', root), 'utf8'))
 assert.equal(cargoVersion, npmPackage.version, 'Cargo and npm versions must match')
-assert.equal(nodeVersion, '24.0.0', '.node-version must pin the minimum supported Node.js version')
-assert.equal(
-  npmPackage.engines.node,
-  `>=${nodeVersion}`,
-  'packages/npm/package.json engines.node must match .node-version'
-)
 assert.ok(npmPackage.files.includes('LICENSE'), 'worsier package must include LICENSE')
 assert.equal(
   await readFile(new URL('packages/npm/LICENSE', root), 'utf8'),

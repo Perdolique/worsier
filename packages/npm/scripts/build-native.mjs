@@ -29,7 +29,7 @@ const result = spawnSync(
   pnpm.command,
   pnpm.args,
   {
-    cwd: import.meta.dirname,
+    cwd: new URL('..', import.meta.url),
     encoding: 'utf8',
     stdio: 'inherit'
   }

@@ -4,6 +4,8 @@ Worsier is a focused JavaScript, TypeScript, JSX, and TSX formatter backed by a 
 It formats static imports, statement and member semicolons, trailing commas, and the boundaries
 around runtime variable declarations while preserving source text outside the enabled rules.
 Node.js 24.0.0 or newer is required for the CLI and programmatic API.
+Development and release builds use the versions pinned in `.node-version` and
+`rust-toolchain.toml`.
 
 ```sh
 pnpm add -D worsier
