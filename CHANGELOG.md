@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.0](https://github.com/Perdolique/worsier/compare/v2.0.0...v2.1.0) (2026-08-13)
+
+
+### Features
+
+* **all:** make configuration optional ([2f2fe43](https://github.com/Perdolique/worsier/commit/2f2fe4356a8c6f6f367de2e20279d357315745ed))
+
 ## [2.0.0](https://github.com/Perdolique/worsier/compare/v1.1.0...v2.0.0) (2026-08-12)
 
 
