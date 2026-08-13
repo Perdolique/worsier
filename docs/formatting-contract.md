@@ -88,6 +88,14 @@ break.
 
 ## Configuration
 
+The CLI searches from each input toward the Git or filesystem root for the nearest
+`worsier.jsonc`. If none exists, it uses the defaults below. `--config` selects one file explicitly,
+and `--init` creates an optional complete configuration. A discovered or explicit invalid file is
+an error rather than a signal to fall back to defaults.
+
+The programmatic `format(fileName, sourceText, config?)` API uses the same defaults when its third
+argument is omitted. It does not discover configuration files.
+
 ```jsonc
 {
   "$schema": "./node_modules/worsier/configuration_schema.json",

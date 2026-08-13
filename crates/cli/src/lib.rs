@@ -26,7 +26,7 @@ const CONFIG_FILE: &str = "worsier.jsonc";
     about = "Format JavaScript and TypeScript imports and variable boundaries with Worsier"
 )]
 struct Args {
-    /// Create a complete worsier.jsonc in the current directory.
+    /// Create an optional complete worsier.jsonc in the current directory.
     #[arg(long)]
     init: bool,
 
@@ -106,6 +106,11 @@ fn run_args(args: &Args) -> Result<i32> {
 
     let explicit_single_file = args.paths.len() == 1 && args.paths[0].is_file();
     let candidates = collect_files(&args.paths)?;
+    let explicit_config = args
+        .config
+        .as_deref()
+        .map(|path| load_config(path, args.no_verify))
+        .transpose()?;
     if candidates.is_empty() {
         if explicit_single_file {
             bail!(
@@ -116,11 +121,6 @@ fn run_args(args: &Args) -> Result<i32> {
         return Ok(0);
     }
 
-    let explicit_config = args
-        .config
-        .as_deref()
-        .map(|path| load_config(path, args.no_verify))
-        .transpose()?;
     let mut config_cache = ConfigCache::default();
     let mut jobs = Vec::new();
     for candidate in candidates {
@@ -358,10 +358,7 @@ impl ConfigCache {
             }
             let at_vcs_root = current.join(".git").exists();
             if at_vcs_root || !current.pop() {
-                bail!(
-                    "no {CONFIG_FILE} found for {}; run `npx worsier --init`",
-                    escaped_path(file)
-                );
+                break load_default_config(&current, no_verify)?;
             }
         };
 
@@ -370,6 +367,19 @@ impl ConfigCache {
         }
         Ok(loaded)
     }
+}
+
+fn load_default_config(directory: &Path, no_verify: bool) -> Result<Arc<LoadedConfig>> {
+    let mut config = FormatConfig::default();
+    if no_verify {
+        config.verify_ast = false;
+    }
+    let resolved = resolve_config(config).context("invalid default configuration")?;
+    let ignore = GitignoreBuilder::new(directory).build()?;
+    Ok(Arc::new(LoadedConfig {
+        config: Arc::new(resolved),
+        ignore,
+    }))
 }
 
 struct LoadedConfig {
@@ -659,7 +669,7 @@ mod tests {
 
     use super::{
         CONFIG_FILE, Job, JobMode, JobResult, atomic_write_with_before_replace, escaped_path,
-        format_job, init_config, load_config_with_override,
+        format_job, init_config, load_config_with_override, load_discovered_config,
     };
     use worsier_formatter::{FormatConfig, resolve_config};
 
@@ -699,6 +709,17 @@ mod tests {
 
         assert_eq!(successes, 1);
         assert!(load_config_with_override(&path.join(CONFIG_FILE), false).is_ok());
+    }
+
+    #[test]
+    fn default_config_honors_no_verify_override() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::create_dir(directory.path().join(".git")).unwrap();
+        let path = directory.path().join("sample.ts");
+        fs::write(&path, "const value=1;").unwrap();
+
+        assert!(load_discovered_config(&path, false).unwrap().verify_ast());
+        assert!(!load_discovered_config(&path, true).unwrap().verify_ast());
     }
 
     #[test]
