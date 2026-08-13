@@ -19,3 +19,13 @@ type Pair<
 enum State {
   Ready,
 }
+
+interface SemicolonGroups {
+  first: string;
+  second(): void,
+  third: number
+}
+
+type OptionalValues<Value> = {
+  [Key in keyof Value]?: Value[Key];
+};

@@ -8,6 +8,11 @@
       "imports": "separate",
       "variableDeclarations": "separate"
     },
+    "semicolons": {
+      "statements": "asNeeded",
+      "classMembers": "asNeeded",
+      "typeMembers": "asNeeded"
+    },
     "trailingCommas": "never"
   },
   "ignorePatterns": []

@@ -33,7 +33,7 @@ fn uses_defaults_without_config_and_init_refuses_to_overwrite() {
     assert!(output.status.success(), "{}", stderr(&output));
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        "import { value } from 'pkg';\n\nconst raw={\n  items: [\n    1\n  ]\n};"
+        "import { value } from 'pkg'\n\nconst raw={\n  items: [\n    1\n  ]\n}"
     );
 
     let initialized = command(directory.path()).arg("--init").output().unwrap();
@@ -59,7 +59,7 @@ fn supports_trailing_comma_modes_from_config() {
 
     write(
         &directory.path().join("worsier.jsonc"),
-        r#"{"rules":{"importLayout":false,"statementSpacing":{"imports":"off","variableDeclarations":"off"},"trailingCommas":"always"}}"#,
+        r#"{"rules":{"importLayout":false,"statementSpacing":{"imports":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"always"}}"#,
     );
     let always = command(directory.path()).arg("sample.ts").output().unwrap();
     assert!(always.status.success(), "{}", stderr(&always));
@@ -70,11 +70,32 @@ fn supports_trailing_comma_modes_from_config() {
 
     write(
         &directory.path().join("worsier.jsonc"),
-        r#"{"rules":{"importLayout":false,"statementSpacing":{"imports":"off","variableDeclarations":"off"},"trailingCommas":"off"}}"#,
+        r#"{"rules":{"importLayout":false,"statementSpacing":{"imports":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}"#,
     );
     let off = command(directory.path()).arg("sample.ts").output().unwrap();
     assert!(off.status.success(), "{}", stderr(&off));
     assert_eq!(String::from_utf8(off.stdout).unwrap(), source);
+}
+
+#[test]
+fn supports_granular_semicolon_modes_from_config() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::create_dir(directory.path().join(".git")).unwrap();
+    write(
+        &directory.path().join("worsier.jsonc"),
+        r#"{"rules":{"importLayout":false,"statementSpacing":{"imports":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"asNeeded","typeMembers":"always"},"trailingCommas":"off"}}"#,
+    );
+    write(
+        &directory.path().join("sample.ts"),
+        "const runtime=1;\nclass Example {\n  field=1;\n}\ninterface Shape {\n  value: string;\n}",
+    );
+
+    let output = command(directory.path()).arg("sample.ts").output().unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "const runtime=1;\nclass Example {\n  field=1\n}\ninterface Shape {\n  value: string;\n}"
+    );
 }
 
 #[test]
@@ -90,7 +111,7 @@ fn supports_stdout_stdin_check_and_atomic_write() {
     assert!(stdout.status.success());
     assert_eq!(
         String::from_utf8(stdout.stdout).unwrap(),
-        "import { answer, type Value } from 'pkg';\n\nconst value={answer:42};"
+        "import { answer, type Value } from 'pkg'\n\nconst value={answer:42}"
     );
 
     let check = command(directory.path())
@@ -110,7 +131,7 @@ fn supports_stdout_stdin_check_and_atomic_write() {
     assert!(write_result.status.success());
     assert_eq!(
         fs::read_to_string(directory.path().join("sample.ts")).unwrap(),
-        "import { answer, type Value } from 'pkg';\n\nconst value={answer:42};"
+        "import { answer, type Value } from 'pkg'\n\nconst value={answer:42}"
     );
     assert!(
         command(directory.path())
@@ -136,7 +157,7 @@ fn supports_stdout_stdin_check_and_atomic_write() {
     assert!(stdin.status.success());
     assert_eq!(
         String::from_utf8(stdin.stdout).unwrap(),
-        "import { stdinValue } from 'pkg';\n\nconst raw=[1,2];"
+        "import { stdinValue } from 'pkg'\n\nconst raw=[1,2]"
     );
 }
 
@@ -160,7 +181,7 @@ fn config_discovery_stops_at_a_repository_without_config() {
     assert!(output.status.success(), "{}", stderr(&output));
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        "import { one, two } from 'package';"
+        "import { one, two } from 'package'"
     );
 }
 
@@ -187,7 +208,7 @@ fn nearest_config_wins_and_explicit_config_disables_discovery() {
     assert!(nearest.status.success());
     assert_eq!(
         String::from_utf8(nearest.stdout).unwrap(),
-        "import {\n  one,\n  two\n} from 'package';"
+        "import {\n  one,\n  two\n} from 'package'"
     );
 
     let explicit = command(directory.path())
@@ -197,7 +218,7 @@ fn nearest_config_wins_and_explicit_config_disables_discovery() {
     assert!(explicit.status.success());
     assert_eq!(
         String::from_utf8(explicit.stdout).unwrap(),
-        "import { one, two } from 'package';"
+        "import { one, two } from 'package'"
     );
 }
 
@@ -215,7 +236,7 @@ fn partial_rule_configs_keep_sibling_defaults() {
     assert!(imports_only.status.success(), "{}", stderr(&imports_only));
     assert_eq!(
         String::from_utf8(imports_only.stdout).unwrap(),
-        "import { a } from 'x';\n\nconst first=1;let second=2;run();"
+        "import { a } from 'x'\n\nconst first=1;let second=2;run()"
     );
 
     write(
@@ -230,7 +251,7 @@ fn partial_rule_configs_keep_sibling_defaults() {
     );
     assert_eq!(
         String::from_utf8(variables_only.stdout).unwrap(),
-        "import{a}from'x';\n\nconst first=1;\nlet second=2;\n\nrun();"
+        "import{a}from'x'\n\nconst first=1\nlet second=2\n\nrun()"
     );
 }
 
@@ -242,6 +263,15 @@ fn configuration_errors_include_the_nested_json_path() {
     for (config, path) in [
         (r#"{"rules":{"imports":true}}"#, "rules.imports"),
         (r#"{"rules":{"variables":true}}"#, "rules.variables"),
+        (r#"{"rules":{"semicolons":"always"}}"#, "rules.semicolons"),
+        (
+            r#"{"rules":{"semicolons":{"statements":"never"}}}"#,
+            "rules.semicolons.statements",
+        ),
+        (
+            r#"{"rules":{"semicolons":{"unknown":"off"}}}"#,
+            "rules.semicolons.unknown",
+        ),
         (
             r#"{"rules":{"statementSpacing":{"imports":"preserve"}}}"#,
             "rules.statementSpacing.imports",
@@ -325,7 +355,7 @@ fn nested_config_ignores_are_relative_to_that_config() {
     );
     assert_eq!(
         fs::read_to_string(included).unwrap(),
-        "import { included } from 'pkg';"
+        "import { included } from 'pkg'"
     );
 }
 
@@ -441,7 +471,7 @@ fn parse_errors_do_not_modify_files_and_unicode_paths_work() {
     assert!(written.status.success(), "{}", stderr(&written));
     assert_eq!(
         fs::read_to_string(unicode).unwrap(),
-        "import { value } from 'pkg';\n\nconst raw=[1,2];"
+        "import { value } from 'pkg'\n\nconst raw=[1,2]"
     );
 }
 
@@ -464,6 +494,9 @@ fn accepts_every_documented_source_extension() {
         write(&directory.path().join(file_name), source);
         let output = command(directory.path()).arg(file_name).output().unwrap();
         assert!(output.status.success(), "{file_name}: {}", stderr(&output));
-        assert_eq!(String::from_utf8(output.stdout).unwrap(), source);
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap(),
+            source.strip_suffix(';').unwrap()
+        );
     }
 }

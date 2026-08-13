@@ -681,7 +681,7 @@ mod tests {
         assert!(load_config_with_override(&path, false).is_ok());
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
-            "{\n  \"$schema\": \"./node_modules/worsier/configuration_schema.json\",\n  \"lineWidth\": 120,\n  \"verifyAst\": true,\n  \"rules\": {\n    \"importLayout\": true,\n    \"statementSpacing\": {\n      \"imports\": \"separate\",\n      \"variableDeclarations\": \"separate\"\n    },\n    \"trailingCommas\": \"never\"\n  },\n  \"ignorePatterns\": []\n}\n"
+            "{\n  \"$schema\": \"./node_modules/worsier/configuration_schema.json\",\n  \"lineWidth\": 120,\n  \"verifyAst\": true,\n  \"rules\": {\n    \"importLayout\": true,\n    \"statementSpacing\": {\n      \"imports\": \"separate\",\n      \"variableDeclarations\": \"separate\"\n    },\n    \"semicolons\": {\n      \"statements\": \"asNeeded\",\n      \"classMembers\": \"asNeeded\",\n      \"typeMembers\": \"asNeeded\"\n    },\n    \"trailingCommas\": \"never\"\n  },\n  \"ignorePatterns\": []\n}\n"
         );
         assert!(init_config(directory.path()).is_err());
     }
@@ -726,7 +726,7 @@ mod tests {
     fn check_jobs_do_not_retain_source_sized_payloads() {
         let directory = tempfile::tempdir().unwrap();
         let clean = directory.path().join("clean.ts");
-        fs::write(&clean, "import { value } from 'pkg';").unwrap();
+        fs::write(&clean, "import { value } from 'pkg'").unwrap();
         let config = resolve_config(FormatConfig::default()).unwrap();
         let clean_job = Job {
             path: clean,

@@ -10,7 +10,7 @@ import { format } from '../dist/index.js'
 test('formats through the asynchronous native API', async () => {
   const source = "import{one,type Two}from'pkg';const value={items:[1,2]};"
   const output = await format('sample.ts', source)
-  assert.equal(output, "import { one, type Two } from 'pkg';\n\nconst value={items:[1,2]};")
+  assert.equal(output, "import { one, type Two } from 'pkg'\n\nconst value={items:[1,2]}")
   assert.equal(await format('sample.ts', source, {}), output)
 
   const variablesOnly = await format('sample.ts', source, {
@@ -21,7 +21,7 @@ test('formats through the asynchronous native API', async () => {
   })
   assert.equal(
     variablesOnly,
-    "import{one,type Two}from'pkg';\n\nconst value={items:[1,2]};"
+    "import{one,type Two}from'pkg'\n\nconst value={items:[1,2]}"
   )
 
   const importsOnly = await format(
@@ -29,12 +29,13 @@ test('formats through the asynchronous native API', async () => {
     "import{value}from'pkg';const first=1;let second=2;",
     { rules: { statementSpacing: { variableDeclarations: 'off' } } }
   )
-  assert.equal(importsOnly, "import { value } from 'pkg';\n\nconst first=1;let second=2;")
+  assert.equal(importsOnly, "import { value } from 'pkg'\n\nconst first=1;let second=2")
 
   const disabled = await format('sample.ts', source, {
     rules: {
       importLayout: false,
       statementSpacing: { imports: 'off', variableDeclarations: 'off' },
+      semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
       trailingCommas: 'off'
     }
   })
@@ -43,7 +44,24 @@ test('formats through the asynchronous native API', async () => {
   const partialNested = await format('sample.ts', 'const first=1;work();', {
     rules: { statementSpacing: { imports: 'compact' } }
   })
-  assert.equal(partialNested, 'const first=1;\n\nwork();')
+  assert.equal(partialNested, 'const first=1\n\nwork()')
+})
+
+test('formats granular semicolon groups through the native API', async () => {
+  const source =
+    'const runtime=1;\nclass Example {\n  field=1;\n}\ninterface Shape {\n  value: string;\n}'
+  const output = await format('sample.ts', source, {
+    rules: {
+      importLayout: false,
+      statementSpacing: { imports: 'off', variableDeclarations: 'off' },
+      semicolons: { statements: 'off', classMembers: 'asNeeded', typeMembers: 'always' },
+      trailingCommas: 'off'
+    }
+  })
+  assert.equal(
+    output,
+    'const runtime=1;\nclass Example {\n  field=1\n}\ninterface Shape {\n  value: string;\n}'
+  )
 })
 
 test('formats trailing commas through the native API', async () => {
@@ -51,7 +69,8 @@ test('formats trailing commas through the native API', async () => {
   const withCommas = 'const value = {\n  items: [\n    1,\n  ],\n};'
   const disabledRules = {
     importLayout: false,
-    statementSpacing: { imports: 'off', variableDeclarations: 'off' }
+    statementSpacing: { imports: 'off', variableDeclarations: 'off' },
+    semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' }
   }
 
   assert.equal(await format('sample.ts', withCommas, { rules: disabledRules }), withoutCommas)
@@ -86,6 +105,9 @@ test('maps native failures to stable error codes', async () => {
   for (const [rules, path] of [
     [{ imports: true }, 'rules.imports'],
     [{ variables: true }, 'rules.variables'],
+    [{ semicolons: 'always' }, 'rules.semicolons'],
+    [{ semicolons: { statements: 'never' } }, 'rules.semicolons.statements'],
+    [{ semicolons: { extra: 'off' } }, 'rules.semicolons.extra'],
     [{ trailingCommas: 'multiline' }, 'rules.trailingCommas'],
     [{ statementSpacing: { imports: 'preserve' } }, 'rules.statementSpacing.imports'],
     [{ statementSpacing: { extra: 'off' } }, 'rules.statementSpacing.extra']
