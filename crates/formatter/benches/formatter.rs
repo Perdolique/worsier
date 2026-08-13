@@ -4,14 +4,24 @@ use std::path::Path;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use worsier_formatter::{
-    FormatConfig, benchmark_parse, benchmark_rewrite, benchmark_verify, resolve_config,
+    FormatConfig, RulesConfig, TrailingCommaMode, benchmark_parse, benchmark_rewrite,
+    benchmark_verify, resolve_config,
 };
 
 fn formatter_benchmarks(criterion: &mut Criterion) {
     let mut group = criterion.benchmark_group("formatter");
     group.sample_size(10);
-    let no_verify = resolve_config(FormatConfig {
+    let no_verify_never = resolve_config(FormatConfig {
         verify_ast: false,
+        ..FormatConfig::default()
+    })
+    .unwrap();
+    let no_verify_off = resolve_config(FormatConfig {
+        verify_ast: false,
+        rules: RulesConfig {
+            trailing_commas: TrailingCommaMode::Off,
+            ..RulesConfig::default()
+        },
         ..FormatConfig::default()
     })
     .unwrap();
@@ -29,11 +39,25 @@ fn formatter_benchmarks(criterion: &mut Criterion) {
             },
         );
         group.bench_with_input(
-            BenchmarkId::new("format_no_verify", name),
+            BenchmarkId::new("format_no_verify_never", name),
             &source,
             |bencher, source| {
                 bencher.iter(|| {
-                    benchmark_rewrite(Path::new("benchmark.ts"), black_box(source), &no_verify)
+                    benchmark_rewrite(
+                        Path::new("benchmark.ts"),
+                        black_box(source),
+                        &no_verify_never,
+                    )
+                    .unwrap();
+                });
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new("format_no_verify_off", name),
+            &source,
+            |bencher, source| {
+                bencher.iter(|| {
+                    benchmark_rewrite(Path::new("benchmark.ts"), black_box(source), &no_verify_off)
                         .unwrap();
                 });
             },

@@ -1,7 +1,8 @@
 # Worsier formatting contract
 
-Worsier rewrites static `import` declarations and whitespace boundaries around direct runtime
-variable declarations. It does not rewrite the contents of those variable declarations.
+Worsier rewrites static `import` declarations, trailing commas in supported lists, and whitespace
+boundaries around direct runtime variable declarations. It does not otherwise rewrite the contents
+of those declarations or lists.
 
 ## Import layout
 
@@ -10,7 +11,8 @@ variable declarations. It does not rewrite the contents of those variable declar
 - Named imports use `{ a, b }` spacing and retain specifier order, aliases, `type` modifiers,
   module-specifier quotes, semicolons, import attributes, and comments.
 - A named import that exceeds `lineWidth` places every specifier on its own line with two spaces of
-  indentation. Its trailing comma is removed.
+  indentation. Import layout preserves whether the named list had a trailing comma; the separate
+  `rules.trailingCommas` rule may then normalize it.
 - A single named specifier also breaks when the complete flat import exceeds `lineWidth`.
 - Default-only, namespace, and side-effect imports have no named list to break and stay on one line.
 - Dynamic `import()` expressions are not changed.
@@ -23,6 +25,41 @@ import {
   one,
   two
 } from 'package-with-a-long-name'
+```
+
+## Trailing commas
+
+`rules.trailingCommas` accepts `"always"`, `"never"`, or `"off"` and defaults to `"never"`.
+
+- `"always"` adds a comma to every eligible multiline list and removes optional trailing commas
+  from single-line lists.
+- `"never"` removes every optional trailing comma from eligible lists.
+- `"off"` preserves the presence of trailing commas, including in imports rewritten by
+  `rules.importLayout`.
+
+The rule covers object and array literals, binding and assignment destructuring, named static
+imports and exports, import/export attributes, function and method parameters, call and `new`
+arguments, TypeScript tuple types, enum bodies, and type parameter declarations. A list is
+multiline when its delimiters are on different physical lines. A call or `new` expression whose
+single multiline argument stays attached to both parentheses is not treated as a multiline
+argument list.
+
+Empty lists, dynamic `import()` arguments, and TypeScript type argument instantiations are outside
+the rule. Terminal sparse-array or array-pattern elisions are preserved because their comma is
+semantic. A comma is not added after a rest parameter, destructuring rest, or tuple rest element.
+The required comma on an otherwise ambiguous single generic-arrow parameter in TSX, `.mts`, and
+`.cts` is preserved in every mode. An explicit constraint removes that ambiguity; a default also
+removes it in TSX, while `.mts` and `.cts` still require either a constraint or comma. Trailing
+comments and source parentheses stay in place: an added comma is inserted after the final syntax
+token, including a closing parenthesis around the final item, and before the comment.
+
+```ts
+const value = {
+  items: [
+    first,
+    second,
+  ],
+}
 ```
 
 ## Statement boundaries
@@ -60,8 +97,9 @@ break.
 
 - `rules.statementSpacing.variableDeclarations` applies only to direct statement-list `const`,
   `let`, and `var` declarations.
-- The declaration span is preserved: initializers, destructuring, types, comments, commas,
-  semicolons, and multi-declarator statements are not reformatted or split.
+- Statement spacing does not rewrite declaration contents. The trailing-comma rule may independently
+  change a supported list inside a declaration; all other initializers, destructuring, types,
+  comments, semicolons, and multi-declarator structure are preserved.
 - Exported declarations, explicit `declare` declarations, declaration files, declarations inside
   declared namespaces/modules/globals, `using`, `await using`, and declarations in `for` headers
   are excluded. Ambient declarations may be supported in the future, but are not part of this rule;
@@ -78,8 +116,8 @@ break.
 
 ## Source and semantic guarantees
 
-- Variable declaration contents and source outside static imports or rewritten whitespace
-  boundaries are preserved byte-for-byte.
+- Source outside static imports, trailing-comma tokens, or rewritten whitespace boundaries is
+  preserved byte-for-byte.
 - Existing LF or CRLF line endings are used for rewritten imports and boundaries. A UTF-8 BOM is
   preserved, as are semicolons and the presence or absence of a final newline.
 - When `verifyAst` is enabled, Worsier reparses the output and requires Oxc `Program::content_eq`
@@ -106,14 +144,16 @@ argument is omitted. It does not discover configuration files.
     "statementSpacing": {
       "imports": "separate",
       "variableDeclarations": "separate"
-    }
+    },
+    "trailingCommas": "never"
   },
   "ignorePatterns": []
 }
 ```
 
-Unknown keys and unknown spacing modes are configuration errors. The removed `rules.imports` and
-`rules.variables` keys are not aliases. Migrate them with the following exact replacements:
+Unknown keys, spacing modes, and trailing-comma modes are configuration errors. The removed
+top-level `trailingCommas`, `rules.imports`, and `rules.variables` keys are not aliases. Migrate the
+old rule keys with the following exact replacements:
 
 | Removed setting | Replacement |
 | --- | --- |
@@ -122,6 +162,6 @@ Unknown keys and unknown spacing modes are configuration errors. The removed `ru
 | `rules.variables: true` | `rules.statementSpacing.variableDeclarations: "separate"` |
 | `rules.variables: false` | `rules.statementSpacing.variableDeclarations: "off"` |
 
-When import layout is `false` and both spacing modes are `"off"`, formatting returns the source
-unchanged. `lineWidth` only controls import layout. The CLI flag `--no-verify` disables AST
-verification for one invocation.
+When import layout is `false`, both spacing modes are `"off"`, and trailing commas are `"off"`,
+formatting returns the source unchanged. `lineWidth` only controls import layout. The CLI flag
+`--no-verify` disables AST verification for one invocation.

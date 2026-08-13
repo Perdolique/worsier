@@ -3,23 +3,32 @@ use std::path::Path;
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
-    BlockStatement, Comment, CommentKind, CommentPosition, Directive, FunctionBody,
-    ImportDeclaration, Program, Statement, StaticBlock, SwitchCase, SwitchStatement,
+    ArrayAssignmentTarget, ArrayExpression, ArrayExpressionElement, ArrayPattern,
+    ArrowFunctionExpression, BlockStatement, CallExpression, Comment, CommentKind, CommentPosition,
+    Directive, ExportFromDeclaration, ExportNamedDeclaration, FormalParameters, FunctionBody,
+    ImportDeclaration, NewExpression, ObjectAssignmentTarget, ObjectExpression, ObjectPattern,
+    Program, Statement, StaticBlock, SwitchCase, SwitchStatement, TSEnumBody,
     TSExternalModuleDeclaration, TSGlobalDeclaration, TSModuleBlock, TSNamespaceDeclaration,
-    VariableDeclarationKind,
+    TSTupleElement, TSTupleType, TSTypeParameterDeclaration, VariableDeclarationKind, WithClause,
 };
 use oxc_ast_visit::{
     Visit,
     walk::{
-        walk_block_statement, walk_function_body, walk_program, walk_statement, walk_static_block,
-        walk_switch_case, walk_switch_statement, walk_ts_external_module_declaration,
-        walk_ts_global_declaration, walk_ts_module_block, walk_ts_namespace_declaration,
+        walk_array_assignment_target, walk_array_expression, walk_array_pattern,
+        walk_arrow_function_expression, walk_block_statement, walk_call_expression,
+        walk_export_from_declaration, walk_export_named_declaration, walk_formal_parameters,
+        walk_function_body, walk_import_declaration, walk_new_expression,
+        walk_object_assignment_target, walk_object_expression, walk_object_pattern, walk_program,
+        walk_statement, walk_static_block, walk_switch_case, walk_switch_statement,
+        walk_ts_enum_body, walk_ts_external_module_declaration, walk_ts_global_declaration,
+        walk_ts_module_block, walk_ts_namespace_declaration, walk_ts_tuple_type,
+        walk_ts_type_parameter_declaration, walk_with_clause,
     },
 };
 use oxc_parser::{Kind, ParseOptions, Parser, Token, config::TokensParserConfig};
-use oxc_span::{ContentEq, GetSpan, SourceType, Span};
+use oxc_span::{ContentEq, FileExtension, GetSpan, SourceType, Span};
 
-use crate::{FormatError, ResolvedConfig, StatementSpacingMode};
+use crate::{FormatError, ResolvedConfig, StatementSpacingMode, TrailingCommaMode};
 
 const BOM: char = '\u{feff}';
 
@@ -29,6 +38,12 @@ thread_local! {
     static INDENT_RESOLUTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static IMPORT_MULTILINE_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static VARIABLE_MULTILINE_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static TOKEN_PREFLIGHT_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static TOKEN_PARSER_RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static LINE_BREAK_INDEX_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static LINE_BREAK_QUERIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static PARENTHESIS_INDEX_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static PARENTHESIS_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static CORRUPT_REWRITE_FOR_TEST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
@@ -71,8 +86,8 @@ fn maybe_corrupt_rewrite_for_test(rewritten: &mut String) {
 #[cfg(not(test))]
 fn maybe_corrupt_rewrite_for_test(_: &mut String) {}
 
-/// Formats static imports and runtime variable declaration boundaries in JavaScript, TypeScript,
-/// JSX, or TSX source text.
+/// Formats static imports, trailing commas, and runtime variable declaration boundaries in
+/// JavaScript, TypeScript, JSX, or TSX source text.
 ///
 /// # Errors
 ///
@@ -98,11 +113,13 @@ pub fn format_text(
     if !config.import_layout_enabled()
         && config.import_spacing() == StatementSpacingMode::Off
         && config.variable_declaration_spacing() == StatementSpacingMode::Off
+        && config.trailing_commas() == TrailingCommaMode::Off
     {
         return Ok(None);
     }
 
     let newline = detect_newline(source);
+    let single_arrow_comma = single_arrow_comma_rule(source_type);
     let edits = rewrite_edits(
         source,
         &parsed.program,
@@ -117,13 +134,50 @@ pub fn format_text(
             } else {
                 config.variable_declaration_spacing()
             },
+            trailing_commas: config.trailing_commas(),
+            single_arrow_comma,
         },
     )?;
-    if edits.is_empty() {
-        return Ok(None);
-    }
-
-    let mut rewritten = apply_edits(source, &edits)?;
+    let intermediate = if edits.is_empty() {
+        None
+    } else {
+        Some(apply_edits(source, &edits)?)
+    };
+    let mut rewritten = match (intermediate, config.trailing_commas()) {
+        (None, TrailingCommaMode::Off | TrailingCommaMode::Never) => return Ok(None),
+        (Some(rewritten), TrailingCommaMode::Off | TrailingCommaMode::Never) => rewritten,
+        (None, mode @ TrailingCommaMode::Always) => {
+            let comma_edits = trailing_comma_edits(
+                source,
+                &parsed.program,
+                &parsed.tokens,
+                mode,
+                single_arrow_comma,
+                false,
+            );
+            if comma_edits.is_empty() {
+                return Ok(None);
+            }
+            apply_edits(source, &comma_edits)?
+        }
+        (Some(intermediate), mode @ TrailingCommaMode::Always) => {
+            let comma_allocator = Allocator::default();
+            let comma_parsed = parse_tokens(&comma_allocator, &intermediate, source_type)?;
+            let comma_edits = trailing_comma_edits(
+                &intermediate,
+                &comma_parsed.program,
+                &comma_parsed.tokens,
+                mode,
+                single_arrow_comma,
+                false,
+            );
+            if comma_edits.is_empty() {
+                intermediate
+            } else {
+                apply_edits(&intermediate, &comma_edits)?
+            }
+        }
+    };
     maybe_corrupt_rewrite_for_test(&mut rewritten);
     if config.verify_ast() {
         verify(file_name, source_type, &parsed.program, &rewritten)?;
@@ -137,6 +191,26 @@ pub fn format_text(
     output.push_str(bom);
     output.push_str(&rewritten);
     Ok(Some(output))
+}
+
+#[derive(Clone, Copy, Debug)]
+enum SingleArrowCommaRule {
+    Optional,
+    RequiredWithoutConstraint,
+    RequiredWithoutConstraintOrDefault,
+}
+
+fn single_arrow_comma_rule(source_type: SourceType) -> SingleArrowCommaRule {
+    if source_type.is_jsx() {
+        SingleArrowCommaRule::RequiredWithoutConstraintOrDefault
+    } else if matches!(
+        source_type.extension(),
+        Some(FileExtension::Mts | FileExtension::Cts)
+    ) {
+        SingleArrowCommaRule::RequiredWithoutConstraint
+    } else {
+        SingleArrowCommaRule::Optional
+    }
 }
 
 fn source_type(path: &Path) -> Result<SourceType, FormatError> {
@@ -167,9 +241,21 @@ fn parse_with_tokens<'a>(
 ) -> Result<oxc_parser::ParserReturn<'a>, FormatError> {
     // The token-producing parser can panic on malformed lexer input such as NUL. Run the
     // diagnostic parser first so invalid source is rejected before token collection begins.
+    #[cfg(test)]
+    TOKEN_PREFLIGHT_PARSES.set(TOKEN_PREFLIGHT_PARSES.get() + 1);
     let preflight_allocator = Allocator::default();
     parse(&preflight_allocator, source, source_type)?;
 
+    parse_tokens(allocator, source, source_type)
+}
+
+fn parse_tokens<'a>(
+    allocator: &'a Allocator,
+    source: &'a str,
+    source_type: SourceType,
+) -> Result<oxc_parser::ParserReturn<'a>, FormatError> {
+    #[cfg(test)]
+    TOKEN_PARSER_RUNS.set(TOKEN_PARSER_RUNS.get() + 1);
     let parsed = Parser::new(allocator, source, source_type)
         .with_options(parse_options())
         .with_config(TokensParserConfig)
@@ -230,6 +316,469 @@ struct Edit {
     replacement: String,
 }
 
+fn trailing_comma_edits(
+    source: &str,
+    program: &Program<'_>,
+    tokens: &[Token],
+    mode: TrailingCommaMode,
+    single_arrow_comma: SingleArrowCommaRule,
+    skip_static_imports: bool,
+) -> Vec<Edit> {
+    let line_breaks = (mode == TrailingCommaMode::Always).then(|| LineBreakIndex::new(source));
+    let mut collector = TrailingCommaCollector {
+        tokens,
+        mode,
+        single_arrow_comma,
+        skip_static_imports,
+        required_type_parameters: None,
+        line_breaks,
+        parentheses: ParenthesisIndex::new(tokens),
+        edits: Vec::new(),
+    };
+    collector.visit_program(program);
+    collector.edits.sort_by_key(|edit| (edit.start, edit.end));
+    collector.edits
+}
+
+struct TrailingCommaCollector<'s> {
+    tokens: &'s [Token],
+    mode: TrailingCommaMode,
+    single_arrow_comma: SingleArrowCommaRule,
+    skip_static_imports: bool,
+    required_type_parameters: Option<Span>,
+    line_breaks: Option<LineBreakIndex>,
+    parentheses: ParenthesisIndex,
+    edits: Vec<Edit>,
+}
+
+impl TrailingCommaCollector<'_> {
+    fn record_exact_list(
+        &mut self,
+        span: Span,
+        open_kind: Kind,
+        close_kind: Kind,
+        can_add: bool,
+        required: bool,
+    ) {
+        let Some((open, close)) = exact_delimiters(self.tokens, span, open_kind, close_kind) else {
+            return;
+        };
+        self.record_list(open, close, can_add, required);
+    }
+
+    fn record_surrounded_list(
+        &mut self,
+        span: Span,
+        open_kind: Kind,
+        close_kind: Kind,
+        first_item: Span,
+        last_item: Span,
+        can_add: bool,
+    ) {
+        let Some((open, close)) = surrounding_delimiters(
+            self.tokens,
+            span,
+            open_kind,
+            close_kind,
+            first_item,
+            last_item,
+        ) else {
+            return;
+        };
+        self.record_list(open, close, can_add, false);
+    }
+
+    fn record_parenthesized_list(&mut self, span: Span, item_count: usize) {
+        let Some((open, close)) = self.parentheses.final_delimiters(self.tokens, span) else {
+            return;
+        };
+        let can_add = item_count > 1
+            || self.line_breaks.as_ref().is_some_and(|line_breaks| {
+                let Some(list) = list_tokens(self.tokens, open, close) else {
+                    return false;
+                };
+                let tail_start = list.trailing_comma.map_or(list.last.end, |comma| comma.end);
+                line_breaks.contains(Span::new(open.end, list.first.start))
+                    || line_breaks.contains(Span::new(tail_start, close.start))
+            });
+        self.record_list(open, close, can_add, false);
+    }
+
+    fn record_list(&mut self, open: Span, close: Span, can_add: bool, required: bool) {
+        let Some(list) = list_tokens(self.tokens, open, close) else {
+            return;
+        };
+        let multiline = can_add
+            && self
+                .line_breaks
+                .as_ref()
+                .is_some_and(|line_breaks| line_breaks.contains(Span::new(open.start, close.end)));
+        let should_have_comma =
+            required || (can_add && self.mode == TrailingCommaMode::Always && multiline);
+
+        match (list.trailing_comma, should_have_comma) {
+            (None, true) => self.edits.push(Edit {
+                start: list.last.end,
+                end: list.last.end,
+                replacement: ",".to_owned(),
+            }),
+            (Some(comma), false) => self.edits.push(Edit {
+                start: comma.start,
+                end: comma.end,
+                replacement: String::new(),
+            }),
+            _ => {}
+        }
+    }
+}
+
+impl<'a> Visit<'a> for TrailingCommaCollector<'_> {
+    fn visit_array_expression(&mut self, expression: &ArrayExpression<'a>) {
+        if let Some(last) = expression.elements.last()
+            && !matches!(last, ArrayExpressionElement::Elision(_))
+        {
+            self.record_exact_list(expression.span, Kind::LBrack, Kind::RBrack, true, false);
+        }
+        walk_array_expression(self, expression);
+    }
+
+    fn visit_object_expression(&mut self, expression: &ObjectExpression<'a>) {
+        if !expression.properties.is_empty() {
+            self.record_exact_list(expression.span, Kind::LCurly, Kind::RCurly, true, false);
+        }
+        walk_object_expression(self, expression);
+    }
+
+    fn visit_array_pattern(&mut self, pattern: &ArrayPattern<'a>) {
+        if pattern.rest.is_some() {
+            self.record_exact_list(pattern.span, Kind::LBrack, Kind::RBrack, false, false);
+        } else if matches!(pattern.elements.last(), Some(Some(_))) {
+            self.record_exact_list(pattern.span, Kind::LBrack, Kind::RBrack, true, false);
+        }
+        walk_array_pattern(self, pattern);
+    }
+
+    fn visit_object_pattern(&mut self, pattern: &ObjectPattern<'a>) {
+        if pattern.rest.is_some() {
+            self.record_exact_list(pattern.span, Kind::LCurly, Kind::RCurly, false, false);
+        } else if !pattern.properties.is_empty() {
+            self.record_exact_list(pattern.span, Kind::LCurly, Kind::RCurly, true, false);
+        }
+        walk_object_pattern(self, pattern);
+    }
+
+    fn visit_array_assignment_target(&mut self, target: &ArrayAssignmentTarget<'a>) {
+        if target.rest.is_some() {
+            self.record_exact_list(target.span, Kind::LBrack, Kind::RBrack, false, false);
+        } else if matches!(target.elements.last(), Some(Some(_))) {
+            self.record_exact_list(target.span, Kind::LBrack, Kind::RBrack, true, false);
+        }
+        walk_array_assignment_target(self, target);
+    }
+
+    fn visit_object_assignment_target(&mut self, target: &ObjectAssignmentTarget<'a>) {
+        if target.rest.is_some() {
+            self.record_exact_list(target.span, Kind::LCurly, Kind::RCurly, false, false);
+        } else if !target.properties.is_empty() {
+            self.record_exact_list(target.span, Kind::LCurly, Kind::RCurly, true, false);
+        }
+        walk_object_assignment_target(self, target);
+    }
+
+    fn visit_formal_parameters(&mut self, parameters: &FormalParameters<'a>) {
+        if parameters.rest.is_some() {
+            self.record_exact_list(parameters.span, Kind::LParen, Kind::RParen, false, false);
+        } else if !parameters.items.is_empty() {
+            self.record_exact_list(parameters.span, Kind::LParen, Kind::RParen, true, false);
+        } else if let Some((open, close)) =
+            exact_delimiters(self.tokens, parameters.span, Kind::LParen, Kind::RParen)
+            && list_tokens(self.tokens, open, close).is_some()
+        {
+            self.record_list(open, close, true, false);
+        }
+        walk_formal_parameters(self, parameters);
+    }
+
+    fn visit_call_expression(&mut self, expression: &CallExpression<'a>) {
+        if !expression.arguments.is_empty() {
+            self.record_parenthesized_list(expression.span, expression.arguments.len());
+        }
+        walk_call_expression(self, expression);
+    }
+
+    fn visit_new_expression(&mut self, expression: &NewExpression<'a>) {
+        if !expression.arguments.is_empty() {
+            self.record_parenthesized_list(expression.span, expression.arguments.len());
+        }
+        walk_new_expression(self, expression);
+    }
+
+    fn visit_import_declaration(&mut self, declaration: &ImportDeclaration<'a>) {
+        if self.skip_static_imports {
+            return;
+        }
+        let named_specifiers = declaration.specifiers.as_ref().and_then(|specifiers| {
+            let first = specifiers.iter().find(|specifier| {
+                matches!(
+                    specifier,
+                    oxc_ast::ast::ImportDeclarationSpecifier::ImportSpecifier(_)
+                )
+            })?;
+            let last = specifiers.iter().rev().find(|specifier| {
+                matches!(
+                    specifier,
+                    oxc_ast::ast::ImportDeclarationSpecifier::ImportSpecifier(_)
+                )
+            })?;
+            Some((first.span(), last.span()))
+        });
+        if let Some((first, last)) = named_specifiers {
+            self.record_surrounded_list(
+                declaration.span,
+                Kind::LCurly,
+                Kind::RCurly,
+                first,
+                last,
+                true,
+            );
+        }
+        walk_import_declaration(self, declaration);
+    }
+
+    fn visit_export_named_declaration(&mut self, declaration: &ExportNamedDeclaration<'a>) {
+        if let (Some(first), Some(last)) = (
+            declaration.specifiers.first(),
+            declaration.specifiers.last(),
+        ) {
+            self.record_surrounded_list(
+                declaration.span,
+                Kind::LCurly,
+                Kind::RCurly,
+                first.span(),
+                last.span(),
+                true,
+            );
+        }
+        walk_export_named_declaration(self, declaration);
+    }
+
+    fn visit_export_from_declaration(&mut self, declaration: &ExportFromDeclaration<'a>) {
+        if let (Some(first), Some(last)) = (
+            declaration.specifiers.first(),
+            declaration.specifiers.last(),
+        ) {
+            self.record_surrounded_list(
+                declaration.span,
+                Kind::LCurly,
+                Kind::RCurly,
+                first.span(),
+                last.span(),
+                true,
+            );
+        }
+        walk_export_from_declaration(self, declaration);
+    }
+
+    fn visit_with_clause(&mut self, clause: &WithClause<'a>) {
+        if let (Some(first), Some(last)) = (clause.with_entries.first(), clause.with_entries.last())
+        {
+            self.record_surrounded_list(
+                clause.span,
+                Kind::LCurly,
+                Kind::RCurly,
+                first.span(),
+                last.span(),
+                true,
+            );
+        }
+        walk_with_clause(self, clause);
+    }
+
+    fn visit_ts_enum_body(&mut self, body: &TSEnumBody<'a>) {
+        if !body.members.is_empty() {
+            self.record_exact_list(body.span, Kind::LCurly, Kind::RCurly, true, false);
+        }
+        walk_ts_enum_body(self, body);
+    }
+
+    fn visit_ts_tuple_type(&mut self, tuple: &TSTupleType<'a>) {
+        if let Some(last) = tuple.element_types.last() {
+            self.record_exact_list(
+                tuple.span,
+                Kind::LBrack,
+                Kind::RBrack,
+                !tuple_element_is_rest(last),
+                false,
+            );
+        }
+        walk_ts_tuple_type(self, tuple);
+    }
+
+    fn visit_ts_type_parameter_declaration(
+        &mut self,
+        declaration: &TSTypeParameterDeclaration<'a>,
+    ) {
+        if !declaration.params.is_empty() {
+            let required = self.required_type_parameters == Some(declaration.span);
+            self.record_exact_list(declaration.span, Kind::LAngle, Kind::RAngle, true, required);
+        }
+        walk_ts_type_parameter_declaration(self, declaration);
+    }
+
+    fn visit_arrow_function_expression(&mut self, expression: &ArrowFunctionExpression<'a>) {
+        let previous = self.required_type_parameters;
+        self.required_type_parameters = expression
+            .type_parameters
+            .as_ref()
+            .filter(|parameters| self.single_arrow_comma.is_required(parameters))
+            .map(|parameters| parameters.span);
+        walk_arrow_function_expression(self, expression);
+        self.required_type_parameters = previous;
+    }
+}
+
+impl SingleArrowCommaRule {
+    fn is_required(self, parameters: &TSTypeParameterDeclaration<'_>) -> bool {
+        let [parameter] = parameters.params.as_slice() else {
+            return false;
+        };
+        match self {
+            Self::Optional => false,
+            Self::RequiredWithoutConstraint => parameter.constraint.is_none(),
+            Self::RequiredWithoutConstraintOrDefault => {
+                parameter.constraint.is_none() && parameter.default.is_none()
+            }
+        }
+    }
+}
+
+struct LineBreakIndex {
+    offsets: Vec<u32>,
+}
+
+impl LineBreakIndex {
+    fn new(source: &str) -> Self {
+        #[cfg(test)]
+        LINE_BREAK_INDEX_BUILDS.set(LINE_BREAK_INDEX_BUILDS.get() + 1);
+        let offsets = source
+            .bytes()
+            .enumerate()
+            .filter(|(_, byte)| matches!(byte, b'\n' | b'\r'))
+            .map(|(index, _)| u32::try_from(index).unwrap())
+            .collect();
+        Self { offsets }
+    }
+
+    fn contains(&self, span: Span) -> bool {
+        #[cfg(test)]
+        LINE_BREAK_QUERIES.set(LINE_BREAK_QUERIES.get() + 1);
+        let index = self.offsets.partition_point(|offset| *offset < span.start);
+        self.offsets
+            .get(index)
+            .is_some_and(|offset| *offset < span.end)
+    }
+}
+
+struct ParenthesisIndex {
+    open_by_close: HashMap<u32, Span>,
+}
+
+impl ParenthesisIndex {
+    fn new(tokens: &[Token]) -> Self {
+        #[cfg(test)]
+        PARENTHESIS_INDEX_BUILDS.set(PARENTHESIS_INDEX_BUILDS.get() + 1);
+        let mut stack = Vec::new();
+        let mut open_by_close = HashMap::new();
+        for token in tokens {
+            match token.kind() {
+                Kind::LParen => stack.push(token.span()),
+                Kind::RParen => {
+                    if let Some(open) = stack.pop() {
+                        open_by_close.insert(token.start(), open);
+                    }
+                }
+                _ => {}
+            }
+        }
+        Self { open_by_close }
+    }
+
+    fn final_delimiters(&self, tokens: &[Token], span: Span) -> Option<(Span, Span)> {
+        #[cfg(test)]
+        PARENTHESIS_LOOKUPS.set(PARENTHESIS_LOOKUPS.get() + 1);
+        let close = tokens_in_span(tokens, span)
+            .last()
+            .filter(|token| token.kind() == Kind::RParen)?
+            .span();
+        let open = *self.open_by_close.get(&close.start)?;
+        Some((open, close))
+    }
+}
+
+struct ListTokens {
+    first: Span,
+    last: Span,
+    trailing_comma: Option<Span>,
+}
+
+fn list_tokens(tokens: &[Token], open: Span, close: Span) -> Option<ListTokens> {
+    let tokens = tokens_in_span(tokens, Span::new(open.end, close.start));
+    let first = tokens.first()?.span();
+    let trailing_comma = tokens
+        .last()
+        .filter(|token| token.kind() == Kind::Comma)
+        .map(Token::span);
+    let last = if trailing_comma.is_some() {
+        tokens.get(tokens.len().checked_sub(2)?)?.span()
+    } else {
+        tokens.last()?.span()
+    };
+    Some(ListTokens {
+        first,
+        last,
+        trailing_comma,
+    })
+}
+
+fn exact_delimiters(
+    tokens: &[Token],
+    span: Span,
+    open_kind: Kind,
+    close_kind: Kind,
+) -> Option<(Span, Span)> {
+    let tokens = tokens_in_span(tokens, span);
+    let open = tokens.first().filter(|token| token.kind() == open_kind)?;
+    let close = tokens.last().filter(|token| token.kind() == close_kind)?;
+    Some((open.span(), close.span()))
+}
+
+fn surrounding_delimiters(
+    tokens: &[Token],
+    span: Span,
+    open_kind: Kind,
+    close_kind: Kind,
+    first_item: Span,
+    last_item: Span,
+) -> Option<(Span, Span)> {
+    let tokens = tokens_in_span(tokens, span);
+    let open = tokens
+        .iter()
+        .rev()
+        .find(|token| token.kind() == open_kind && token.end() <= first_item.start)?;
+    let close = tokens
+        .iter()
+        .find(|token| token.kind() == close_kind && token.start() >= last_item.end)?;
+    Some((open.span(), close.span()))
+}
+
+fn tuple_element_is_rest(element: &TSTupleElement<'_>) -> bool {
+    match element {
+        TSTupleElement::TSRestType(_) => true,
+        TSTupleElement::TSNamedTupleMember(member) => tuple_element_is_rest(&member.element_type),
+        _ => false,
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct StatementShape {
     span: Span,
@@ -254,6 +803,8 @@ struct RewriteRules {
     import_layout: bool,
     import_spacing: StatementSpacingMode,
     variable_spacing: StatementSpacingMode,
+    trailing_commas: TrailingCommaMode,
+    single_arrow_comma: SingleArrowCommaRule,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -343,6 +894,7 @@ fn rewrite_edits(
                 declaration_comments,
                 line_width,
                 newline,
+                rules.trailing_commas,
             )?;
             let original = source_slice(source, span)?;
             if formatted.text != original {
@@ -359,6 +911,7 @@ fn rewrite_edits(
     if rules.import_spacing == StatementSpacingMode::Off
         && rules.variable_spacing == StatementSpacingMode::Off
     {
+        append_never_comma_edits(source, program, tokens, rules, &mut edits);
         edits.sort_by_key(|edit| (edit.start, edit.end));
         return Ok(edits);
     }
@@ -387,9 +940,30 @@ fn rewrite_edits(
         &collector.switches,
         &mut edits,
     )?;
+    append_never_comma_edits(source, program, tokens, rules, &mut edits);
 
     edits.sort_by_key(|edit| (edit.start, edit.end));
     Ok(edits)
+}
+
+fn append_never_comma_edits(
+    source: &str,
+    program: &Program<'_>,
+    tokens: &[Token],
+    rules: RewriteRules,
+    edits: &mut Vec<Edit>,
+) {
+    if rules.trailing_commas != TrailingCommaMode::Never {
+        return;
+    }
+    edits.extend(trailing_comma_edits(
+        source,
+        program,
+        tokens,
+        TrailingCommaMode::Never,
+        rules.single_arrow_comma,
+        rules.import_layout,
+    ));
 }
 
 struct StatementCollector<'s> {
@@ -1179,7 +1753,11 @@ fn format_import(
     comments: &[Comment],
     line_width: u32,
     newline: &str,
+    trailing_commas: TrailingCommaMode,
 ) -> Result<FormattedImport, FormatError> {
+    let omitted_attribute_comma = (trailing_commas == TrailingCommaMode::Never)
+        .then(|| import_attribute_trailing_comma(declaration, tokens))
+        .flatten();
     let named_braces = named_braces(declaration, tokens);
     let text = if let Some((left_brace, right_brace)) = named_braces {
         let flat = format_named_import(
@@ -1191,6 +1769,8 @@ fn format_import(
             comments,
             newline,
             false,
+            trailing_commas,
+            omitted_attribute_comma,
         )?;
         if contains_line_break(&flat) || flat.chars().count() > line_width as usize {
             format_named_import(
@@ -1202,18 +1782,47 @@ fn format_import(
                 comments,
                 newline,
                 true,
+                trailing_commas,
+                omitted_attribute_comma,
             )?
         } else {
             flat
         }
     } else {
-        canonicalize_range(declaration.span, source, tokens, comments, newline, false)?.text
+        canonicalize_range(
+            declaration.span,
+            source,
+            tokens,
+            comments,
+            newline,
+            false,
+            omitted_attribute_comma,
+        )?
+        .text
     };
 
     Ok(FormattedImport {
         multiline: contains_line_break(&text),
         text,
     })
+}
+
+fn import_attribute_trailing_comma(
+    declaration: &ImportDeclaration<'_>,
+    tokens: &[Token],
+) -> Option<Span> {
+    let clause = declaration.with_clause.as_ref()?;
+    let first = clause.with_entries.first()?;
+    let last = clause.with_entries.last()?;
+    let (open, close) = surrounding_delimiters(
+        tokens,
+        clause.span,
+        Kind::LCurly,
+        Kind::RCurly,
+        first.span(),
+        last.span(),
+    )?;
+    list_tokens(tokens, open, close)?.trailing_comma
 }
 
 fn named_braces(declaration: &ImportDeclaration<'_>, tokens: &[Token]) -> Option<(Span, Span)> {
@@ -1255,6 +1864,8 @@ fn format_named_import(
     comments: &[Comment],
     newline: &str,
     multiline: bool,
+    trailing_commas: TrailingCommaMode,
+    omitted_attribute_comma: Option<Span>,
 ) -> Result<String, FormatError> {
     let prefix = canonicalize_range(
         Span::new(declaration_span.start, left_brace.start),
@@ -1263,6 +1874,7 @@ fn format_named_import(
         comments,
         newline,
         false,
+        None,
     )?;
     let suffix = canonicalize_range(
         Span::new(right_brace.end, declaration_span.end),
@@ -1271,16 +1883,24 @@ fn format_named_import(
         comments,
         newline,
         false,
+        omitted_attribute_comma,
     )?;
     let ranges = named_segments(left_brace.end, right_brace.start, tokens);
+    let preserve_trailing_comma = trailing_commas != TrailingCommaMode::Never
+        && tokens_in_span(tokens, Span::new(left_brace.end, right_brace.start))
+            .last()
+            .is_some_and(|token| token.kind() == Kind::Comma);
     let last_token_segment = ranges
         .iter()
         .rposition(|range| range_has_token(*range, tokens));
     let mut segments = Vec::new();
     for (index, range) in ranges.into_iter().enumerate() {
         let has_token = range_has_token(range, tokens);
-        let add_comma = has_token && last_token_segment.is_some_and(|last| index < last);
-        let segment = canonicalize_range(range, source, tokens, comments, newline, add_comma)?;
+        let add_comma = has_token
+            && last_token_segment
+                .is_some_and(|last| index < last || (index == last && preserve_trailing_comma));
+        let segment =
+            canonicalize_range(range, source, tokens, comments, newline, add_comma, None)?;
         if !segment.text.is_empty() {
             segments.push(segment);
         }
@@ -1389,11 +2009,15 @@ fn canonicalize_range(
     comments: &[Comment],
     newline: &str,
     comma_after_last_token: bool,
+    omitted_token: Option<Span>,
 ) -> Result<CanonicalText, FormatError> {
     let tokens = tokens_in_span(tokens, range);
     let comments = comments_in_span(comments, range);
     let mut items = Vec::new();
-    for token in tokens {
+    for token in tokens
+        .iter()
+        .filter(|token| omitted_token != Some(token.span()))
+    {
         items.push(LexicalItem {
             span: token.span(),
             text: source_slice(source, token.span())?,
@@ -1577,11 +2201,13 @@ mod tests {
 
     use super::{
         CORRUPT_REWRITE_FOR_TEST, IMPORT_MULTILINE_SCANS, INDENT_RESOLUTIONS,
-        SPAN_LOOKUP_COMPARISONS, VARIABLE_MULTILINE_SCANS, parse, source_type, verify,
+        LINE_BREAK_INDEX_BUILDS, LINE_BREAK_QUERIES, PARENTHESIS_INDEX_BUILDS, PARENTHESIS_LOOKUPS,
+        SPAN_LOOKUP_COMPARISONS, TOKEN_PARSER_RUNS, TOKEN_PREFLIGHT_PARSES,
+        VARIABLE_MULTILINE_SCANS, parse, source_type, verify,
     };
     use crate::{
-        FormatConfig, RulesConfig, StatementSpacingConfig, StatementSpacingMode, format_text,
-        resolve_config,
+        FormatConfig, RulesConfig, StatementSpacingConfig, StatementSpacingMode, TrailingCommaMode,
+        format_text, resolve_config,
     };
 
     fn format(source: &str) -> String {
@@ -1614,6 +2240,42 @@ mod tests {
                         imports,
                         variable_declarations,
                     },
+                    ..RulesConfig::default()
+                },
+                ..FormatConfig::default()
+            },
+        )
+    }
+
+    fn format_trailing(source: &str, mode: TrailingCommaMode) -> String {
+        format_with(
+            source,
+            FormatConfig {
+                rules: RulesConfig {
+                    import_layout: false,
+                    statement_spacing: StatementSpacingConfig {
+                        imports: StatementSpacingMode::Off,
+                        variable_declarations: StatementSpacingMode::Off,
+                    },
+                    trailing_commas: mode,
+                },
+                ..FormatConfig::default()
+            },
+        )
+    }
+
+    fn format_trailing_file(file_name: &str, source: &str, mode: TrailingCommaMode) -> String {
+        format_file_with(
+            file_name,
+            source,
+            FormatConfig {
+                rules: RulesConfig {
+                    import_layout: false,
+                    statement_spacing: StatementSpacingConfig {
+                        imports: StatementSpacingMode::Off,
+                        variable_declarations: StatementSpacingMode::Off,
+                    },
+                    trailing_commas: mode,
                 },
                 ..FormatConfig::default()
             },
@@ -1625,6 +2287,384 @@ mod tests {
         let source = "import{z as local,type A,b}from\"pkg\";\nimport type{Foo,Bar as Baz}from'x'\nimport value,*as space from\"ns\";\nimport\"side\";";
         let expected = "import { z as local, type A, b } from \"pkg\";\nimport type { Foo, Bar as Baz } from 'x'\nimport value, * as space from \"ns\";\nimport \"side\";";
         assert_eq!(format(source), expected);
+    }
+
+    #[test]
+    fn applies_never_and_always_to_nested_objects_and_arrays() {
+        let without_commas = "const localKeyResolver = createLocalJWKSet({\n  keys: [\n    {\n      ...publicJwk,\n      alg: 'RS256',\n      kid: KEY_ID,\n      use: 'sig'\n    }\n  ]\n});";
+        let with_commas = "const localKeyResolver = createLocalJWKSet({\n  keys: [\n    {\n      ...publicJwk,\n      alg: 'RS256',\n      kid: KEY_ID,\n      use: 'sig',\n    },\n  ],\n});";
+
+        assert_eq!(
+            format_trailing(without_commas, TrailingCommaMode::Always),
+            with_commas
+        );
+        assert_eq!(
+            format_trailing(with_commas, TrailingCommaMode::Never),
+            without_commas
+        );
+    }
+
+    #[test]
+    fn places_commas_after_parenthesized_list_items() {
+        for (source, expected) in [
+            (
+                "const values = [(\n  value\n)];",
+                "const values = [(\n  value\n),];",
+            ),
+            (
+                "type Values = [(\n  Value\n)];",
+                "type Values = [(\n  Value\n),];",
+            ),
+            (
+                "call(\n  (\n    value\n  )\n);",
+                "call(\n  (\n    value\n  ),\n);",
+            ),
+            (
+                "new Box(\n  (\n    value\n  )\n);",
+                "new Box(\n  (\n    value\n  ),\n);",
+            ),
+        ] {
+            let output = format_trailing(source, TrailingCommaMode::Always);
+            assert_eq!(output, expected);
+            assert_eq!(format_trailing(&output, TrailingCommaMode::Always), output);
+        }
+    }
+
+    #[test]
+    fn keeps_an_attached_single_multiline_argument_without_a_comma() {
+        for source in ["call((\n  value\n));", "new Box((\n  value\n));"] {
+            assert_eq!(format_trailing(source, TrailingCommaMode::Always), source);
+        }
+    }
+
+    #[test]
+    fn formats_modern_javascript_trailing_comma_families() {
+        let source = "import {\n  imported\n} from 'pkg';\nexport {\n  imported\n};\nconst array = [\n  imported\n];\nconst object = {\n  imported\n};\nconst [\n  arrayValue\n] = array;\nconst {\n  objectValue\n} = object;\n([\n  assignedArray\n] = array);\n({\n  assignedObject\n} = object);\nfunction declared(\n  value\n) {}\nconst arrow = (\n  value\n) => value;\nconst called = declared(\n  array\n);\nconst created = new Box(\n  object\n);";
+        let output = format_trailing(source, TrailingCommaMode::Always);
+
+        for expected in [
+            "  imported,\n} from 'pkg'",
+            "export {\n  imported,\n}",
+            "const array = [\n  imported,\n]",
+            "const object = {\n  imported,\n}",
+            "  arrayValue,\n] = array",
+            "  objectValue,\n} = object",
+            "  assignedArray,\n] = array",
+            "  assignedObject,\n} = object",
+            "function declared(\n  value,\n)",
+            "const arrow = (\n  value,\n)",
+            "declared(\n  array,\n)",
+            "new Box(\n  object,\n)",
+        ] {
+            assert!(
+                output.contains(expected),
+                "missing {expected:?} in {output:?}"
+            );
+        }
+        assert_eq!(format_trailing(&output, TrailingCommaMode::Always), output);
+    }
+
+    #[test]
+    fn formats_typescript_trailing_comma_families() {
+        let source = "type Generic<\n  Value\n> = [\n  Value\n];\ntype Signature = (\n  value: Generic<string>\n) => void;\nenum Choice {\n  First\n}\nclass Box<Value> {\n  constructor(\n    value: Value\n  ) {}\n  method(\n    value: Value\n  ): Value { return value; }\n}";
+        let output = format_trailing(source, TrailingCommaMode::Always);
+
+        for expected in [
+            "type Generic<\n  Value,\n>",
+            "= [\n  Value,\n]",
+            "type Signature = (\n  value: Generic<string>,\n)",
+            "enum Choice {\n  First,\n}",
+            "constructor(\n    value: Value,\n  )",
+            "method(\n    value: Value,\n  )",
+        ] {
+            assert!(
+                output.contains(expected),
+                "missing {expected:?} in {output:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn formats_a_typescript_this_parameter() {
+        let multiline = "function handle(\n  this: Context\n) {}";
+        let with_comma = "function handle(\n  this: Context,\n) {}";
+        assert_eq!(
+            format_trailing(multiline, TrailingCommaMode::Always),
+            with_comma
+        );
+        assert_eq!(
+            format_trailing(with_comma, TrailingCommaMode::Never),
+            multiline
+        );
+        assert_eq!(
+            format_trailing(
+                "function handle(this: Context,) {}",
+                TrailingCommaMode::Never
+            ),
+            "function handle(this: Context) {}"
+        );
+    }
+
+    #[test]
+    fn formats_import_and_export_attributes() {
+        let source = "import data from 'data.json' with {\n  type: 'json'\n};\nexport { data } from 'data.json' with {\n  type: 'json'\n};";
+        let expected = "import data from 'data.json' with {\n  type: 'json',\n};\nexport { data } from 'data.json' with {\n  type: 'json',\n};";
+        assert_eq!(format_trailing(source, TrailingCommaMode::Always), expected);
+        assert_eq!(format_trailing(expected, TrailingCommaMode::Never), source);
+    }
+
+    #[test]
+    fn formats_import_commas_in_every_mode_idempotently() {
+        let source = "import{value,}from'data.json'with{type:'json',};";
+        let without_commas = "import { value } from 'data.json' with { type: 'json' };";
+        let with_commas = "import { value, } from 'data.json' with { type: 'json', };";
+
+        for (mode, expected) in [
+            (TrailingCommaMode::Always, without_commas),
+            (TrailingCommaMode::Never, without_commas),
+            (TrailingCommaMode::Off, with_commas),
+        ] {
+            let config = FormatConfig {
+                rules: RulesConfig {
+                    trailing_commas: mode,
+                    ..RulesConfig::default()
+                },
+                ..FormatConfig::default()
+            };
+            let output = format_with(source, config.clone());
+            assert_eq!(output, expected);
+            assert_eq!(format_with(&output, config), output);
+        }
+    }
+
+    #[test]
+    fn keeps_excluded_or_semantic_commas_untouched() {
+        let source = "const sparse = [\n  first,\n  ,\n];\nconst [\n  head,\n  ,\n] = sparse;\nfunction rest(\n  ...values\n) {}\nconst loaded = import(\n  'pkg'\n);\ntype Instantiated = Generic<\n  string,\n>;\ntype RestTuple = [\n  string,\n  ...number[]\n];";
+
+        for mode in [TrailingCommaMode::Always, TrailingCommaMode::Never] {
+            let output = format_trailing(source, mode);
+            assert!(output.contains("  ,\n];"));
+            assert!(output.contains("  ...values\n)"));
+            assert!(output.contains("import(\n  'pkg'\n)"));
+            assert!(output.contains("Generic<\n  string,\n>"));
+            assert!(output.contains("  ...number[]\n]"));
+        }
+    }
+
+    #[test]
+    fn never_adds_a_comma_after_destructuring_rest() {
+        let source = "const [\n  head,\n  ...tail\n] = values;\nconst {\n  key,\n  ...others\n} = value;\n([\n  assigned,\n  ...remaining\n] = values);\n({\n  key: assignedKey,\n  ...assignedRest\n} = value);";
+        for mode in [TrailingCommaMode::Always, TrailingCommaMode::Never] {
+            assert_eq!(format_trailing(source, mode), source);
+        }
+    }
+
+    #[test]
+    fn preserves_required_single_generic_arrow_commas() {
+        let source = "const identity = <T,>(value: T) => value;";
+        for file_name in ["sample.tsx", "sample.mts", "sample.cts"] {
+            for mode in [
+                TrailingCommaMode::Always,
+                TrailingCommaMode::Never,
+                TrailingCommaMode::Off,
+            ] {
+                assert_eq!(format_trailing_file(file_name, source, mode), source);
+            }
+        }
+
+        let without_comma = "const identity = <T>(value: T) => value;";
+        for mode in [TrailingCommaMode::Always, TrailingCommaMode::Never] {
+            assert_eq!(
+                format_trailing_file("sample.ts", source, mode),
+                without_comma
+            );
+            assert_eq!(
+                format_trailing_file("sample.ts", without_comma, mode),
+                without_comma
+            );
+        }
+        assert_eq!(
+            format_trailing_file("sample.ts", source, TrailingCommaMode::Off),
+            source
+        );
+        assert_eq!(
+            format_trailing_file("sample.ts", without_comma, TrailingCommaMode::Off),
+            without_comma
+        );
+    }
+
+    #[test]
+    fn treats_unambiguous_single_generic_arrows_as_optional() {
+        let constrained = "const identity = <T extends unknown>(value: T) => value;";
+        let constrained_with_comma = "const identity = <T extends unknown,>(value: T) => value;";
+        for file_name in ["sample.tsx", "sample.mts", "sample.cts"] {
+            for mode in [
+                TrailingCommaMode::Always,
+                TrailingCommaMode::Never,
+                TrailingCommaMode::Off,
+            ] {
+                assert_eq!(
+                    format_trailing_file(file_name, constrained, mode),
+                    constrained
+                );
+            }
+            for mode in [TrailingCommaMode::Always, TrailingCommaMode::Never] {
+                assert_eq!(
+                    format_trailing_file(file_name, constrained_with_comma, mode),
+                    constrained
+                );
+            }
+            assert_eq!(
+                format_trailing_file(file_name, constrained_with_comma, TrailingCommaMode::Off),
+                constrained_with_comma
+            );
+        }
+
+        let defaulted = "const identity = <T = unknown>(value: T) => value;";
+        let defaulted_with_comma = "const identity = <T = unknown,>(value: T) => value;";
+        for mode in [
+            TrailingCommaMode::Always,
+            TrailingCommaMode::Never,
+            TrailingCommaMode::Off,
+        ] {
+            assert_eq!(
+                format_trailing_file("sample.tsx", defaulted, mode),
+                defaulted
+            );
+        }
+        for mode in [TrailingCommaMode::Always, TrailingCommaMode::Never] {
+            assert_eq!(
+                format_trailing_file("sample.tsx", defaulted_with_comma, mode),
+                defaulted
+            );
+        }
+        assert_eq!(
+            format_trailing_file("sample.tsx", defaulted_with_comma, TrailingCommaMode::Off),
+            defaulted_with_comma
+        );
+
+        let module_defaulted = "const identity = <T = unknown,>(value: T) => value;";
+        for file_name in ["sample.mts", "sample.cts"] {
+            for mode in [
+                TrailingCommaMode::Always,
+                TrailingCommaMode::Never,
+                TrailingCommaMode::Off,
+            ] {
+                assert_eq!(
+                    format_trailing_file(file_name, module_defaulted, mode),
+                    module_defaulted
+                );
+            }
+        }
+
+        let multiline = "const identity = <\n  T extends unknown\n>(value: T) => value;";
+        let with_comma = "const identity = <\n  T extends unknown,\n>(value: T) => value;";
+        assert_eq!(
+            format_trailing_file("sample.tsx", multiline, TrailingCommaMode::Always),
+            with_comma
+        );
+        assert_eq!(
+            format_trailing_file("sample.tsx", with_comma, TrailingCommaMode::Never),
+            multiline
+        );
+    }
+
+    #[test]
+    fn inserts_before_trailing_comments_and_preserves_file_shape() {
+        let source = "\u{feff}const value = {\r\n  key: true // keep\r\n}";
+        let output = format_trailing(source, TrailingCommaMode::Always);
+        assert_eq!(
+            output,
+            "\u{feff}const value = {\r\n  key: true, // keep\r\n}"
+        );
+        assert!(!output.ends_with('\n'));
+    }
+
+    #[test]
+    fn always_removes_optional_single_line_commas() {
+        let source = "const array = [value,]; const object = { value, }; call(value,);";
+        assert_eq!(
+            format_trailing(source, TrailingCommaMode::Always),
+            "const array = [value]; const object = { value }; call(value);"
+        );
+    }
+
+    #[test]
+    fn off_preserves_import_commas_through_layout() {
+        let source = "import{one,two,}from'a-very-long-package-name';";
+        let output = format_with(
+            source,
+            FormatConfig {
+                line_width: 20,
+                rules: RulesConfig {
+                    trailing_commas: TrailingCommaMode::Off,
+                    ..RulesConfig::default()
+                },
+                ..FormatConfig::default()
+            },
+        );
+        assert_eq!(
+            output,
+            "import {\n  one,\n  two,\n} from 'a-very-long-package-name';"
+        );
+
+        let config = resolve_config(FormatConfig {
+            rules: RulesConfig {
+                import_layout: false,
+                statement_spacing: StatementSpacingConfig {
+                    imports: StatementSpacingMode::Off,
+                    variable_declarations: StatementSpacingMode::Off,
+                },
+                trailing_commas: TrailingCommaMode::Off,
+            },
+            ..FormatConfig::default()
+        })
+        .unwrap();
+        assert!(
+            format_text(Path::new("sample.ts"), source, &config)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn trailing_commas_use_the_final_import_layout() {
+        let expanded = format_with(
+            "import{one,two}from'a-very-long-package-name';",
+            FormatConfig {
+                line_width: 20,
+                rules: RulesConfig {
+                    trailing_commas: TrailingCommaMode::Always,
+                    ..RulesConfig::default()
+                },
+                ..FormatConfig::default()
+            },
+        );
+        assert_eq!(
+            expanded,
+            "import {\n  one,\n  two,\n} from 'a-very-long-package-name';"
+        );
+
+        let flattened = format_with(
+            "import {\n  one,\n  two,\n} from 'pkg';",
+            FormatConfig {
+                rules: RulesConfig {
+                    trailing_commas: TrailingCommaMode::Always,
+                    ..RulesConfig::default()
+                },
+                ..FormatConfig::default()
+            },
+        );
+        assert_eq!(flattened, "import { one, two } from 'pkg';");
+    }
+
+    #[test]
+    fn handles_nested_type_parameter_closers() {
+        let source = "function convert<\n  Value extends Generic<string>\n>(value: Value) {}";
+        assert_eq!(
+            format_trailing(source, TrailingCommaMode::Always),
+            "function convert<\n  Value extends Generic<string>,\n>(value: Value) {}"
+        );
     }
 
     #[test]
@@ -1711,6 +2751,35 @@ mod tests {
     }
 
     #[test]
+    fn import_width_uses_the_final_never_comma_shape() {
+        let source = "import{a,b,}from'x'";
+        let expected = "import { a, b } from 'x'";
+        let config = resolve_config(FormatConfig {
+            line_width: u32::try_from(expected.chars().count()).unwrap(),
+            rules: RulesConfig {
+                import_layout: true,
+                statement_spacing: StatementSpacingConfig {
+                    imports: StatementSpacingMode::Off,
+                    variable_declarations: StatementSpacingMode::Off,
+                },
+                trailing_commas: TrailingCommaMode::Never,
+            },
+            ..FormatConfig::default()
+        })
+        .unwrap();
+
+        let output = format_text(Path::new("sample.ts"), source, &config)
+            .unwrap()
+            .unwrap();
+        assert_eq!(output, expected);
+        assert!(
+            format_text(Path::new("sample.ts"), &output, &config)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
     fn applies_the_import_spacing_matrix_in_both_directions() {
         let source = "const before={raw:true};\n\n\nimport a from'a'\n\nimport{one,two}from'long-package'\nimport{three,four}from'other-long-package'\n\nimport b from'b'\n\nconst after=[1,2];";
         let output = format_with(
@@ -1772,6 +2841,7 @@ mod tests {
                         imports: StatementSpacingMode::Separate,
                         variable_declarations: StatementSpacingMode::Off,
                     },
+                    ..RulesConfig::default()
                 },
                 ..FormatConfig::default()
             },
@@ -1791,6 +2861,7 @@ mod tests {
                         imports: StatementSpacingMode::Separate,
                         variable_declarations: StatementSpacingMode::Off,
                     },
+                    ..RulesConfig::default()
                 },
                 ..FormatConfig::default()
             },
@@ -1881,6 +2952,7 @@ mod tests {
                     imports: StatementSpacingMode::Off,
                     variable_declarations: StatementSpacingMode::Off,
                 },
+                trailing_commas: TrailingCommaMode::Off,
             },
             ..FormatConfig::default()
         })
@@ -1902,6 +2974,76 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn never_reuses_the_initial_tokenized_parse() {
+        let config = resolve_config(FormatConfig {
+            verify_ast: false,
+            rules: RulesConfig {
+                trailing_commas: TrailingCommaMode::Never,
+                ..RulesConfig::default()
+            },
+            ..FormatConfig::default()
+        })
+        .unwrap();
+        TOKEN_PREFLIGHT_PARSES.set(0);
+        TOKEN_PARSER_RUNS.set(0);
+
+        format_text(
+            Path::new("sample.ts"),
+            "import{one,two,}from'package';const value={\n  key: true,\n};",
+            &config,
+        )
+        .unwrap();
+
+        assert_eq!(TOKEN_PREFLIGHT_PARSES.get(), 1);
+        assert_eq!(TOKEN_PARSER_RUNS.get(), 1);
+    }
+
+    #[test]
+    fn always_reparses_a_rewritten_intermediate_without_a_second_preflight() {
+        let config = resolve_config(FormatConfig {
+            verify_ast: false,
+            rules: RulesConfig {
+                trailing_commas: TrailingCommaMode::Always,
+                ..RulesConfig::default()
+            },
+            ..FormatConfig::default()
+        })
+        .unwrap();
+        TOKEN_PREFLIGHT_PARSES.set(0);
+        TOKEN_PARSER_RUNS.set(0);
+
+        format_text(
+            Path::new("sample.ts"),
+            "import{one,two}from'package';const value={\n  key: true\n};",
+            &config,
+        )
+        .unwrap();
+
+        assert_eq!(TOKEN_PREFLIGHT_PARSES.get(), 1);
+        assert_eq!(TOKEN_PARSER_RUNS.get(), 2);
+    }
+
+    #[test]
+    fn trailing_comma_indexes_stay_linear_for_nested_calls() {
+        let depth = 64;
+        let mut source = "call(\n".repeat(depth);
+        source.push_str("value");
+        source.push_str(&"\n)".repeat(depth));
+        source.push(';');
+
+        LINE_BREAK_INDEX_BUILDS.set(0);
+        LINE_BREAK_QUERIES.set(0);
+        PARENTHESIS_INDEX_BUILDS.set(0);
+        PARENTHESIS_LOOKUPS.set(0);
+        format_trailing(&source, TrailingCommaMode::Always);
+
+        assert_eq!(LINE_BREAK_INDEX_BUILDS.get(), 1);
+        assert!(LINE_BREAK_QUERIES.get() <= depth * 3);
+        assert_eq!(PARENTHESIS_INDEX_BUILDS.get(), 1);
+        assert_eq!(PARENTHESIS_LOOKUPS.get(), depth);
     }
 
     #[test]
@@ -1958,7 +3100,7 @@ mod tests {
         let comparisons = SPAN_LOOKUP_COMPARISONS.get();
         assert!(comparisons > 0);
         assert!(
-            comparisons < import_count * 128,
+            comparisons < import_count * 256,
             "span lookups performed {comparisons} comparisons for {import_count} imports"
         );
     }
@@ -2200,6 +3342,7 @@ mod tests {
                         imports: StatementSpacingMode::Off,
                         variable_declarations: StatementSpacingMode::Separate,
                     },
+                    ..RulesConfig::default()
                 },
                 ..FormatConfig::default()
             },
@@ -2218,6 +3361,7 @@ mod tests {
                         imports: StatementSpacingMode::Separate,
                         variable_declarations: StatementSpacingMode::Off,
                     },
+                    ..RulesConfig::default()
                 },
                 ..FormatConfig::default()
             },

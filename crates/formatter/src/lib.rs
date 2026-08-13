@@ -4,7 +4,7 @@ mod rewriter;
 
 pub use config::{
     FormatConfig, ResolvedConfig, RulesConfig, StatementSpacingConfig, StatementSpacingMode,
-    resolve_config,
+    TrailingCommaMode, resolve_config,
 };
 pub use error::FormatError;
 pub use rewriter::format_text;

@@ -17,4 +17,10 @@ const variablesDisabled = await binding.format(
   '{"rules":{"statementSpacing":{"variableDeclarations":"off"}}}'
 )
 assert.equal(variablesDisabled, 'const first=1;let second=2;')
+const trailingAlways = await binding.format(
+  'smoke.ts',
+  'const value={\n  item: true\n};',
+  '{"rules":{"importLayout":false,"statementSpacing":{"imports":"off","variableDeclarations":"off"},"trailingCommas":"always"}}'
+)
+assert.equal(trailingAlways, 'const value={\n  item: true,\n};')
 console.log(`Native smoke passed for ${addonPath}`)

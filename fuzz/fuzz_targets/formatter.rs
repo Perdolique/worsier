@@ -10,14 +10,13 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     let config = resolve_config(FormatConfig::default()).unwrap();
-    let Ok(formatted) = format_text(Path::new("fuzz.tsx"), source, &config) else {
-        return;
-    };
-    if let Some(output) = formatted {
-        assert!(
-            format_text(Path::new("fuzz.tsx"), &output, &config)
-                .unwrap()
-                .is_none()
-        );
+    for file_name in ["fuzz.js", "fuzz.ts", "fuzz.tsx"] {
+        let path = Path::new(file_name);
+        let Ok(formatted) = format_text(path, source, &config) else {
+            continue;
+        };
+        if let Some(output) = formatted {
+            assert!(format_text(path, &output, &config).unwrap().is_none());
+        }
     }
 });

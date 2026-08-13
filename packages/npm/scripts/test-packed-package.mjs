@@ -34,7 +34,7 @@ assert.equal(version.stdout.trim(), `worsier ${rootVersion}`)
 run(process.execPath, [executable, '--init'], project)
 assert.equal(
   await readFile(join(project, 'worsier.jsonc'), 'utf8'),
-  '{\n  "$schema": "./node_modules/worsier/configuration_schema.json",\n  "lineWidth": 120,\n  "verifyAst": true,\n  "rules": {\n    "importLayout": true,\n    "statementSpacing": {\n      "imports": "separate",\n      "variableDeclarations": "separate"\n    }\n  },\n  "ignorePatterns": []\n}\n'
+  '{\n  "$schema": "./node_modules/worsier/configuration_schema.json",\n  "lineWidth": 120,\n  "verifyAst": true,\n  "rules": {\n    "importLayout": true,\n    "statementSpacing": {\n      "imports": "separate",\n      "variableDeclarations": "separate"\n    },\n    "trailingCommas": "never"\n  },\n  "ignorePatterns": []\n}\n'
 )
 await writeFile(join(project, 'sample.ts'), "import{value}from'pkg';const raw={items:[1,2]};")
 run(process.execPath, [executable, '--write', 'sample.ts'], project)
@@ -64,6 +64,17 @@ const variablesDisabled = run(
   project
 )
 assert.equal(variablesDisabled.stdout, 'const first=1;let second=2;\n')
+
+const trailingAlways = run(
+  process.execPath,
+  [
+    '--input-type=module',
+    '--eval',
+    `import { format } from 'worsier'; console.log(await format('sample.ts', 'const value={\\n  item: true\\n};', { rules: { importLayout: false, statementSpacing: { imports: 'off', variableDeclarations: 'off' }, trailingCommas: 'always' } }))`
+  ],
+  project
+)
+assert.equal(trailingAlways.stdout, 'const value={\n  item: true,\n};\n')
 
 console.log(`Packed installation smoke passed in ${basename(project)}`)
 

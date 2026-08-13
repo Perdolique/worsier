@@ -26,14 +26,14 @@ fn uses_defaults_without_config_and_init_refuses_to_overwrite() {
     fs::create_dir(directory.path().join(".git")).unwrap();
     write(
         &directory.path().join("sample.ts"),
-        "import{value}from'pkg';const raw=[1,2];",
+        "import{value}from'pkg';const raw={\n  items: [\n    1,\n  ],\n};",
     );
 
     let output = command(directory.path()).arg("sample.ts").output().unwrap();
     assert!(output.status.success(), "{}", stderr(&output));
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        "import { value } from 'pkg';\n\nconst raw=[1,2];"
+        "import { value } from 'pkg';\n\nconst raw={\n  items: [\n    1\n  ]\n};"
     );
 
     let initialized = command(directory.path()).arg("--init").output().unwrap();
@@ -48,6 +48,33 @@ fn uses_defaults_without_config_and_init_refuses_to_overwrite() {
     let unsupported = command(directory.path()).arg("notes.txt").output().unwrap();
     assert_eq!(unsupported.status.code(), Some(2));
     assert!(stderr(&unsupported).contains("not a supported"));
+}
+
+#[test]
+fn supports_trailing_comma_modes_from_config() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::create_dir(directory.path().join(".git")).unwrap();
+    let source = "const value = {\n  items: [\n    1\n  ]\n};";
+    write(&directory.path().join("sample.ts"), source);
+
+    write(
+        &directory.path().join("worsier.jsonc"),
+        r#"{"rules":{"importLayout":false,"statementSpacing":{"imports":"off","variableDeclarations":"off"},"trailingCommas":"always"}}"#,
+    );
+    let always = command(directory.path()).arg("sample.ts").output().unwrap();
+    assert!(always.status.success(), "{}", stderr(&always));
+    assert_eq!(
+        String::from_utf8(always.stdout).unwrap(),
+        "const value = {\n  items: [\n    1,\n  ],\n};"
+    );
+
+    write(
+        &directory.path().join("worsier.jsonc"),
+        r#"{"rules":{"importLayout":false,"statementSpacing":{"imports":"off","variableDeclarations":"off"},"trailingCommas":"off"}}"#,
+    );
+    let off = command(directory.path()).arg("sample.ts").output().unwrap();
+    assert!(off.status.success(), "{}", stderr(&off));
+    assert_eq!(String::from_utf8(off.stdout).unwrap(), source);
 }
 
 #[test]
@@ -218,6 +245,10 @@ fn configuration_errors_include_the_nested_json_path() {
         (
             r#"{"rules":{"statementSpacing":{"imports":"preserve"}}}"#,
             "rules.statementSpacing.imports",
+        ),
+        (
+            r#"{"rules":{"trailingCommas":"multiline"}}"#,
+            "rules.trailingCommas",
         ),
         (
             r#"{"rules":{"statementSpacing":{"unknown":"off"}}}"#,

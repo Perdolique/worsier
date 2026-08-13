@@ -32,6 +32,7 @@ impl Default for FormatConfig {
 pub struct RulesConfig {
     pub import_layout: bool,
     pub statement_spacing: StatementSpacingConfig,
+    pub trailing_commas: TrailingCommaMode,
 }
 
 impl Default for RulesConfig {
@@ -39,6 +40,7 @@ impl Default for RulesConfig {
         Self {
             import_layout: true,
             statement_spacing: StatementSpacingConfig::default(),
+            trailing_commas: TrailingCommaMode::Never,
         }
     }
 }
@@ -65,6 +67,15 @@ pub enum StatementSpacingMode {
     #[default]
     Separate,
     Compact,
+    Off,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TrailingCommaMode {
+    Always,
+    #[default]
+    Never,
     Off,
 }
 
@@ -100,6 +111,11 @@ impl ResolvedConfig {
     }
 
     #[must_use]
+    pub const fn trailing_commas(&self) -> TrailingCommaMode {
+        self.value.rules.trailing_commas
+    }
+
+    #[must_use]
     pub fn ignore_patterns(&self) -> &[String] {
         &self.value.ignore_patterns
     }
@@ -122,7 +138,7 @@ pub fn resolve_config(config: FormatConfig) -> Result<ResolvedConfig, FormatErro
 
 #[cfg(test)]
 mod tests {
-    use super::{FormatConfig, StatementSpacingMode, resolve_config};
+    use super::{FormatConfig, StatementSpacingMode, TrailingCommaMode, resolve_config};
 
     #[test]
     fn resolves_documented_defaults() {
@@ -135,6 +151,7 @@ mod tests {
             config.variable_declaration_spacing(),
             StatementSpacingMode::Separate
         );
+        assert_eq!(config.trailing_commas(), TrailingCommaMode::Never);
     }
 
     #[test]
@@ -155,6 +172,8 @@ mod tests {
             r#"{"rules":{"objects":true}}"#,
             r#"{"rules":{"imports":true}}"#,
             r#"{"rules":{"variables":true}}"#,
+            r#"{"trailingCommas":"always"}"#,
+            r#"{"rules":{"trailingCommas":"multiline"}}"#,
             r#"{"rules":{"statementSpacing":{"imports":"preserve"}}}"#,
             r#"{"rules":{"statementSpacing":{"variables":"compact"}}}"#,
         ] {
@@ -180,6 +199,20 @@ mod tests {
             config.variable_declaration_spacing(),
             StatementSpacingMode::Separate
         );
+        assert_eq!(config.trailing_commas(), TrailingCommaMode::Never);
+    }
+
+    #[test]
+    fn accepts_all_trailing_comma_modes() {
+        for (value, expected) in [
+            ("always", TrailingCommaMode::Always),
+            ("never", TrailingCommaMode::Never),
+            ("off", TrailingCommaMode::Off),
+        ] {
+            let source = format!(r#"{{"rules":{{"trailingCommas":"{value}"}}}}"#);
+            let config: FormatConfig = serde_json::from_str(&source).unwrap();
+            assert_eq!(resolve_config(config).unwrap().trailing_commas(), expected);
+        }
     }
 
     #[test]
