@@ -35,7 +35,7 @@ test('formats through the asynchronous native API', async () => {
     rules: {
       importLayout: false,
       interfaceLayout: 'off',
-      statementSpacing: { imports: 'off', variableDeclarations: 'off' },
+      statementSpacing: { imports: 'off', typeAliases: 'off', variableDeclarations: 'off' },
       semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
       trailingCommas: 'off'
     }
@@ -57,7 +57,7 @@ test('formats interface layouts through the native API', async () => {
 
   const isolatedRules = {
     importLayout: false,
-    statementSpacing: { imports: 'off', variableDeclarations: 'off' },
+    statementSpacing: { imports: 'off', typeAliases: 'off', variableDeclarations: 'off' },
     semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
     trailingCommas: 'off'
   }
@@ -105,13 +105,27 @@ test('formats interface layouts through the native API', async () => {
   )
 })
 
+test('formats type alias spacing through the native API', async () => {
+  const source = 'type A=1;type B={\n value:string\n};\n\n\nrun();'
+  const output = await format('sample.ts', source, {
+    rules: {
+      importLayout: false,
+      interfaceLayout: 'off',
+      statementSpacing: { imports: 'off', typeAliases: 'compact', variableDeclarations: 'off' },
+      semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
+      trailingCommas: 'off'
+    }
+  })
+  assert.equal(output, 'type A=1;\ntype B={\n value:string\n};\nrun();')
+})
+
 test('formats granular semicolon groups through the native API', async () => {
   const source =
     'const runtime=1;\nclass Example {\n  field=1;\n}\ninterface Shape {\n  value: string;\n}'
   const output = await format('sample.ts', source, {
     rules: {
       importLayout: false,
-      statementSpacing: { imports: 'off', variableDeclarations: 'off' },
+      statementSpacing: { imports: 'off', typeAliases: 'off', variableDeclarations: 'off' },
       semicolons: { statements: 'off', classMembers: 'asNeeded', typeMembers: 'always' },
       trailingCommas: 'off'
     }
@@ -127,7 +141,7 @@ test('formats trailing commas through the native API', async () => {
   const withCommas = 'const value = {\n  items: [\n    1,\n  ],\n};'
   const disabledRules = {
     importLayout: false,
-    statementSpacing: { imports: 'off', variableDeclarations: 'off' },
+    statementSpacing: { imports: 'off', typeAliases: 'off', variableDeclarations: 'off' },
     semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' }
   }
 
@@ -171,6 +185,7 @@ test('maps native failures to stable error codes', async () => {
     [{ semicolons: { extra: 'off' } }, 'rules.semicolons.extra'],
     [{ trailingCommas: 'multiline' }, 'rules.trailingCommas'],
     [{ statementSpacing: { imports: 'preserve' } }, 'rules.statementSpacing.imports'],
+    [{ statementSpacing: { typeAliases: 'preserve' } }, 'rules.statementSpacing.typeAliases'],
     [{ statementSpacing: { extra: 'off' } }, 'rules.statementSpacing.extra']
   ]) {
     await assert.rejects(

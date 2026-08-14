@@ -59,7 +59,7 @@ fn supports_trailing_comma_modes_from_config() {
 
     write(
         &directory.path().join("worsier.jsonc"),
-        r#"{"rules":{"importLayout":false,"statementSpacing":{"imports":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"always"}}"#,
+        r#"{"rules":{"importLayout":false,"statementSpacing":{"imports":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"always"}}"#,
     );
     let always = command(directory.path()).arg("sample.ts").output().unwrap();
     assert!(always.status.success(), "{}", stderr(&always));
@@ -70,7 +70,7 @@ fn supports_trailing_comma_modes_from_config() {
 
     write(
         &directory.path().join("worsier.jsonc"),
-        r#"{"rules":{"importLayout":false,"statementSpacing":{"imports":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}"#,
+        r#"{"rules":{"importLayout":false,"statementSpacing":{"imports":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}"#,
     );
     let off = command(directory.path()).arg("sample.ts").output().unwrap();
     assert!(off.status.success(), "{}", stderr(&off));
@@ -83,7 +83,7 @@ fn supports_granular_semicolon_modes_from_config() {
     fs::create_dir(directory.path().join(".git")).unwrap();
     write(
         &directory.path().join("worsier.jsonc"),
-        r#"{"rules":{"importLayout":false,"statementSpacing":{"imports":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"asNeeded","typeMembers":"always"},"trailingCommas":"off"}}"#,
+        r#"{"rules":{"importLayout":false,"statementSpacing":{"imports":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"asNeeded","typeMembers":"always"},"trailingCommas":"off"}}"#,
     );
     write(
         &directory.path().join("sample.ts"),
@@ -95,6 +95,26 @@ fn supports_granular_semicolon_modes_from_config() {
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
         "const runtime=1;\nclass Example {\n  field=1\n}\ninterface Shape {\n  value: string;\n}"
+    );
+}
+
+#[test]
+fn supports_type_alias_spacing_from_config() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        &directory.path().join("worsier.jsonc"),
+        r#"{"rules":{"importLayout":false,"interfaceLayout":"off","statementSpacing":{"imports":"off","typeAliases":"compact","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}"#,
+    );
+    write(
+        &directory.path().join("sample.ts"),
+        "type A=1;type B={\n value:string\n};\n\n\nrun();",
+    );
+
+    let output = command(directory.path()).arg("sample.ts").output().unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "type A=1;\ntype B={\n value:string\n};\nrun();"
     );
 }
 
@@ -314,6 +334,10 @@ fn configuration_errors_include_the_nested_json_path() {
         (
             r#"{"rules":{"statementSpacing":{"imports":"preserve"}}}"#,
             "rules.statementSpacing.imports",
+        ),
+        (
+            r#"{"rules":{"statementSpacing":{"typeAliases":"preserve"}}}"#,
+            "rules.statementSpacing.typeAliases",
         ),
         (
             r#"{"rules":{"trailingCommas":"multiline"}}"#,

@@ -20,5 +20,6 @@ export interface SemicolonConfig {
 }
 export interface StatementSpacingConfig {
     imports?: 'separate' | 'compact' | 'off';
+    typeAliases?: 'separate' | 'compact' | 'off';
     variableDeclarations?: 'separate' | 'compact' | 'off';
 }

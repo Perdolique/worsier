@@ -127,8 +127,9 @@ does not add a leading guard before the first item in a statement or class-membe
 
 ## Statement boundaries
 
-`rules.statementSpacing.imports` and `rules.statementSpacing.variableDeclarations` each accept
-`"separate"`, `"compact"`, or `"off"`. Both default to `"separate"`.
+`rules.statementSpacing.imports`, `rules.statementSpacing.typeAliases`, and
+`rules.statementSpacing.variableDeclarations` each accept `"separate"`, `"compact"`, or `"off"`.
+All three default to `"separate"`.
 
 Each statement contributes a requirement to its shared boundary. A blank-line requirement wins
 over a one-line-break requirement. If neither statement contributes a requirement, the original
@@ -142,6 +143,9 @@ boundary is preserved.
 | single-line import to single-line import | one line break |
 | import to import when either import is multiline | one blank line |
 | any import next to non-import code | one blank line |
+| single-line type alias to single-line type alias | one line break |
+| type alias to type alias when either alias is multiline | one blank line |
+| any type alias next to other code | one blank line |
 | single-line variable to single-line variable | one line break |
 | variable to variable when either declaration is multiline | one blank line |
 | any variable next to other code | one blank line |
@@ -152,9 +156,22 @@ does not add whitespace at the start or end of a file.
 
 Import spacing uses the formatted import shape when `rules.importLayout` is `true` and the original
 shape when it is `false`. Disabling import spacing does not disable import layout. On an import to
-variable-declaration boundary, for example, `"separate"` plus `"compact"` produces a blank line,
-`"compact"` plus `"compact"` produces one line break, and `"off"` plus `"compact"` produces one line
-break.
+another configured category boundary, for example, `"separate"` plus `"compact"` produces a blank
+line, `"compact"` plus `"compact"` produces one line break, and `"off"` plus `"compact"` produces one
+line break.
+
+## Type aliases
+
+- `rules.statementSpacing.typeAliases` applies only to direct, unexported `type Foo = ...`
+  declarations in a statement list. Explicit `declare type Foo = ...` declarations and
+  `export type` declarations or export lists are excluded.
+- Type aliases are supported in ordinary source files, declaration files, blocks, and TypeScript
+  module or namespace blocks.
+- Any physical line break inside the complete declaration makes an alias multiline, including a
+  line break in its type parameters or right-hand type. Statement spacing preserves the complete
+  alias contents, and `lineWidth` does not affect them.
+- In `"separate"` or `"compact"` mode, type aliases participate in the same statement-list
+  unfolding and nested-layout cascade described below. `"off"` does not unfold a list by itself.
 
 ## Runtime variable declarations
 
@@ -208,6 +225,7 @@ argument is omitted. It does not discover configuration files.
     "interfaceLayout": 0,
     "statementSpacing": {
       "imports": "separate",
+      "typeAliases": "separate",
       "variableDeclarations": "separate"
     },
     "semicolons": {
@@ -234,7 +252,7 @@ are not aliases. Migrate the old rule keys with the following exact replacements
 | `rules.variables: true` | `rules.statementSpacing.variableDeclarations: "separate"` |
 | `rules.variables: false` | `rules.statementSpacing.variableDeclarations: "off"` |
 
-When import layout is `false`, interface layout is `"off"`, both spacing modes are `"off"`, all
-semicolon groups are `"off"`, and trailing commas are `"off"`, formatting returns the source
-unchanged. `lineWidth` only controls import layout. The CLI flag `--no-verify` disables AST
-verification for one invocation.
+When import layout is `false`, interface layout is `"off"`, the `imports`, `typeAliases`, and
+`variableDeclarations` spacing modes are `"off"`, all semicolon groups are `"off"`, and trailing
+commas are `"off"`, formatting returns the source unchanged. `lineWidth` only controls import
+layout. The CLI flag `--no-verify` disables AST verification for one invocation.
