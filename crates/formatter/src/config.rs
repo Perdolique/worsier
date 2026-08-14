@@ -159,6 +159,7 @@ pub enum SemicolonMode {
 #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
 pub struct StatementSpacingConfig {
     pub imports: StatementSpacingMode,
+    pub type_aliases: StatementSpacingMode,
     pub variable_declarations: StatementSpacingMode,
 }
 
@@ -166,6 +167,7 @@ impl Default for StatementSpacingConfig {
     fn default() -> Self {
         Self {
             imports: StatementSpacingMode::Separate,
+            type_aliases: StatementSpacingMode::Separate,
             variable_declarations: StatementSpacingMode::Separate,
         }
     }
@@ -221,6 +223,11 @@ impl ResolvedConfig {
     #[must_use]
     pub const fn import_spacing(&self) -> StatementSpacingMode {
         self.value.rules.statement_spacing.imports
+    }
+
+    #[must_use]
+    pub const fn type_alias_spacing(&self) -> StatementSpacingMode {
+        self.value.rules.statement_spacing.type_aliases
     }
 
     #[must_use]
@@ -284,6 +291,7 @@ mod tests {
         assert!(config.import_layout_enabled());
         assert_eq!(config.interface_layout_threshold(), Some(0));
         assert_eq!(config.import_spacing(), StatementSpacingMode::Separate);
+        assert_eq!(config.type_alias_spacing(), StatementSpacingMode::Separate);
         assert_eq!(
             config.variable_declaration_spacing(),
             StatementSpacingMode::Separate
@@ -319,6 +327,7 @@ mod tests {
             r#"{"rules":{"semicolons":{"statements":"never"}}}"#,
             r#"{"rules":{"semicolons":{"extra":"off"}}}"#,
             r#"{"rules":{"statementSpacing":{"imports":"preserve"}}}"#,
+            r#"{"rules":{"statementSpacing":{"typeAliases":"preserve"}}}"#,
             r#"{"rules":{"statementSpacing":{"variables":"compact"}}}"#,
         ] {
             let error = serde_json::from_str::<FormatConfig>(source).unwrap_err();
@@ -333,7 +342,7 @@ mod tests {
     #[test]
     fn partial_nested_configs_keep_their_own_defaults() {
         let config: FormatConfig = serde_json::from_str(
-            r#"{"rules":{"importLayout":false,"statementSpacing":{"imports":"compact"},"semicolons":{"typeMembers":"always"}}}"#,
+            r#"{"rules":{"importLayout":false,"statementSpacing":{"imports":"compact","typeAliases":"off"},"semicolons":{"typeMembers":"always"}}}"#,
         )
         .unwrap();
         let config = resolve_config(config).unwrap();
@@ -341,6 +350,7 @@ mod tests {
         assert!(!config.import_layout_enabled());
         assert_eq!(config.interface_layout_threshold(), Some(0));
         assert_eq!(config.import_spacing(), StatementSpacingMode::Compact);
+        assert_eq!(config.type_alias_spacing(), StatementSpacingMode::Off);
         assert_eq!(
             config.variable_declaration_spacing(),
             StatementSpacingMode::Separate

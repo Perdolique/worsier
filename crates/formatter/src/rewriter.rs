@@ -42,6 +42,7 @@ thread_local! {
     static SPAN_LOOKUP_COMPARISONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static INDENT_RESOLUTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static IMPORT_MULTILINE_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static TYPE_ALIAS_MULTILINE_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static VARIABLE_MULTILINE_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static TOKEN_PREFLIGHT_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static TOKEN_PARSER_RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -76,6 +77,13 @@ fn import_is_multiline(source: &str, span: Span) -> bool {
 fn variable_is_multiline(source: &str, span: Span) -> bool {
     #[cfg(test)]
     VARIABLE_MULTILINE_SCANS.set(VARIABLE_MULTILINE_SCANS.get() + 1);
+    source_slice(source, span).is_ok_and(contains_line_break)
+}
+
+#[inline]
+fn type_alias_is_multiline(source: &str, span: Span) -> bool {
+    #[cfg(test)]
+    TYPE_ALIAS_MULTILINE_SCANS.set(TYPE_ALIAS_MULTILINE_SCANS.get() + 1);
     source_slice(source, span).is_ok_and(contains_line_break)
 }
 
@@ -119,6 +127,7 @@ pub fn format_text(
     if !config.import_layout_enabled()
         && config.interface_layout_threshold().is_none()
         && config.import_spacing() == StatementSpacingMode::Off
+        && config.type_alias_spacing() == StatementSpacingMode::Off
         && config.variable_declaration_spacing() == StatementSpacingMode::Off
         && config.trailing_commas() == TrailingCommaMode::Off
         && config.statement_semicolons() == SemicolonMode::Off
@@ -140,6 +149,7 @@ pub fn format_text(
             import_layout: config.import_layout_enabled(),
             interface_layout_threshold: config.interface_layout_threshold(),
             import_spacing: config.import_spacing(),
+            type_alias_spacing: config.type_alias_spacing(),
             variable_spacing: if source_type.is_typescript_definition() {
                 StatementSpacingMode::Off
             } else {
@@ -1219,6 +1229,10 @@ enum StatementTarget {
         multiline: bool,
         spacing: StatementSpacingMode,
     },
+    TypeAlias {
+        multiline: bool,
+        spacing: StatementSpacingMode,
+    },
     Variable {
         multiline: bool,
         spacing: StatementSpacingMode,
@@ -1230,6 +1244,7 @@ struct RewriteRules {
     import_layout: bool,
     interface_layout_threshold: Option<u32>,
     import_spacing: StatementSpacingMode,
+    type_alias_spacing: StatementSpacingMode,
     variable_spacing: StatementSpacingMode,
     trailing_commas: TrailingCommaMode,
     single_arrow_comma: SingleArrowCommaRule,
@@ -1349,6 +1364,7 @@ fn rewrite_edits(
     }
 
     if rules.import_spacing == StatementSpacingMode::Off
+        && rules.type_alias_spacing == StatementSpacingMode::Off
         && rules.variable_spacing == StatementSpacingMode::Off
         && rules.interface_layout_threshold.is_none()
     {
@@ -1363,6 +1379,7 @@ fn rewrite_edits(
         formatted_imports: &formatted_imports,
         interface_layout_threshold: rules.interface_layout_threshold,
         import_spacing: rules.import_spacing,
+        type_alias_spacing: rules.type_alias_spacing,
         variable_spacing: rules.variable_spacing,
         ambient_depth: 0,
         current_list: None,
@@ -1420,6 +1437,7 @@ struct StatementCollector<'s> {
     formatted_imports: &'s HashMap<u32, bool>,
     interface_layout_threshold: Option<u32>,
     import_spacing: StatementSpacingMode,
+    type_alias_spacing: StatementSpacingMode,
     variable_spacing: StatementSpacingMode,
     ambient_depth: usize,
     current_list: Option<usize>,
@@ -1470,7 +1488,16 @@ impl StatementCollector<'_> {
     }
 
     fn statement_shape(&self, statement: &Statement<'_>) -> StatementShape {
-        let span = statement_syntax_span(self.source, self.tokens, statement.span());
+        let is_type_alias = self.type_alias_spacing != StatementSpacingMode::Off
+            && matches!(
+                statement,
+                Statement::TSTypeAliasDeclaration(declaration) if !declaration.declare
+            );
+        let span = if is_type_alias {
+            statement.span()
+        } else {
+            statement_syntax_span(self.source, self.tokens, statement.span())
+        };
         let target = if self.import_spacing != StatementSpacingMode::Off
             && matches!(statement, Statement::ImportDeclaration(_))
         {
@@ -1481,6 +1508,11 @@ impl StatementCollector<'_> {
                     .copied()
                     .unwrap_or_else(|| import_is_multiline(self.source, span)),
                 spacing: self.import_spacing,
+            }
+        } else if is_type_alias {
+            StatementTarget::TypeAlias {
+                multiline: type_alias_is_multiline(self.source, span),
+                spacing: self.type_alias_spacing,
             }
         } else if self.variable_spacing != StatementSpacingMode::Off
             && self.ambient_depth == 0
@@ -1764,7 +1796,8 @@ fn mark_expanded_layouts(
             && list.items.iter().any(|item| {
                 matches!(
                     item.target,
-                    StatementTarget::Variable { spacing, .. }
+                    StatementTarget::TypeAlias { spacing, .. }
+                        | StatementTarget::Variable { spacing, .. }
                         if spacing != StatementSpacingMode::Off
                 )
             });
@@ -2162,9 +2195,9 @@ fn statement_boundary_requirement(
 ) -> Option<bool> {
     let mode = match statement {
         StatementTarget::Other => return None,
-        StatementTarget::Import { spacing, .. } | StatementTarget::Variable { spacing, .. } => {
-            spacing
-        }
+        StatementTarget::Import { spacing, .. }
+        | StatementTarget::TypeAlias { spacing, .. }
+        | StatementTarget::Variable { spacing, .. } => spacing,
     };
     match mode {
         StatementSpacingMode::Off => None,
@@ -2182,6 +2215,15 @@ const fn same_single_line_category(statement: StatementTarget, sibling: Statemen
                 ..
             },
             StatementTarget::Import {
+                multiline: false,
+                ..
+            }
+        ) | (
+            StatementTarget::TypeAlias {
+                multiline: false,
+                ..
+            },
+            StatementTarget::TypeAlias {
                 multiline: false,
                 ..
             }
@@ -3020,7 +3062,7 @@ mod tests {
         CORRUPT_REWRITE_FOR_TEST, IMPORT_MULTILINE_SCANS, INDENT_RESOLUTIONS,
         LINE_BREAK_INDEX_BUILDS, LINE_BREAK_QUERIES, PARENTHESIS_INDEX_BUILDS, PARENTHESIS_LOOKUPS,
         SPAN_LOOKUP_COMPARISONS, TOKEN_PARSER_RUNS, TOKEN_PREFLIGHT_PARSES,
-        VARIABLE_MULTILINE_SCANS, parse, source_type, verify,
+        TYPE_ALIAS_MULTILINE_SCANS, VARIABLE_MULTILINE_SCANS, parse, source_type, verify,
     };
     use crate::{
         FormatConfig, InterfaceLayoutMode, InterfaceLayoutRule, RulesConfig, SemicolonConfig,
@@ -3062,6 +3104,7 @@ mod tests {
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     statement_spacing: StatementSpacingConfig {
                         imports: StatementSpacingMode::Off,
+                        type_aliases: StatementSpacingMode::Off,
                         variable_declarations: StatementSpacingMode::Off,
                     },
                     semicolons,
@@ -3078,6 +3121,22 @@ mod tests {
         imports: StatementSpacingMode,
         variable_declarations: StatementSpacingMode,
     ) -> String {
+        format_with_statement_spacing(
+            source,
+            import_layout,
+            imports,
+            StatementSpacingMode::Off,
+            variable_declarations,
+        )
+    }
+
+    fn format_with_statement_spacing(
+        source: &str,
+        import_layout: bool,
+        imports: StatementSpacingMode,
+        type_aliases: StatementSpacingMode,
+        variable_declarations: StatementSpacingMode,
+    ) -> String {
         format_with_semicolons_off(
             source,
             FormatConfig {
@@ -3085,6 +3144,7 @@ mod tests {
                     import_layout,
                     statement_spacing: StatementSpacingConfig {
                         imports,
+                        type_aliases,
                         variable_declarations,
                     },
                     ..RulesConfig::default()
@@ -3103,6 +3163,7 @@ mod tests {
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     statement_spacing: StatementSpacingConfig {
                         imports: StatementSpacingMode::Off,
+                        type_aliases: StatementSpacingMode::Off,
                         variable_declarations: StatementSpacingMode::Off,
                     },
                     semicolons: semicolons_off(),
@@ -3123,6 +3184,7 @@ mod tests {
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     statement_spacing: StatementSpacingConfig {
                         imports: StatementSpacingMode::Off,
+                        type_aliases: StatementSpacingMode::Off,
                         variable_declarations: StatementSpacingMode::Off,
                     },
                     semicolons: semicolons_off(),
@@ -3148,6 +3210,7 @@ mod tests {
                     interface_layout,
                     statement_spacing: StatementSpacingConfig {
                         imports: StatementSpacingMode::Off,
+                        type_aliases: StatementSpacingMode::Off,
                         variable_declarations: StatementSpacingMode::Off,
                     },
                     semicolons: SemicolonConfig {
@@ -3214,6 +3277,7 @@ mod tests {
                         interface_layout: InterfaceLayoutRule::Threshold(0),
                         statement_spacing: StatementSpacingConfig {
                             imports: StatementSpacingMode::Off,
+                            type_aliases: StatementSpacingMode::Off,
                             variable_declarations: StatementSpacingMode::Off,
                         },
                         semicolons: semicolons_off(),
@@ -3452,6 +3516,7 @@ mod tests {
                 interface_layout: InterfaceLayoutRule::Threshold(0),
                 statement_spacing: StatementSpacingConfig {
                     imports: StatementSpacingMode::Off,
+                    type_aliases: StatementSpacingMode::Off,
                     variable_declarations: StatementSpacingMode::Off,
                 },
                 semicolons: semicolons_off(),
@@ -4043,6 +4108,7 @@ mod tests {
                 interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                 statement_spacing: StatementSpacingConfig {
                     imports: StatementSpacingMode::Off,
+                    type_aliases: StatementSpacingMode::Off,
                     variable_declarations: StatementSpacingMode::Off,
                 },
                 semicolons: SemicolonConfig {
@@ -4196,6 +4262,7 @@ mod tests {
                 interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                 statement_spacing: StatementSpacingConfig {
                     imports: StatementSpacingMode::Off,
+                    type_aliases: StatementSpacingMode::Off,
                     variable_declarations: StatementSpacingMode::Off,
                 },
                 semicolons: SemicolonConfig::default(),
@@ -4276,6 +4343,7 @@ mod tests {
                     import_layout: false,
                     statement_spacing: StatementSpacingConfig {
                         imports: StatementSpacingMode::Separate,
+                        type_aliases: StatementSpacingMode::Off,
                         variable_declarations: StatementSpacingMode::Off,
                     },
                     ..RulesConfig::default()
@@ -4296,6 +4364,7 @@ mod tests {
                     import_layout: true,
                     statement_spacing: StatementSpacingConfig {
                         imports: StatementSpacingMode::Separate,
+                        type_aliases: StatementSpacingMode::Off,
                         variable_declarations: StatementSpacingMode::Off,
                     },
                     ..RulesConfig::default()
@@ -4381,13 +4450,14 @@ mod tests {
 
     #[test]
     fn disabling_all_rules_preserves_the_complete_source() {
-        let source = "import{a,b}from'x';interface Shape { value: string; }const value={raw:true};";
+        let source = "import{a,b}from'x';interface Shape { value: string; }type Value={raw:true};const value={raw:true};";
         let config = resolve_config(FormatConfig {
             rules: RulesConfig {
                 import_layout: false,
                 interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                 statement_spacing: StatementSpacingConfig {
                     imports: StatementSpacingMode::Off,
+                    type_aliases: StatementSpacingMode::Off,
                     variable_declarations: StatementSpacingMode::Off,
                 },
                 semicolons: SemicolonConfig {
@@ -4588,6 +4658,7 @@ mod tests {
     fn disabled_spacing_categories_skip_multiline_scans() {
         let imports_only = "import{value}from'pkg';const outer=()=>{const inner=1;work();};";
         IMPORT_MULTILINE_SCANS.set(0);
+        TYPE_ALIAS_MULTILINE_SCANS.set(0);
         VARIABLE_MULTILINE_SCANS.set(0);
         format_with_rules(
             imports_only,
@@ -4596,10 +4667,12 @@ mod tests {
             StatementSpacingMode::Off,
         );
         assert_eq!(IMPORT_MULTILINE_SCANS.get(), 0);
+        assert_eq!(TYPE_ALIAS_MULTILINE_SCANS.get(), 0);
         assert_eq!(VARIABLE_MULTILINE_SCANS.get(), 0);
 
         let import_spacing_only = "import value from'pkg';const outer=()=>{const inner=1;work();};";
         IMPORT_MULTILINE_SCANS.set(0);
+        TYPE_ALIAS_MULTILINE_SCANS.set(0);
         VARIABLE_MULTILINE_SCANS.set(0);
         format_with_rules(
             import_spacing_only,
@@ -4608,10 +4681,12 @@ mod tests {
             StatementSpacingMode::Off,
         );
         assert_eq!(IMPORT_MULTILINE_SCANS.get(), 1);
+        assert_eq!(TYPE_ALIAS_MULTILINE_SCANS.get(), 0);
         assert_eq!(VARIABLE_MULTILINE_SCANS.get(), 0);
 
         let variable_spacing_only = "import value from'pkg';const value=1;work();";
         IMPORT_MULTILINE_SCANS.set(0);
+        TYPE_ALIAS_MULTILINE_SCANS.set(0);
         VARIABLE_MULTILINE_SCANS.set(0);
         format_with_rules(
             variable_spacing_only,
@@ -4620,7 +4695,23 @@ mod tests {
             StatementSpacingMode::Separate,
         );
         assert_eq!(IMPORT_MULTILINE_SCANS.get(), 0);
+        assert_eq!(TYPE_ALIAS_MULTILINE_SCANS.get(), 0);
         assert_eq!(VARIABLE_MULTILINE_SCANS.get(), 1);
+
+        let type_alias_spacing_only = "type Value=1;run();";
+        IMPORT_MULTILINE_SCANS.set(0);
+        TYPE_ALIAS_MULTILINE_SCANS.set(0);
+        VARIABLE_MULTILINE_SCANS.set(0);
+        format_with_statement_spacing(
+            type_alias_spacing_only,
+            false,
+            StatementSpacingMode::Off,
+            StatementSpacingMode::Separate,
+            StatementSpacingMode::Off,
+        );
+        assert_eq!(IMPORT_MULTILINE_SCANS.get(), 0);
+        assert_eq!(TYPE_ALIAS_MULTILINE_SCANS.get(), 1);
+        assert_eq!(VARIABLE_MULTILINE_SCANS.get(), 0);
     }
 
     #[test]
@@ -4650,6 +4741,275 @@ mod tests {
             "const a=1;\nlet b=2;\n\nvar c={\n x:1\n};\n\nconst d=4;\n\nrun();\n\nlet e=5;";
         assert_eq!(format(source), expected);
         assert_eq!(format(expected), expected);
+    }
+
+    #[test]
+    fn applies_the_type_alias_spacing_matrix_to_single_and_multiline_aliases() {
+        let source = "type A=1;type B=2;\ntype Generic<\n T\n> = T;\ntype Object = {\n value:string\n};\ntype C=3;\nrun();";
+        let expected = "type A=1;\ntype B=2;\n\ntype Generic<\n T\n> = T;\n\ntype Object = {\n value:string\n};\n\ntype C=3;\n\nrun();";
+        let output = format_with_statement_spacing(
+            source,
+            false,
+            StatementSpacingMode::Off,
+            StatementSpacingMode::Separate,
+            StatementSpacingMode::Off,
+        );
+        assert_eq!(output, expected);
+        assert_eq!(
+            format_with_statement_spacing(
+                &output,
+                false,
+                StatementSpacingMode::Off,
+                StatementSpacingMode::Separate,
+                StatementSpacingMode::Off,
+            ),
+            output
+        );
+    }
+
+    #[test]
+    fn applies_all_type_alias_spacing_modes_and_preserves_alias_contents() {
+        let source = "type LongName<T> = {  value:T, nested:[1,  2] };\n\n\nrun();";
+        let compact = format_with_statement_spacing(
+            source,
+            false,
+            StatementSpacingMode::Off,
+            StatementSpacingMode::Compact,
+            StatementSpacingMode::Off,
+        );
+        assert_eq!(
+            compact,
+            "type LongName<T> = {  value:T, nested:[1,  2] };\nrun();"
+        );
+
+        let off = format_with_statement_spacing(
+            source,
+            false,
+            StatementSpacingMode::Off,
+            StatementSpacingMode::Off,
+            StatementSpacingMode::Off,
+        );
+        assert_eq!(off, source);
+
+        let narrow = format_with_semicolons_off(
+            "type LongName<T> = {  value:T, nested:[1,  2] };type Next=1;",
+            FormatConfig {
+                line_width: 1,
+                rules: RulesConfig {
+                    import_layout: false,
+                    interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                    statement_spacing: StatementSpacingConfig {
+                        imports: StatementSpacingMode::Off,
+                        type_aliases: StatementSpacingMode::Separate,
+                        variable_declarations: StatementSpacingMode::Off,
+                    },
+                    trailing_commas: TrailingCommaMode::Off,
+                    ..RulesConfig::default()
+                },
+                ..FormatConfig::default()
+            },
+        );
+        assert_eq!(
+            narrow,
+            "type LongName<T> = {  value:T, nested:[1,  2] };\ntype Next=1;"
+        );
+    }
+
+    #[test]
+    fn combines_both_sides_of_type_alias_boundaries_by_priority() {
+        for source in ["type Value=1;const value=1;", "const value=1;type Value=1;"] {
+            let blank_line = source.replacen(';', ";\n\n", 1);
+            let one_line = source.replacen(';', ";\n", 1);
+
+            assert_eq!(
+                format_with_statement_spacing(
+                    source,
+                    false,
+                    StatementSpacingMode::Off,
+                    StatementSpacingMode::Separate,
+                    StatementSpacingMode::Compact,
+                ),
+                blank_line
+            );
+            assert_eq!(
+                format_with_statement_spacing(
+                    source,
+                    false,
+                    StatementSpacingMode::Off,
+                    StatementSpacingMode::Compact,
+                    StatementSpacingMode::Off,
+                ),
+                one_line
+            );
+            assert_eq!(
+                format_with_statement_spacing(
+                    source,
+                    false,
+                    StatementSpacingMode::Off,
+                    StatementSpacingMode::Off,
+                    StatementSpacingMode::Compact,
+                ),
+                one_line
+            );
+            assert_eq!(
+                format_with_statement_spacing(
+                    source,
+                    false,
+                    StatementSpacingMode::Off,
+                    StatementSpacingMode::Off,
+                    StatementSpacingMode::Off,
+                ),
+                source
+            );
+        }
+    }
+
+    #[test]
+    fn formats_type_aliases_in_definitions_blocks_and_namespaces() {
+        let definition = "type A=1;type B=2;";
+        for file_name in ["types.d.ts", "types.d.mts", "types.d.cts"] {
+            assert_eq!(
+                format_file_with(
+                    file_name,
+                    definition,
+                    FormatConfig {
+                        rules: RulesConfig {
+                            import_layout: false,
+                            interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                            statement_spacing: StatementSpacingConfig {
+                                imports: StatementSpacingMode::Off,
+                                type_aliases: StatementSpacingMode::Separate,
+                                variable_declarations: StatementSpacingMode::Off,
+                            },
+                            semicolons: semicolons_off(),
+                            trailing_commas: TrailingCommaMode::Off,
+                        },
+                        ..FormatConfig::default()
+                    },
+                ),
+                "type A=1;\ntype B=2;"
+            );
+        }
+
+        assert_eq!(
+            format_with_statement_spacing(
+                "function f(){type A=1;work();}",
+                false,
+                StatementSpacingMode::Off,
+                StatementSpacingMode::Separate,
+                StatementSpacingMode::Off,
+            ),
+            "function f(){\n  type A=1;\n\n  work();\n}"
+        );
+        assert_eq!(
+            format_with_statement_spacing(
+                "namespace Live { type A=1;type B=2; }",
+                false,
+                StatementSpacingMode::Off,
+                StatementSpacingMode::Separate,
+                StatementSpacingMode::Off,
+            ),
+            "namespace Live {\n  type A=1;\n  type B=2;\n}"
+        );
+        assert_eq!(
+            format_with_statement_spacing(
+                "declare namespace Ambient { type A=1;type B=2; }",
+                false,
+                StatementSpacingMode::Off,
+                StatementSpacingMode::Separate,
+                StatementSpacingMode::Off,
+            ),
+            "declare namespace Ambient {\n  type A=1;\n  type B=2;\n}"
+        );
+    }
+
+    #[test]
+    fn excludes_exported_and_explicitly_declared_type_aliases() {
+        let source = "export type A=1;export type { B };declare type C=2;";
+        assert_eq!(
+            format_with_statement_spacing(
+                source,
+                false,
+                StatementSpacingMode::Off,
+                StatementSpacingMode::Separate,
+                StatementSpacingMode::Off,
+            ),
+            source
+        );
+    }
+
+    #[test]
+    fn type_alias_spacing_cascades_nested_layouts_and_preserves_boundary_shape() {
+        let nested = "function outer(){if(ok){type A=1;work();}finish();}";
+        let expected =
+            "function outer(){\n  if(ok){\n    type A=1;\n\n    work();\n  }\n  finish();\n}";
+        assert_eq!(
+            format_with_statement_spacing(
+                nested,
+                false,
+                StatementSpacingMode::Off,
+                StatementSpacingMode::Separate,
+                StatementSpacingMode::Off,
+            ),
+            expected
+        );
+
+        let compact = "function f(){type A=1;work();}";
+        assert_eq!(
+            format_with_statement_spacing(
+                compact,
+                false,
+                StatementSpacingMode::Off,
+                StatementSpacingMode::Compact,
+                StatementSpacingMode::Off,
+            ),
+            "function f(){\n  type A=1;\n  work();\n}"
+        );
+
+        let source = "\u{feff}type A=1; // trailing\r\n\r\n// leading\r\nrun();";
+        let output = format_with_statement_spacing(
+            source,
+            false,
+            StatementSpacingMode::Off,
+            StatementSpacingMode::Compact,
+            StatementSpacingMode::Off,
+        );
+        assert_eq!(
+            output,
+            "\u{feff}type A=1; // trailing\r\n// leading\r\nrun();"
+        );
+        assert!(!output.replace("\r\n", "").contains('\n'));
+        assert!(!output.ends_with('\n'));
+    }
+
+    #[test]
+    fn preserves_detached_type_alias_semicolons_and_counts_the_complete_declaration_shape() {
+        for (source, expected) in [
+            ("type A=1\n;type B=2;", "type A=1\n;\n\ntype B=2;"),
+            (
+                "type A=1 // tail\n;type B=2;",
+                "type A=1 // tail\n;\n\ntype B=2;",
+            ),
+        ] {
+            let output = format_with_statement_spacing(
+                source,
+                false,
+                StatementSpacingMode::Off,
+                StatementSpacingMode::Separate,
+                StatementSpacingMode::Off,
+            );
+            assert_eq!(output, expected);
+            assert_eq!(
+                format_with_statement_spacing(
+                    &output,
+                    false,
+                    StatementSpacingMode::Off,
+                    StatementSpacingMode::Separate,
+                    StatementSpacingMode::Off,
+                ),
+                output
+            );
+        }
     }
 
     #[test]
@@ -4792,6 +5152,7 @@ mod tests {
                     import_layout: false,
                     statement_spacing: StatementSpacingConfig {
                         imports: StatementSpacingMode::Off,
+                        type_aliases: StatementSpacingMode::Off,
                         variable_declarations: StatementSpacingMode::Separate,
                     },
                     ..RulesConfig::default()
@@ -4811,6 +5172,7 @@ mod tests {
                     import_layout: true,
                     statement_spacing: StatementSpacingConfig {
                         imports: StatementSpacingMode::Separate,
+                        type_aliases: StatementSpacingMode::Off,
                         variable_declarations: StatementSpacingMode::Off,
                     },
                     ..RulesConfig::default()

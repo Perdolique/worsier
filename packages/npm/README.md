@@ -2,7 +2,8 @@
 
 A focused JavaScript, TypeScript, JSX, and TSX formatter powered by Rust. It formats static imports,
 TypeScript interface layout, statement and member semicolons, trailing commas, and the boundaries
-around runtime variable declarations while preserving source text outside the enabled rules.
+around TypeScript type aliases and runtime variable declarations while preserving source text
+outside the enabled rules.
 Node.js 24.0.0 or newer is required.
 
 ```sh
