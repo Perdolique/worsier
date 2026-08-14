@@ -34,6 +34,7 @@ test('formats through the asynchronous native API', async () => {
   const disabled = await format('sample.ts', source, {
     rules: {
       importLayout: false,
+      interfaceLayout: 'off',
       statementSpacing: { imports: 'off', variableDeclarations: 'off' },
       semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
       trailingCommas: 'off'
@@ -45,6 +46,63 @@ test('formats through the asynchronous native API', async () => {
     rules: { statementSpacing: { imports: 'compact' } }
   })
   assert.equal(partialNested, 'const first=1\n\nwork()')
+})
+
+test('formats interface layouts through the native API', async () => {
+  const source = 'interface Shape { value: string; run(): void; }'
+  assert.equal(
+    await format('sample.ts', source),
+    'interface Shape {\n  value: string\n  run(): void\n}'
+  )
+
+  const isolatedRules = {
+    importLayout: false,
+    statementSpacing: { imports: 'off', variableDeclarations: 'off' },
+    semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
+    trailingCommas: 'off'
+  }
+  assert.equal(
+    await format('sample.ts', source, {
+      rules: { ...isolatedRules, interfaceLayout: 1 }
+    }),
+    'interface Shape {\n  value: string;\n  run(): void;\n}'
+  )
+  assert.equal(
+    await format('sample.ts', source, {
+      rules: { ...isolatedRules, interfaceLayout: 2 }
+    }),
+    source
+  )
+  assert.equal(
+    await format('sample.ts', source, {
+      rules: { ...isolatedRules, interfaceLayout: 'off' }
+    }),
+    source
+  )
+
+  const directive =
+    'interface Shape {\n  first: string; // @ts-ignore\n  second: MissingOne; third: MissingTwo;\n}'
+  assert.equal(
+    await format('sample.ts', directive),
+    'interface Shape {\n  first: string // @ts-ignore\n  second: MissingOne; third: MissingTwo\n}'
+  )
+
+  const multilineContainer =
+    'function scope() {\n  before(); interface Local { value: string; } after();\n}'
+  assert.equal(
+    await format('sample.ts', multilineContainer, {
+      rules: { ...isolatedRules, interfaceLayout: 0 }
+    }),
+    'function scope() {\n  before();\n  interface Local {\n    value: string;\n  }\n  after();\n}'
+  )
+
+  const leadingComment = 'interface Shape { first: string;\n// second\nsecond: number; }'
+  assert.equal(
+    await format('sample.ts', leadingComment, {
+      rules: { ...isolatedRules, interfaceLayout: 0 }
+    }),
+    'interface Shape {\n  first: string;\n  // second\n  second: number;\n}'
+  )
 })
 
 test('formats granular semicolon groups through the native API', async () => {
@@ -105,6 +163,9 @@ test('maps native failures to stable error codes', async () => {
   for (const [rules, path] of [
     [{ imports: true }, 'rules.imports'],
     [{ variables: true }, 'rules.variables'],
+    [{ interfaceLayout: -1 }, 'rules.interfaceLayout'],
+    [{ interfaceLayout: 1.5 }, 'rules.interfaceLayout'],
+    [{ interfaceLayout: 'always' }, 'rules.interfaceLayout'],
     [{ semicolons: 'always' }, 'rules.semicolons'],
     [{ semicolons: { statements: 'never' } }, 'rules.semicolons.statements'],
     [{ semicolons: { extra: 'off' } }, 'rules.semicolons.extra'],

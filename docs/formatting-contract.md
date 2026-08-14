@@ -1,8 +1,8 @@
 # Worsier formatting contract
 
-Worsier rewrites static `import` declarations, statement and member semicolons, trailing commas in
-supported lists, and whitespace boundaries around direct runtime variable declarations. It does
-not otherwise rewrite the contents of those declarations or lists.
+Worsier rewrites static `import` declarations, TypeScript interface layout, statement and member
+semicolons, trailing commas in supported lists, and whitespace boundaries around direct runtime
+variable declarations. It does not otherwise rewrite the contents of those declarations or lists.
 
 ## Import layout
 
@@ -26,6 +26,37 @@ import {
   one,
   two
 } from 'package-with-a-long-name'
+```
+
+## Interface layout
+
+- `rules.interfaceLayout` accepts `"off"` or an integer from `0` through `4294967295` and defaults
+  to `0`. JSON number spellings such as `1.0` and `1e0` are accepted when their value is an integer
+  in that range.
+- An interface is expanded when its number of direct members is strictly greater than the numeric
+  threshold. The default therefore expands every nonempty interface, while an empty interface is
+  unchanged.
+- Properties, methods, index signatures, call signatures, and construct signatures all count as
+  members. Object type aliases and other brace-delimited TypeScript types are outside the rule.
+- An expanded interface places the first member after a line break, every member on its own line
+  with two spaces of relative indentation, and the closing brace after a final line break.
+- Members that originally share the physical line governed by a preceding `// @ts-ignore` or
+  `// @ts-expect-error` stay together on that line so formatting preserves the directive's
+  TypeScript diagnostic scope.
+- Member order, text, separators, comments, and any multiline layout inside a member are preserved.
+  The separate `rules.semicolons.typeMembers` rule may then normalize member semicolons.
+- Interfaces at or below the threshold retain their original layout. `"off"` preserves every
+  interface layout regardless of its size.
+- When expansion starts inside a single-line program, block, namespace, or module statement list,
+  its enclosing inline containers expand outward with two-space indentation. In an existing
+  multiline outer container, only inline boundaries adjacent to the affected declaration unfold;
+  the container's existing indentation is retained.
+
+```ts
+interface Example {
+  value: string
+  run(): void
+}
 ```
 
 ## Trailing commas
@@ -174,6 +205,7 @@ argument is omitted. It does not discover configuration files.
   "verifyAst": true,
   "rules": {
     "importLayout": true,
+    "interfaceLayout": 0,
     "statementSpacing": {
       "imports": "separate",
       "variableDeclarations": "separate"
@@ -189,7 +221,9 @@ argument is omitted. It does not discover configuration files.
 }
 ```
 
-Unknown keys, spacing modes, semicolon modes, and trailing-comma modes are configuration errors.
+Unknown keys, invalid interface-layout values, spacing modes, semicolon modes, and trailing-comma
+modes are configuration errors. Interface layout thresholds must be integers from `0` through
+`4294967295`.
 The removed top-level `semicolons` and `trailingCommas`, `rules.imports`, and `rules.variables` keys
 are not aliases. Migrate the old rule keys with the following exact replacements:
 
@@ -200,6 +234,7 @@ are not aliases. Migrate the old rule keys with the following exact replacements
 | `rules.variables: true` | `rules.statementSpacing.variableDeclarations: "separate"` |
 | `rules.variables: false` | `rules.statementSpacing.variableDeclarations: "off"` |
 
-When import layout is `false`, both spacing modes are `"off"`, all semicolon groups are `"off"`,
-and trailing commas are `"off"`, formatting returns the source unchanged. `lineWidth` only controls
-import layout. The CLI flag `--no-verify` disables AST verification for one invocation.
+When import layout is `false`, interface layout is `"off"`, both spacing modes are `"off"`, all
+semicolon groups are `"off"`, and trailing commas are `"off"`, formatting returns the source
+unchanged. `lineWidth` only controls import layout. The CLI flag `--no-verify` disables AST
+verification for one invocation.

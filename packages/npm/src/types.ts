@@ -1,5 +1,7 @@
 // Generated from the Rust FormatConfig JSON Schema. Do not edit.
 
+export type InterfaceLayoutMode = 'off'
+
 export interface FormatConfig {
   $schema?: string | null
   ignorePatterns?: string[]
@@ -9,6 +11,7 @@ export interface FormatConfig {
 }
 export interface RulesConfig {
   importLayout?: boolean
+  interfaceLayout?: number | InterfaceLayoutMode
   semicolons?: SemicolonConfig
   statementSpacing?: StatementSpacingConfig
   trailingCommas?: 'always' | 'never' | 'off'

@@ -4,6 +4,7 @@
   "verifyAst": true,
   "rules": {
     "importLayout": true,
+    "interfaceLayout": 0,
     "statementSpacing": {
       "imports": "separate",
       "variableDeclarations": "separate"
