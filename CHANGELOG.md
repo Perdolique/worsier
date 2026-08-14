@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.5.0](https://github.com/Perdolique/worsier/compare/v2.4.1...v2.5.0) (2026-08-14)
+
+
+### Features
+
+* **formatter:** add type alias spacing ([9cc7f93](https://github.com/Perdolique/worsier/commit/9cc7f938a357875939b71bf3dcc6a576007c5ab4))
+
 ## [2.4.1](https://github.com/Perdolique/worsier/compare/v2.4.0...v2.4.1) (2026-08-14)
 
 
