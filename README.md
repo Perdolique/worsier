@@ -1,8 +1,9 @@
 # Worsier
 
 Worsier is a focused JavaScript, TypeScript, JSX, and TSX formatter backed by a Rust engine.
-It formats static imports, statement and member semicolons, trailing commas, and the boundaries
-around runtime variable declarations while preserving source text outside the enabled rules.
+It formats static imports, TypeScript interface layout, statement and member semicolons, trailing
+commas, and the boundaries around runtime variable declarations while preserving source text
+outside the enabled rules.
 Node.js 24.0.0 or newer is required for the CLI and programmatic API.
 Development and release builds use the versions pinned in `.node-version` and
 `rust-toolchain.toml`.
@@ -16,6 +17,11 @@ pnpm exec worsier --write .
 The CLI uses its opinionated defaults when no configuration file is present. When present, the
 nearest `worsier.jsonc` overrides those defaults; `--config` selects one file explicitly, and
 `--init` creates an optional complete typed configuration.
+
+By default, every nonempty TypeScript interface is expanded with one member per line. Set
+`rules.interfaceLayout` to a member threshold from `0` through `4294967295`, or to `"off"` to
+preserve interface layout. Members on the physical line governed by a preceding `// @ts-ignore`
+or `// @ts-expect-error` stay together so formatting does not change TypeScript diagnostics.
 
 ```js
 import { format } from 'worsier'

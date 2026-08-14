@@ -8,7 +8,7 @@ use oxc_ast::ast::{
     CommentKind, CommentPosition, Directive, ExportFromDeclaration, ExportNamedDeclaration,
     FormalParameters, FunctionBody, ImportDeclaration, NewExpression, ObjectAssignmentTarget,
     ObjectExpression, ObjectPattern, Program, Statement, StaticBlock, SwitchCase, SwitchStatement,
-    TSEnumBody, TSExternalModuleDeclaration, TSGlobalDeclaration, TSModuleBlock,
+    TSEnumBody, TSExternalModuleDeclaration, TSGlobalDeclaration, TSInterfaceBody, TSModuleBlock,
     TSNamespaceDeclaration, TSTupleElement, TSTupleType, TSTypeParameterDeclaration,
     VariableDeclarationKind, WithClause,
 };
@@ -25,9 +25,9 @@ use oxc_ast_visit::{
         walk_switch_statement, walk_ts_call_signature_declaration,
         walk_ts_construct_signature_declaration, walk_ts_enum_body,
         walk_ts_external_module_declaration, walk_ts_global_declaration, walk_ts_index_signature,
-        walk_ts_mapped_type, walk_ts_method_signature, walk_ts_module_block,
-        walk_ts_namespace_declaration, walk_ts_property_signature, walk_ts_tuple_type,
-        walk_ts_type_parameter_declaration, walk_with_clause,
+        walk_ts_interface_body, walk_ts_mapped_type, walk_ts_method_signature,
+        walk_ts_module_block, walk_ts_namespace_declaration, walk_ts_property_signature,
+        walk_ts_tuple_type, walk_ts_type_parameter_declaration, walk_with_clause,
     },
 };
 use oxc_parser::{Kind, ParseOptions, Parser, Token, config::TokensParserConfig};
@@ -91,8 +91,9 @@ fn maybe_corrupt_rewrite_for_test(rewritten: &mut String) {
 #[cfg(not(test))]
 fn maybe_corrupt_rewrite_for_test(_: &mut String) {}
 
-/// Formats static imports, statement and member semicolons, trailing commas, and runtime variable
-/// declaration boundaries in JavaScript, TypeScript, JSX, or TSX source text.
+/// Formats static imports, TypeScript interface layout, statement and member semicolons, trailing
+/// commas, and runtime variable declaration boundaries in JavaScript, TypeScript, JSX, or TSX
+/// source text.
 ///
 /// # Errors
 ///
@@ -116,6 +117,7 @@ pub fn format_text(
         });
     }
     if !config.import_layout_enabled()
+        && config.interface_layout_threshold().is_none()
         && config.import_spacing() == StatementSpacingMode::Off
         && config.variable_declaration_spacing() == StatementSpacingMode::Off
         && config.trailing_commas() == TrailingCommaMode::Off
@@ -136,6 +138,7 @@ pub fn format_text(
         newline,
         RewriteRules {
             import_layout: config.import_layout_enabled(),
+            interface_layout_threshold: config.interface_layout_threshold(),
             import_spacing: config.import_spacing(),
             variable_spacing: if source_type.is_typescript_definition() {
                 StatementSpacingMode::Off
@@ -1225,6 +1228,7 @@ enum StatementTarget {
 #[derive(Clone, Copy, Debug)]
 struct RewriteRules {
     import_layout: bool,
+    interface_layout_threshold: Option<u32>,
     import_spacing: StatementSpacingMode,
     variable_spacing: StatementSpacingMode,
     trailing_commas: TrailingCommaMode,
@@ -1241,6 +1245,7 @@ struct ParentItem {
 enum ExpandedLayout {
     List(usize),
     Switch(usize),
+    Interface(usize),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1278,6 +1283,7 @@ struct StatementList {
     parent_item: Option<ParentItem>,
     original_multiline: bool,
     expanded: bool,
+    unfolded_items: HashSet<usize>,
 }
 
 #[derive(Debug)]
@@ -1290,6 +1296,15 @@ struct SwitchLayout {
     parent_item: Option<ParentItem>,
     original_multiline: bool,
     expanded: bool,
+}
+
+#[derive(Debug)]
+struct InterfaceBodyLayout {
+    open: Span,
+    close: Span,
+    members: Vec<Span>,
+    layout_parent: Option<ExpandedLayout>,
+    parent_item: Option<ParentItem>,
 }
 
 fn rewrite_edits(
@@ -1335,6 +1350,7 @@ fn rewrite_edits(
 
     if rules.import_spacing == StatementSpacingMode::Off
         && rules.variable_spacing == StatementSpacingMode::Off
+        && rules.interface_layout_threshold.is_none()
     {
         append_never_comma_edits(source, program, tokens, rules, &mut edits);
         edits.sort_by_key(|edit| (edit.start, edit.end));
@@ -1345,6 +1361,7 @@ fn rewrite_edits(
         source,
         tokens,
         formatted_imports: &formatted_imports,
+        interface_layout_threshold: rules.interface_layout_threshold,
         import_spacing: rules.import_spacing,
         variable_spacing: rules.variable_spacing,
         ambient_depth: 0,
@@ -1354,15 +1371,21 @@ fn rewrite_edits(
         current_switch: None,
         lists: Vec::new(),
         switches: Vec::new(),
+        interfaces: Vec::new(),
     };
     collector.visit_program(program);
-    mark_expanded_layouts(&mut collector.lists, &mut collector.switches);
+    mark_expanded_layouts(
+        &mut collector.lists,
+        &mut collector.switches,
+        &collector.interfaces,
+    );
     append_layout_edits(
         source,
         &program.comments,
         newline,
         &collector.lists,
         &collector.switches,
+        &collector.interfaces,
         &mut edits,
     )?;
     append_never_comma_edits(source, program, tokens, rules, &mut edits);
@@ -1395,6 +1418,7 @@ struct StatementCollector<'s> {
     source: &'s str,
     tokens: &'s [Token],
     formatted_imports: &'s HashMap<u32, bool>,
+    interface_layout_threshold: Option<u32>,
     import_spacing: StatementSpacingMode,
     variable_spacing: StatementSpacingMode,
     ambient_depth: usize,
@@ -1404,6 +1428,7 @@ struct StatementCollector<'s> {
     current_switch: Option<usize>,
     lists: Vec<StatementList>,
     switches: Vec<SwitchLayout>,
+    interfaces: Vec<InterfaceBodyLayout>,
 }
 
 impl StatementCollector<'_> {
@@ -1439,6 +1464,7 @@ impl StatementCollector<'_> {
             parent_item: self.current_item,
             original_multiline,
             expanded: false,
+            unfolded_items: HashSet::new(),
         });
         Some(list_index)
     }
@@ -1643,6 +1669,23 @@ impl<'a> Visit<'a> for StatementCollector<'_> {
         self.current_layout = previous_layout;
     }
 
+    fn visit_ts_interface_body(&mut self, body: &TSInterfaceBody<'a>) {
+        if let Some(threshold) = self.interface_layout_threshold
+            && let Ok(threshold) = usize::try_from(threshold)
+            && body.body.len() > threshold
+            && let Some((open, close)) = brace_tokens(self.tokens, body.span)
+        {
+            self.interfaces.push(InterfaceBodyLayout {
+                open,
+                close,
+                members: body.body.iter().map(GetSpan::span).collect(),
+                layout_parent: self.current_layout,
+                parent_item: self.current_item,
+            });
+        }
+        walk_ts_interface_body(self, body);
+    }
+
     fn visit_ts_external_module_declaration(
         &mut self,
         declaration: &TSExternalModuleDeclaration<'a>,
@@ -1709,7 +1752,11 @@ fn case_colon(tokens: &[Token], case: &SwitchCase<'_>) -> Option<Span> {
         .map(Token::span)
 }
 
-fn mark_expanded_layouts(lists: &mut [StatementList], switches: &mut [SwitchLayout]) {
+fn mark_expanded_layouts(
+    lists: &mut [StatementList],
+    switches: &mut [SwitchLayout],
+    interfaces: &[InterfaceBodyLayout],
+) {
     let mut pending = VecDeque::new();
     for (list_index, list) in lists.iter_mut().enumerate() {
         list.expanded = !list.original_multiline
@@ -1725,17 +1772,38 @@ fn mark_expanded_layouts(lists: &mut [StatementList], switches: &mut [SwitchLayo
             pending.push_back(ExpandedLayout::List(list_index));
         }
     }
+    pending.extend((0..interfaces.len()).map(ExpandedLayout::Interface));
 
     while let Some(layout) = pending.pop_front() {
-        let parent = match layout {
-            ExpandedLayout::List(list_index) => lists[list_index].layout_parent,
-            ExpandedLayout::Switch(switch_index) => switches[switch_index].layout_parent,
+        let (parent, parent_item) = match layout {
+            ExpandedLayout::List(list_index) => (
+                lists[list_index].layout_parent,
+                lists[list_index].parent_item,
+            ),
+            ExpandedLayout::Switch(switch_index) => (
+                switches[switch_index].layout_parent,
+                switches[switch_index].parent_item,
+            ),
+            ExpandedLayout::Interface(interface_index) => (
+                interfaces[interface_index].layout_parent,
+                interfaces[interface_index].parent_item,
+            ),
         };
         match parent {
             Some(ExpandedLayout::List(list_index)) => {
                 let parent_list = &mut lists[list_index];
-                if !parent_list.expanded && !parent_list.original_multiline {
+                let changed = if parent_list.original_multiline {
+                    parent_item.is_some_and(|item| {
+                        item.list_index == list_index
+                            && parent_list.unfolded_items.insert(item.item_index)
+                    })
+                } else if !parent_list.expanded {
                     parent_list.expanded = true;
+                    true
+                } else {
+                    false
+                };
+                if changed {
                     pending.push_back(ExpandedLayout::List(list_index));
                 }
             }
@@ -1746,7 +1814,7 @@ fn mark_expanded_layouts(lists: &mut [StatementList], switches: &mut [SwitchLayo
                     pending.push_back(ExpandedLayout::Switch(switch_index));
                 }
             }
-            None => {}
+            Some(ExpandedLayout::Interface(_)) | None => {}
         }
     }
 }
@@ -1757,6 +1825,7 @@ fn append_layout_edits(
     newline: &str,
     lists: &[StatementList],
     switches: &[SwitchLayout],
+    interfaces: &[InterfaceBodyLayout],
     edits: &mut Vec<Edit>,
 ) -> Result<(), FormatError> {
     let mut indents = LayoutIndents::new(lists.len(), switches.len());
@@ -1777,6 +1846,16 @@ fn append_layout_edits(
         switches,
         &mut indents,
         edits,
+    )?;
+    append_interface_layout_edits(
+        source,
+        comments,
+        newline,
+        lists,
+        switches,
+        interfaces,
+        &mut indents,
+        edits,
     )
 }
 
@@ -1790,36 +1869,25 @@ fn append_list_layout_edits(
     edits: &mut Vec<Edit>,
 ) -> Result<(), FormatError> {
     for (list_index, list) in lists.iter().enumerate() {
-        let item_indent = if list.expanded {
-            indents.item_indent(source, lists, switches, list_index)
-        } else {
-            String::new()
-        };
+        let expanded_item_indent = list
+            .expanded
+            .then(|| indents.item_indent(source, lists, switches, list_index));
 
-        if list.expanded {
-            match list.container {
-                ListContainer::Program { .. } => {}
-                ListContainer::Braced { open, .. } => append_boundary_edit(
-                    source,
-                    comments,
-                    Span::new(open.end, list.items[0].span.start),
-                    newline,
-                    &item_indent,
-                    edits,
-                )?,
-                ListContainer::SwitchCase { colon, .. } => append_boundary_edit(
-                    source,
-                    comments,
-                    Span::new(colon.end, list.items[0].span.start),
-                    newline,
-                    &item_indent,
-                    edits,
-                )?,
-            }
+        let opening_boundary = list_opening_boundary(list);
+        let unfold_first = !list.expanded
+            && list.unfolded_items.contains(&0)
+            && opening_boundary.is_some_and(|span| boundary_is_inline(source, span));
+        if (list.expanded || unfold_first)
+            && let Some(span) = opening_boundary
+        {
+            let item_indent = expanded_item_indent.clone().unwrap_or_else(|| {
+                indents.existing_item_indent(source, lists, switches, list_index, 0)
+            });
+            append_boundary_edit(source, comments, span, newline, &item_indent, edits)?;
         }
 
         let mut fallback_indent = String::new();
-        for pair in list.items.windows(2) {
+        for (pair_index, pair) in list.items.windows(2).enumerate() {
             let [previous, next] = pair else {
                 unreachable!("windows(2) always contains two statements")
             };
@@ -1827,8 +1895,16 @@ fn append_list_layout_edits(
             if !previous_indent.is_empty() {
                 fallback_indent.clone_from(&previous_indent);
             }
-            let Some(blank_line) = boundary_blank_line(previous.target, next.target, list.expanded)
-            else {
+            let span = Span::new(previous.span.end, next.span.start);
+            let unfold_boundary = !list.expanded
+                && (list.unfolded_items.contains(&pair_index)
+                    || list.unfolded_items.contains(&(pair_index + 1)))
+                && boundary_is_inline(source, span);
+            let Some(blank_line) = boundary_blank_line(
+                previous.target,
+                next.target,
+                list.expanded || unfold_boundary,
+            ) else {
                 continue;
             };
             let separator = if blank_line {
@@ -1836,9 +1912,10 @@ fn append_list_layout_edits(
             } else {
                 newline.to_owned()
             };
-            let span = Span::new(previous.span.end, next.span.start);
             let indent = if list.expanded {
-                item_indent.clone()
+                expanded_item_indent.clone().unwrap()
+            } else if unfold_boundary {
+                indents.existing_item_indent(source, lists, switches, list_index, pair_index + 1)
             } else {
                 existing_boundary_indent(
                     source,
@@ -1852,22 +1929,36 @@ fn append_list_layout_edits(
             append_boundary_edit(source, comments, span, &separator, &indent, edits)?;
         }
 
-        if list.expanded
-            && let ListContainer::Braced { close, .. } = list.container
+        let last_index = list.items.len() - 1;
+        let closing_boundary = list_closing_boundary(list);
+        let unfold_last = !list.expanded
+            && list.unfolded_items.contains(&last_index)
+            && closing_boundary.is_some_and(|span| boundary_is_inline(source, span));
+        if (list.expanded || unfold_last)
+            && let Some(span) = closing_boundary
         {
             let base_indent = indents.list_base_indent(source, lists, switches, list_index);
-            append_boundary_edit(
-                source,
-                comments,
-                Span::new(list.items.last().unwrap().span.end, close.start),
-                newline,
-                &base_indent,
-                edits,
-            )?;
+            append_boundary_edit(source, comments, span, newline, &base_indent, edits)?;
         }
     }
 
     Ok(())
+}
+
+fn list_opening_boundary(list: &StatementList) -> Option<Span> {
+    let start = match list.container {
+        ListContainer::Program { .. } => return None,
+        ListContainer::Braced { open, .. } => open.end,
+        ListContainer::SwitchCase { colon, .. } => colon.end,
+    };
+    Some(Span::new(start, list.items[0].span.start))
+}
+
+fn list_closing_boundary(list: &StatementList) -> Option<Span> {
+    let ListContainer::Braced { close, .. } = list.container else {
+        return None;
+    };
+    Some(Span::new(list.items.last()?.span.end, close.start))
 }
 
 fn append_switch_layout_edits(
@@ -1918,6 +2009,136 @@ fn append_switch_layout_edits(
     }
 
     Ok(())
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "interface boundaries share the collected layout and source context"
+)]
+fn append_interface_layout_edits(
+    source: &str,
+    comments: &[Comment],
+    newline: &str,
+    lists: &[StatementList],
+    switches: &[SwitchLayout],
+    interfaces: &[InterfaceBodyLayout],
+    indents: &mut LayoutIndents,
+    edits: &mut Vec<Edit>,
+) -> Result<(), FormatError> {
+    for interface in interfaces {
+        let Some(first) = interface.members.first() else {
+            continue;
+        };
+        let base_indent = indents.interface_base_indent(source, lists, switches, interface);
+        let member_indent = format!("{base_indent}  ");
+        let directive_target_lines = typescript_directive_target_lines(
+            source,
+            comments,
+            Span::new(interface.open.end, interface.close.start),
+        )?;
+        append_boundary_edit(
+            source,
+            comments,
+            Span::new(interface.open.end, first.start),
+            newline,
+            &member_indent,
+            edits,
+        )?;
+        for pair in interface.members.windows(2) {
+            if members_share_directive_target_line(source, pair, &directive_target_lines) {
+                continue;
+            }
+            append_boundary_edit(
+                source,
+                comments,
+                Span::new(pair[0].end, pair[1].start),
+                newline,
+                &member_indent,
+                edits,
+            )?;
+        }
+        append_boundary_edit(
+            source,
+            comments,
+            Span::new(interface.members.last().unwrap().end, interface.close.start),
+            newline,
+            &base_indent,
+            edits,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn typescript_directive_target_lines(
+    source: &str,
+    comments: &[Comment],
+    span: Span,
+) -> Result<HashSet<u32>, FormatError> {
+    let mut target_lines = HashSet::new();
+    for comment in comments_in_span(comments, span) {
+        if comment.kind != CommentKind::Line
+            || !is_line_scoped_typescript_directive(source_slice(source, comment.span)?)
+        {
+            continue;
+        }
+        if let Some(line_start) = next_line_start(source, comment.span.end) {
+            target_lines.insert(line_start);
+        }
+    }
+    Ok(target_lines)
+}
+
+fn is_line_scoped_typescript_directive(comment: &str) -> bool {
+    let Some(comment) = comment.strip_prefix("//") else {
+        return false;
+    };
+    let comment = comment.trim_start_matches(['/', ' ', '\t']);
+    ["@ts-ignore", "@ts-expect-error"]
+        .into_iter()
+        .any(|directive| {
+            comment.strip_prefix(directive).is_some_and(|suffix| {
+                suffix
+                    .chars()
+                    .next()
+                    .is_none_or(|character| character.is_whitespace() || character == ':')
+            })
+        })
+}
+
+fn next_line_start(source: &str, offset: u32) -> Option<u32> {
+    let offset = usize::try_from(offset).ok()?;
+    let relative_newline = source.get(offset..)?.find('\n')?;
+    u32::try_from(offset.checked_add(relative_newline)?.checked_add(1)?).ok()
+}
+
+fn line_start(source: &str, offset: u32) -> Option<u32> {
+    let offset = usize::try_from(offset).ok()?;
+    let start = source
+        .get(..offset)?
+        .rfind('\n')
+        .map_or(0, |newline| newline + 1);
+    u32::try_from(start).ok()
+}
+
+fn members_share_directive_target_line(
+    source: &str,
+    members: &[Span],
+    directive_target_lines: &HashSet<u32>,
+) -> bool {
+    let [previous, next] = members else {
+        return false;
+    };
+    let Some(previous_line) = line_start(source, previous.start) else {
+        return false;
+    };
+    line_start(source, next.start).is_some_and(|next_line| {
+        next_line == previous_line && directive_target_lines.contains(&next_line)
+    })
+}
+
+fn boundary_is_inline(source: &str, span: Span) -> bool {
+    source_slice(source, span).is_ok_and(|boundary| !contains_line_break(boundary))
 }
 
 fn boundary_blank_line(
@@ -2038,6 +2259,27 @@ impl LayoutIndents {
         }
     }
 
+    fn existing_item_indent(
+        &mut self,
+        source: &str,
+        lists: &[StatementList],
+        switches: &[SwitchLayout],
+        list_index: usize,
+        item_index: usize,
+    ) -> String {
+        for index in (0..=item_index)
+            .rev()
+            .chain(item_index + 1..lists[list_index].items.len())
+        {
+            if let Some(indent) =
+                line_indent_if_standalone(source, lists[list_index].items[index].span.start)
+            {
+                return indent;
+            }
+        }
+        self.item_indent(source, lists, switches, list_index)
+    }
+
     fn item_indent(
         &mut self,
         source: &str,
@@ -2084,9 +2326,12 @@ impl LayoutIndents {
                 if lists[parent.list_index].expanded {
                     self.item_indent(source, lists, switches, parent.list_index)
                 } else {
-                    line_indent_at(
+                    self.existing_item_indent(
                         source,
-                        lists[parent.list_index].items[parent.item_index].span.start,
+                        lists,
+                        switches,
+                        parent.list_index,
+                        parent.item_index,
                     )
                 }
             }
@@ -2118,9 +2363,12 @@ impl LayoutIndents {
             if lists[parent.list_index].expanded {
                 self.item_indent(source, lists, switches, parent.list_index)
             } else {
-                line_indent_at(
+                self.existing_item_indent(
                     source,
-                    lists[parent.list_index].items[parent.item_index].span.start,
+                    lists,
+                    switches,
+                    parent.list_index,
+                    parent.item_index,
                 )
             }
         } else {
@@ -2129,18 +2377,47 @@ impl LayoutIndents {
         self.switches[switch_index] = Some(indent.clone());
         indent
     }
+
+    fn interface_base_indent(
+        &mut self,
+        source: &str,
+        lists: &[StatementList],
+        switches: &[SwitchLayout],
+        interface: &InterfaceBodyLayout,
+    ) -> String {
+        indent_resolution();
+        if let Some(parent) = interface.parent_item {
+            if lists[parent.list_index].expanded {
+                self.item_indent(source, lists, switches, parent.list_index)
+            } else {
+                self.existing_item_indent(
+                    source,
+                    lists,
+                    switches,
+                    parent.list_index,
+                    parent.item_index,
+                )
+            }
+        } else {
+            line_indent_at(source, interface.open.start)
+        }
+    }
 }
 
 fn line_indent_at(source: &str, offset: u32) -> String {
+    line_indent_if_standalone(source, offset).unwrap_or_default()
+}
+
+fn line_indent_if_standalone(source: &str, offset: u32) -> Option<String> {
     let prefix = source.get(..offset as usize).unwrap_or(source);
     let line = prefix.rsplit_once('\n').map_or(prefix, |(_, line)| line);
     if line
         .chars()
         .all(|character| matches!(character, ' ' | '\t' | '\r'))
     {
-        line.trim_end_matches('\r').to_owned()
+        Some(line.trim_end_matches('\r').to_owned())
     } else {
-        String::new()
+        None
     }
 }
 
@@ -2202,7 +2479,15 @@ fn format_boundary_separator(
                 source_slice(source, Span::new(semicolon_start, trailing.span.end))?.to_owned();
             output.push_str(statement_separator);
             output.push_str(indent);
-            output.push_str(source_slice(source, Span::new(leading_start, span.end))?);
+            append_leading_comments_and_destination(
+                &mut output,
+                source,
+                boundary_comments,
+                leading_start,
+                span.end,
+                statement_separator,
+                indent,
+            )?;
             return Ok(output);
         }
     }
@@ -2211,8 +2496,61 @@ fn format_boundary_separator(
     output.push_str(source_slice(source, Span::new(span.start, trailing_end))?);
     output.push_str(statement_separator);
     output.push_str(indent);
-    output.push_str(source_slice(source, Span::new(leading_start, span.end))?);
+    append_leading_comments_and_destination(
+        &mut output,
+        source,
+        boundary_comments,
+        leading_start,
+        span.end,
+        statement_separator,
+        indent,
+    )?;
     Ok(output)
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "leading comments need the complete boundary and target indentation"
+)]
+fn append_leading_comments_and_destination(
+    output: &mut String,
+    source: &str,
+    comments: &[Comment],
+    leading_start: u32,
+    destination_start: u32,
+    separator: &str,
+    indent: &str,
+) -> Result<(), FormatError> {
+    let Some(last_leading_comment) = comments
+        .iter()
+        .rev()
+        .find(|comment| comment.position == CommentPosition::Leading)
+    else {
+        return Ok(());
+    };
+    output.push_str(source_slice(
+        source,
+        Span::new(leading_start, last_leading_comment.span.end),
+    )?);
+    append_comment_gap(
+        output,
+        source_slice(
+            source,
+            Span::new(last_leading_comment.span.end, destination_start),
+        )?,
+        separator,
+        indent,
+    );
+    Ok(())
+}
+
+fn append_comment_gap(output: &mut String, gap: &str, separator: &str, indent: &str) {
+    if contains_line_break(gap) && gap.chars().all(char::is_whitespace) {
+        output.push_str(detect_newline(separator));
+        output.push_str(indent);
+    } else {
+        output.push_str(gap);
+    }
 }
 
 struct FormattedImport {
@@ -2685,8 +3023,9 @@ mod tests {
         VARIABLE_MULTILINE_SCANS, parse, source_type, verify,
     };
     use crate::{
-        FormatConfig, RulesConfig, SemicolonConfig, SemicolonMode, StatementSpacingConfig,
-        StatementSpacingMode, TrailingCommaMode, format_text, resolve_config,
+        FormatConfig, InterfaceLayoutMode, InterfaceLayoutRule, RulesConfig, SemicolonConfig,
+        SemicolonMode, StatementSpacingConfig, StatementSpacingMode, TrailingCommaMode,
+        format_text, resolve_config,
     };
 
     fn format(source: &str) -> String {
@@ -2720,6 +3059,7 @@ mod tests {
             FormatConfig {
                 rules: RulesConfig {
                     import_layout: false,
+                    interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     statement_spacing: StatementSpacingConfig {
                         imports: StatementSpacingMode::Off,
                         variable_declarations: StatementSpacingMode::Off,
@@ -2760,6 +3100,7 @@ mod tests {
             FormatConfig {
                 rules: RulesConfig {
                     import_layout: false,
+                    interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     statement_spacing: StatementSpacingConfig {
                         imports: StatementSpacingMode::Off,
                         variable_declarations: StatementSpacingMode::Off,
@@ -2779,6 +3120,7 @@ mod tests {
             FormatConfig {
                 rules: RulesConfig {
                     import_layout: false,
+                    interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     statement_spacing: StatementSpacingConfig {
                         imports: StatementSpacingMode::Off,
                         variable_declarations: StatementSpacingMode::Off,
@@ -2789,6 +3131,361 @@ mod tests {
                 ..FormatConfig::default()
             },
         )
+    }
+
+    fn format_interface_layout(
+        file_name: &str,
+        source: &str,
+        interface_layout: InterfaceLayoutRule,
+        type_members: SemicolonMode,
+    ) -> String {
+        format_file_with(
+            file_name,
+            source,
+            FormatConfig {
+                rules: RulesConfig {
+                    import_layout: false,
+                    interface_layout,
+                    statement_spacing: StatementSpacingConfig {
+                        imports: StatementSpacingMode::Off,
+                        variable_declarations: StatementSpacingMode::Off,
+                    },
+                    semicolons: SemicolonConfig {
+                        statements: SemicolonMode::Off,
+                        class_members: SemicolonMode::Off,
+                        type_members,
+                    },
+                    trailing_commas: TrailingCommaMode::Off,
+                },
+                ..FormatConfig::default()
+            },
+        )
+    }
+
+    #[test]
+    fn formats_interfaces_only_above_the_configured_member_threshold() {
+        let off = InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off);
+        let one_member = "interface One { value: string; }";
+        assert_eq!(
+            format_interface_layout("sample.ts", one_member, off, SemicolonMode::Off),
+            one_member
+        );
+        assert_eq!(
+            format_interface_layout(
+                "sample.ts",
+                one_member,
+                InterfaceLayoutRule::Threshold(1),
+                SemicolonMode::Off,
+            ),
+            one_member
+        );
+        assert_eq!(
+            format_interface_layout(
+                "sample.ts",
+                "interface Empty {}",
+                InterfaceLayoutRule::Threshold(0),
+                SemicolonMode::Off,
+            ),
+            "interface Empty {}"
+        );
+        assert_eq!(
+            format_interface_layout(
+                "sample.ts",
+                "interface Two { value: string; run(): void, }",
+                InterfaceLayoutRule::Threshold(1),
+                SemicolonMode::Off,
+            ),
+            "interface Two {\n  value: string;\n  run(): void,\n}"
+        );
+    }
+
+    #[test]
+    fn keeps_interface_layout_independent_from_line_width() {
+        let source = "interface Shape { value: string; }";
+        let expected = "interface Shape {\n  value: string;\n}";
+        for line_width in [1, 1_000] {
+            let output = format_file_with(
+                "sample.ts",
+                source,
+                FormatConfig {
+                    line_width,
+                    rules: RulesConfig {
+                        import_layout: false,
+                        interface_layout: InterfaceLayoutRule::Threshold(0),
+                        statement_spacing: StatementSpacingConfig {
+                            imports: StatementSpacingMode::Off,
+                            variable_declarations: StatementSpacingMode::Off,
+                        },
+                        semicolons: semicolons_off(),
+                        trailing_commas: TrailingCommaMode::Off,
+                    },
+                    ..FormatConfig::default()
+                },
+            );
+            assert_eq!(output, expected);
+        }
+    }
+
+    #[test]
+    fn counts_and_places_every_interface_member_kind_on_its_own_line() {
+        let source = "interface Shape { value: string; run(): void; [key: string]: unknown; (): string; new (): Shape; }";
+        let output = format_interface_layout(
+            "sample.ts",
+            source,
+            InterfaceLayoutRule::Threshold(4),
+            SemicolonMode::Off,
+        );
+        assert_eq!(
+            output,
+            "interface Shape {\n  value: string;\n  run(): void;\n  [key: string]: unknown;\n  (): string;\n  new (): Shape;\n}"
+        );
+    }
+
+    #[test]
+    fn canonicalizes_triggered_interface_boundaries_without_collapsing_small_interfaces() {
+        let source = "interface Shape {\n    first: string; second: number;\n  }";
+        assert_eq!(
+            format_interface_layout(
+                "sample.ts",
+                source,
+                InterfaceLayoutRule::Threshold(1),
+                SemicolonMode::Off,
+            ),
+            "interface Shape {\n  first: string;\n  second: number;\n}"
+        );
+        assert_eq!(
+            format_interface_layout(
+                "sample.ts",
+                source,
+                InterfaceLayoutRule::Threshold(2),
+                SemicolonMode::Off,
+            ),
+            source
+        );
+    }
+
+    #[test]
+    fn preserves_line_scoped_typescript_directives_when_expanding_interfaces() {
+        for directive in ["@ts-ignore", "@ts-expect-error"] {
+            let source = format!(
+                "interface Shape {{\n  first: string; // {directive}\n  second: MissingOne; third: MissingTwo;\n}}"
+            );
+            let expected = format!(
+                "interface Shape {{\n  first: string // {directive}\n  second: MissingOne; third: MissingTwo\n}}"
+            );
+            let output = format_interface_layout(
+                "sample.ts",
+                &source,
+                InterfaceLayoutRule::Threshold(0),
+                SemicolonMode::AsNeeded,
+            );
+
+            assert_eq!(output, expected);
+            assert_eq!(
+                format_interface_layout(
+                    "sample.ts",
+                    &output,
+                    InterfaceLayoutRule::Threshold(0),
+                    SemicolonMode::AsNeeded,
+                ),
+                output
+            );
+        }
+    }
+
+    #[test]
+    fn normalizes_interface_member_indentation_after_leading_comments() {
+        for (source, expected) in [
+            (
+                "interface Shape { first: string;\n// second\nsecond: number; }",
+                "interface Shape {\n  first: string;\n  // second\n  second: number;\n}",
+            ),
+            (
+                "interface Shape {\n      /** value */\n        value: string;\n}",
+                "interface Shape {\n  /** value */\n  value: string;\n}",
+            ),
+        ] {
+            let output = format_interface_layout(
+                "sample.ts",
+                source,
+                InterfaceLayoutRule::Threshold(0),
+                SemicolonMode::Off,
+            );
+
+            assert_eq!(output, expected);
+            assert_eq!(
+                format_interface_layout(
+                    "sample.ts",
+                    &output,
+                    InterfaceLayoutRule::Threshold(0),
+                    SemicolonMode::Off,
+                ),
+                output
+            );
+        }
+    }
+
+    #[test]
+    fn cascades_interface_layout_through_inline_declaration_containers() {
+        let source = "declare namespace Outer { namespace Inner { export interface Shape { value: string; run(): void; } const after=1; } }";
+        let output = format_interface_layout(
+            "sample.d.ts",
+            source,
+            InterfaceLayoutRule::Threshold(0),
+            SemicolonMode::Off,
+        );
+        assert_eq!(
+            output,
+            "declare namespace Outer {\n  namespace Inner {\n    export interface Shape {\n      value: string;\n      run(): void;\n    }\n    const after=1;\n  }\n}"
+        );
+    }
+
+    #[test]
+    fn cascades_interface_layout_through_program_and_block_statement_lists() {
+        let program = "before();interface Shape { value: string; }after();";
+        assert_eq!(
+            format_interface_layout(
+                "sample.ts",
+                program,
+                InterfaceLayoutRule::Threshold(0),
+                SemicolonMode::Off,
+            ),
+            "before();\ninterface Shape {\n  value: string;\n}\nafter();"
+        );
+
+        let block = "function scope() { before(); interface Local { value: string; } after(); }";
+        assert_eq!(
+            format_interface_layout(
+                "sample.ts",
+                block,
+                InterfaceLayoutRule::Threshold(0),
+                SemicolonMode::Off,
+            ),
+            "function scope() {\n  before();\n  interface Local {\n    value: string;\n  }\n  after();\n}"
+        );
+    }
+
+    #[test]
+    fn cascades_interface_layout_across_inline_boundaries_in_multiline_containers() {
+        for (file_name, source, expected) in [
+            (
+                "sample.ts",
+                "function scope() {\n  before(); interface Local { value: string; } after();\n}",
+                "function scope() {\n  before();\n  interface Local {\n    value: string;\n  }\n  after();\n}",
+            ),
+            (
+                "sample.d.ts",
+                "namespace Scope {\n  type Before = string; interface Shape { value: string; } type After = number;\n}",
+                "namespace Scope {\n  type Before = string;\n  interface Shape {\n    value: string;\n  }\n  type After = number;\n}",
+            ),
+        ] {
+            let output = format_interface_layout(
+                file_name,
+                source,
+                InterfaceLayoutRule::Threshold(0),
+                SemicolonMode::Off,
+            );
+
+            assert_eq!(output, expected);
+            assert_eq!(
+                format_interface_layout(
+                    file_name,
+                    &output,
+                    InterfaceLayoutRule::Threshold(0),
+                    SemicolonMode::Off,
+                ),
+                output
+            );
+        }
+    }
+
+    #[test]
+    fn applies_interface_layout_to_exported_ambient_and_definition_declarations() {
+        let source = "export interface Public { value: string; }\ndeclare interface Ambient { run(): void; }";
+        let output = format_interface_layout(
+            "sample.d.ts",
+            source,
+            InterfaceLayoutRule::Threshold(0),
+            SemicolonMode::Off,
+        );
+        assert_eq!(
+            output,
+            "export interface Public {\n  value: string;\n}\ndeclare interface Ambient {\n  run(): void;\n}"
+        );
+    }
+
+    #[test]
+    fn keeps_interface_layout_independent_from_type_member_semicolons() {
+        let source = "interface Shape { value: string; run(): void; }";
+        for (mode, expected) in [
+            (
+                SemicolonMode::Always,
+                "interface Shape {\n  value: string;\n  run(): void;\n}",
+            ),
+            (
+                SemicolonMode::AsNeeded,
+                "interface Shape {\n  value: string\n  run(): void\n}",
+            ),
+            (
+                SemicolonMode::Off,
+                "interface Shape {\n  value: string;\n  run(): void;\n}",
+            ),
+        ] {
+            assert_eq!(
+                format_interface_layout(
+                    "sample.ts",
+                    source,
+                    InterfaceLayoutRule::Threshold(0),
+                    mode,
+                ),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn preserves_interface_comments_bom_crlf_and_eof_shape_idempotently() {
+        let source = "\u{feff}interface Shape { /** value */ value: [\r\n    string,\r\n  ]; // run\r\nrun(): void; }";
+        let raw_config = FormatConfig {
+            rules: RulesConfig {
+                import_layout: false,
+                interface_layout: InterfaceLayoutRule::Threshold(0),
+                statement_spacing: StatementSpacingConfig {
+                    imports: StatementSpacingMode::Off,
+                    variable_declarations: StatementSpacingMode::Off,
+                },
+                semicolons: semicolons_off(),
+                trailing_commas: TrailingCommaMode::Never,
+            },
+            ..FormatConfig::default()
+        };
+        let config = resolve_config(raw_config).unwrap();
+        let output = format_text(Path::new("sample.ts"), source, &config)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            output,
+            "\u{feff}interface Shape {\r\n  /** value */ value: [\r\n    string\r\n  ]; // run\r\n  run(): void;\r\n}"
+        );
+        assert!(
+            format_text(Path::new("sample.ts"), &output, &config)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn does_not_apply_interface_layout_to_object_type_aliases() {
+        let source = "type Shape = { value: string; run(): void; };";
+        assert_eq!(
+            format_interface_layout(
+                "sample.ts",
+                source,
+                InterfaceLayoutRule::Threshold(0),
+                SemicolonMode::Off,
+            ),
+            source
+        );
     }
 
     #[test]
@@ -3343,6 +4040,7 @@ mod tests {
         let config = resolve_config(FormatConfig {
             rules: RulesConfig {
                 import_layout: false,
+                interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                 statement_spacing: StatementSpacingConfig {
                     imports: StatementSpacingMode::Off,
                     variable_declarations: StatementSpacingMode::Off,
@@ -3495,6 +4193,7 @@ mod tests {
             line_width: u32::try_from(expected.chars().count()).unwrap(),
             rules: RulesConfig {
                 import_layout: true,
+                interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                 statement_spacing: StatementSpacingConfig {
                     imports: StatementSpacingMode::Off,
                     variable_declarations: StatementSpacingMode::Off,
@@ -3682,10 +4381,11 @@ mod tests {
 
     #[test]
     fn disabling_all_rules_preserves_the_complete_source() {
-        let source = "import{a,b}from'x';const value={raw:true};";
+        let source = "import{a,b}from'x';interface Shape { value: string; }const value={raw:true};";
         let config = resolve_config(FormatConfig {
             rules: RulesConfig {
                 import_layout: false,
+                interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                 statement_spacing: StatementSpacingConfig {
                     imports: StatementSpacingMode::Off,
                     variable_declarations: StatementSpacingMode::Off,

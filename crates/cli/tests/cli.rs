@@ -99,6 +99,37 @@ fn supports_granular_semicolon_modes_from_config() {
 }
 
 #[test]
+fn supports_interface_layout_thresholds_and_off_from_config() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::create_dir(directory.path().join(".git")).unwrap();
+    let source = "interface Shape { value: string; }";
+    write(&directory.path().join("sample.ts"), source);
+
+    let default = command(directory.path()).arg("sample.ts").output().unwrap();
+    assert!(default.status.success(), "{}", stderr(&default));
+    assert_eq!(
+        String::from_utf8(default.stdout).unwrap(),
+        "interface Shape {\n  value: string\n}"
+    );
+
+    write(
+        &directory.path().join("worsier.jsonc"),
+        r#"{"rules":{"interfaceLayout":1.0,"semicolons":{"typeMembers":"off"}}}"#,
+    );
+    let threshold = command(directory.path()).arg("sample.ts").output().unwrap();
+    assert!(threshold.status.success(), "{}", stderr(&threshold));
+    assert_eq!(String::from_utf8(threshold.stdout).unwrap(), source);
+
+    write(
+        &directory.path().join("worsier.jsonc"),
+        r#"{"rules":{"interfaceLayout":"off","semicolons":{"typeMembers":"off"}}}"#,
+    );
+    let off = command(directory.path()).arg("sample.ts").output().unwrap();
+    assert!(off.status.success(), "{}", stderr(&off));
+    assert_eq!(String::from_utf8(off.stdout).unwrap(), source);
+}
+
+#[test]
 fn supports_stdout_stdin_check_and_atomic_write() {
     let directory = tempfile::tempdir().unwrap();
     fs::create_dir(directory.path().join(".git")).unwrap();
@@ -263,6 +294,14 @@ fn configuration_errors_include_the_nested_json_path() {
     for (config, path) in [
         (r#"{"rules":{"imports":true}}"#, "rules.imports"),
         (r#"{"rules":{"variables":true}}"#, "rules.variables"),
+        (
+            r#"{"rules":{"interfaceLayout":-1}}"#,
+            "rules.interfaceLayout",
+        ),
+        (
+            r#"{"rules":{"interfaceLayout":4294967296}}"#,
+            "rules.interfaceLayout",
+        ),
         (r#"{"rules":{"semicolons":"always"}}"#, "rules.semicolons"),
         (
             r#"{"rules":{"semicolons":{"statements":"never"}}}"#,

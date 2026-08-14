@@ -3,8 +3,9 @@ mod error;
 mod rewriter;
 
 pub use config::{
-    FormatConfig, ResolvedConfig, RulesConfig, SemicolonConfig, SemicolonMode,
-    StatementSpacingConfig, StatementSpacingMode, TrailingCommaMode, resolve_config,
+    FormatConfig, InterfaceLayoutMode, InterfaceLayoutRule, ResolvedConfig, RulesConfig,
+    SemicolonConfig, SemicolonMode, StatementSpacingConfig, StatementSpacingMode,
+    TrailingCommaMode, resolve_config,
 };
 pub use error::FormatError;
 pub use rewriter::format_text;

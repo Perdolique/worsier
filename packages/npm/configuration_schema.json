@@ -26,6 +26,7 @@
       "$ref": "#/$defs/RulesConfig",
       "default": {
         "importLayout": true,
+        "interfaceLayout": 0,
         "semicolons": {
           "classMembers": "asNeeded",
           "statements": "asNeeded",
@@ -45,12 +46,35 @@
   },
   "additionalProperties": false,
   "$defs": {
+    "InterfaceLayoutMode": {
+      "type": "string",
+      "enum": [
+        "off"
+      ]
+    },
+    "InterfaceLayoutRule": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "format": "uint32",
+          "maximum": 4294967295,
+          "minimum": 0
+        },
+        {
+          "$ref": "#/$defs/InterfaceLayoutMode"
+        }
+      ]
+    },
     "RulesConfig": {
       "type": "object",
       "properties": {
         "importLayout": {
           "type": "boolean",
           "default": true
+        },
+        "interfaceLayout": {
+          "$ref": "#/$defs/InterfaceLayoutRule",
+          "default": 0
         },
         "semicolons": {
           "$ref": "#/$defs/SemicolonConfig",
