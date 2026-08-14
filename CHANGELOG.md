@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.4.0](https://github.com/Perdolique/worsier/compare/v2.3.0...v2.4.0) (2026-08-14)
+
+
+### Features
+
+* **formatter:** add interface layout rule ([b81d7b0](https://github.com/Perdolique/worsier/commit/b81d7b0091ed16f94b762475b630efb36bd6712d))
+* **formatter:** add interface layout rule ([863f5df](https://github.com/Perdolique/worsier/commit/863f5df6d2074f14e450d09c50886550db630271))
+
 ## [2.3.0](https://github.com/Perdolique/worsier/compare/v2.2.0...v2.3.0) (2026-08-13)
 
 
