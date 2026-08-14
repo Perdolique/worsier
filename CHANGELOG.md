@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.4.1](https://github.com/Perdolique/worsier/compare/v2.4.0...v2.4.1) (2026-08-14)
+
+
+### Bug Fixes
+
+* **release:** restore Windows x64 package ([e5caed6](https://github.com/Perdolique/worsier/commit/e5caed675c26085b46e06bed771fb2a9a542e669))
+
 ## [2.4.0](https://github.com/Perdolique/worsier/compare/v2.3.0...v2.4.0) (2026-08-14)
 
 
