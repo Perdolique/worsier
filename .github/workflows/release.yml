@@ -138,7 +138,8 @@ jobs:
         with:
           ref: ${{ needs.release-please.outputs.sha }}
           install-dependencies: true
-      - run: rustup toolchain install --target ${{ matrix.target }}
+      - run: rustup toolchain install
+      - run: rustup target add ${{ matrix.target }}
       - uses: mlugg/setup-zig@v2
         if: matrix.musl
         with:
