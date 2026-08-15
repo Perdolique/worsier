@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+#[cfg(unix)]
+use std::ffi::CString;
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
@@ -10,8 +12,15 @@ use clap::Parser;
 use ignore::WalkBuilder;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use rayon::prelude::*;
+#[cfg(unix)]
+use tempfile::Builder as TempFileBuilder;
+#[cfg(windows)]
 use tempfile::NamedTempFile;
 use worsier_formatter::{FormatConfig, ResolvedConfig, format_text, resolve_config};
+
+mod config_update;
+
+use config_update::{complete_config, has_migratable_legacy_keys, update_config};
 
 const CONFIG_FILE: &str = "worsier.jsonc";
 const BUILT_IN_IGNORED_ENTRY_NAMES: [&str; 3] =
@@ -31,6 +40,21 @@ struct Args {
     /// Create an optional complete worsier.jsonc in the current directory.
     #[arg(long)]
     init: bool,
+
+    /// Migrate and complete an existing worsier.jsonc.
+    #[arg(
+        long,
+        conflicts_with_all = [
+            "init",
+            "check",
+            "write",
+            "stdin_filepath",
+            "threads",
+            "no_verify",
+            "paths"
+        ]
+    )]
+    update_config: bool,
 
     /// Use one configuration file for the whole invocation.
     #[arg(long, value_name = "PATH")]
@@ -87,6 +111,15 @@ fn run_args(args: &Args) -> Result<i32> {
             bail!("--init cannot be combined with formatting inputs or modes");
         }
         init_config(&std::env::current_dir()?)?;
+        return Ok(0);
+    }
+
+    if args.update_config {
+        let path = match &args.config {
+            Some(path) => path.clone(),
+            None => std::env::current_dir()?.join(CONFIG_FILE),
+        };
+        update_config(&path)?;
         return Ok(0);
     }
 
@@ -226,10 +259,7 @@ fn format_stdin(args: &Args, file_name: &Path) -> Result<i32> {
 
 fn init_config(directory: &Path) -> Result<()> {
     let path = directory.join(CONFIG_FILE);
-    let config = FormatConfig {
-        schema: Some("./node_modules/worsier/configuration_schema.json".to_owned()),
-        ..FormatConfig::default()
-    };
+    let config = complete_config();
     let json = serde_json::to_string_pretty(&config)?;
     let file = OpenOptions::new().write(true).create_new(true).open(&path);
     let mut file = match file {
@@ -422,28 +452,44 @@ fn load_config(path: &Path, no_verify: bool) -> Result<Arc<LoadedConfig>> {
                     escaped_path(&absolute_path)
                 )
             })?;
-    let mut config: FormatConfig = serde_path_to_error::deserialize(value).with_context(|| {
-        format!(
-            "invalid configuration value in {}",
-            escaped_path(&absolute_path)
-        )
-    })?;
+    let contains_migratable_legacy_rules = has_migratable_legacy_keys(&value);
+    let mut config: FormatConfig = match serde_path_to_error::deserialize(value) {
+        Ok(config) => config,
+        Err(error) => {
+            let error = anyhow!(error).context(format!(
+                "invalid configuration value in {}",
+                escaped_path(&absolute_path)
+            ));
+            if contains_migratable_legacy_rules {
+                return Err(error.context(format!(
+                    "legacy Worsier v1 rules can be migrated with `worsier --update-config --config <PATH>`; configuration path: {}",
+                    escaped_path(&absolute_path)
+                )));
+            }
+            return Err(error);
+        }
+    };
     if no_verify {
         config.verify_ast = false;
     }
     let resolved = resolve_config(config)
         .with_context(|| format!("invalid configuration {}", escaped_path(&absolute_path)))?;
-    let directory = absolute_path.parent().unwrap_or_else(|| Path::new("."));
-    let mut ignore = GitignoreBuilder::new(directory);
-    for pattern in resolved.ignore_patterns() {
-        ignore
-            .add_line(Some(absolute_path.clone()), pattern)
-            .with_context(|| format!("invalid ignore pattern {pattern:?}"))?;
-    }
+    let ignore = build_config_ignore(&absolute_path, &resolved)?;
     Ok(Arc::new(LoadedConfig {
         config: Arc::new(resolved),
-        ignore: ignore.build()?,
+        ignore,
     }))
+}
+
+fn build_config_ignore(path: &Path, config: &ResolvedConfig) -> Result<Gitignore> {
+    let directory = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut ignore = GitignoreBuilder::new(directory);
+    for pattern in config.ignore_patterns() {
+        ignore
+            .add_line(Some(path.to_owned()), pattern)
+            .with_context(|| format!("invalid ignore pattern {pattern:?}"))?;
+    }
+    Ok(ignore.build()?)
 }
 
 struct Job {
@@ -521,37 +567,159 @@ fn result_path(result: &JobResult) -> &Path {
 }
 
 fn atomic_write(path: &Path, output: &[u8]) -> Result<()> {
-    atomic_write_with_before_replace(path, output, || Ok(()))
+    let source = File::open(path)?;
+    atomic_write_from_source(path, output, &source, || Ok(()))
 }
 
+#[cfg(test)]
 fn atomic_write_with_before_replace(
     path: &Path,
     output: &[u8],
+    before_replace: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    let source = File::open(path)?;
+    atomic_write_from_source(path, output, &source, before_replace)
+}
+
+fn atomic_write_from_source(
+    path: &Path,
+    output: &[u8],
+    source: &File,
     before_replace: impl FnOnce() -> Result<()>,
 ) -> Result<()> {
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    let mut temporary = NamedTempFile::new_in(parent)?;
-    temporary.write_all(output)?;
-    copy_file_metadata(path, temporary.path(), temporary.as_file())?;
-    temporary.as_file_mut().sync_all()?;
-    before_replace()?;
 
     #[cfg(windows)]
     {
-        replace_file_windows(path, temporary)
+        let mut temporary = NamedTempFile::new_in(parent)?;
+        temporary.write_all(output)?;
+        copy_file_metadata(source, temporary.as_file())?;
+        temporary.as_file_mut().sync_all()?;
+        replace_file_windows(path, temporary, before_replace)
     }
 
     #[cfg(unix)]
     {
-        temporary
-            .persist(path)
-            .map_err(|error| error.error)
-            .with_context(|| format!("failed to replace {}", escaped_path(path)))?;
-        File::open(parent)?.sync_all()?;
+        let directory = File::open(parent)?;
+        let mut temporary = AnchoredTempFile::new(parent, &directory)?;
+        temporary.file.write_all(output)?;
+        copy_file_metadata(source, &temporary.file)?;
+        temporary.file.sync_all()?;
+        temporary.persist(path, before_replace)
+    }
+}
+
+#[cfg(unix)]
+struct AnchoredTempFile {
+    directory: File,
+    file: File,
+    name: CString,
+    remove_on_drop: bool,
+}
+
+#[cfg(unix)]
+impl AnchoredTempFile {
+    #[allow(
+        unsafe_code,
+        reason = "openat binds temporary-file creation to the already opened target directory"
+    )]
+    fn new(parent: &Path, directory: &File) -> Result<Self> {
+        use std::os::fd::{AsRawFd, FromRawFd};
+        use std::os::unix::ffi::OsStrExt;
+
+        let directory_fd = directory.as_raw_fd();
+        let temporary =
+            TempFileBuilder::new()
+                .prefix(".worsier-")
+                .make_in(parent, |candidate| {
+                    let name = candidate.file_name().ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::InvalidInput, "temporary file has no name")
+                    })?;
+                    let name = CString::new(name.as_bytes()).map_err(|_| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "temporary file name contains a null byte",
+                        )
+                    })?;
+                    // SAFETY: directory_fd remains open for the closure, name is nul-terminated, and
+                    // O_EXCL prevents an existing entry from being opened or replaced.
+                    let descriptor = unsafe {
+                        libc::openat(
+                            directory_fd,
+                            name.as_ptr(),
+                            libc::O_CLOEXEC | libc::O_CREAT | libc::O_EXCL | libc::O_RDWR,
+                            0o600,
+                        )
+                    };
+                    if descriptor == -1 {
+                        return Err(io::Error::last_os_error());
+                    }
+                    // SAFETY: openat returned a new owned descriptor.
+                    Ok(unsafe { File::from_raw_fd(descriptor) })
+                })?;
+        let (file, path) = temporary.keep().map_err(|error| error.error)?;
+        let name = path
+            .file_name()
+            .ok_or_else(|| anyhow!("temporary file has no name"))?;
+        let name = CString::new(name.as_bytes())
+            .map_err(|_| anyhow!("temporary file name contains a null byte"))?;
+        Ok(Self {
+            directory: directory.try_clone()?,
+            file,
+            name,
+            remove_on_drop: true,
+        })
+    }
+
+    #[allow(
+        unsafe_code,
+        reason = "renameat atomically replaces the target inside the already opened directory"
+    )]
+    fn persist(mut self, path: &Path, before_replace: impl FnOnce() -> Result<()>) -> Result<()> {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::ffi::OsStrExt;
+
+        let target_name = path
+            .file_name()
+            .ok_or_else(|| anyhow!("configuration path has no file name"))?;
+        let target_name = CString::new(target_name.as_bytes())
+            .map_err(|_| anyhow!("configuration file name contains a null byte"))?;
+        before_replace()?;
+        // SAFETY: both names are nul-terminated and both directory descriptors remain open.
+        let result = unsafe {
+            libc::renameat(
+                self.directory.as_raw_fd(),
+                self.name.as_ptr(),
+                self.directory.as_raw_fd(),
+                target_name.as_ptr(),
+            )
+        };
+        if result != 0 {
+            return Err(io::Error::last_os_error())
+                .with_context(|| format!("failed to replace {}", escaped_path(path)));
+        }
+        self.remove_on_drop = false;
+        self.directory.sync_all()?;
         Ok(())
+    }
+}
+
+#[cfg(unix)]
+#[allow(
+    unsafe_code,
+    reason = "unlinkat removes an abandoned temporary file from the anchored directory"
+)]
+impl Drop for AnchoredTempFile {
+    fn drop(&mut self) {
+        if self.remove_on_drop {
+            use std::os::fd::AsRawFd;
+
+            // SAFETY: the directory descriptor remains open and name is nul-terminated.
+            let _ = unsafe { libc::unlinkat(self.directory.as_raw_fd(), self.name.as_ptr(), 0) };
+        }
     }
 }
 
@@ -560,10 +728,9 @@ fn atomic_write_with_before_replace(
     unsafe_code,
     reason = "copyfile(3) is the platform API that preserves ACLs and extended metadata"
 )]
-fn copy_file_metadata(path: &Path, _temporary_path: &Path, temporary: &File) -> Result<()> {
+fn copy_file_metadata(source: &File, temporary: &File) -> Result<()> {
     use std::os::fd::AsRawFd;
 
-    let source = File::open(path)?;
     // SAFETY: both descriptors remain open for the duration of fcopyfile, the state pointer is
     // null as permitted by copyfile(3), and COPYFILE_METADATA copies no file contents.
     let result = unsafe {
@@ -586,27 +753,32 @@ fn copy_file_metadata(path: &Path, _temporary_path: &Path, temporary: &File) -> 
     unsafe_code,
     reason = "fchown is required to preserve the original file owner before atomic replacement"
 )]
-fn copy_file_metadata(path: &Path, temporary_path: &Path, temporary: &File) -> Result<()> {
+fn copy_file_metadata(source: &File, temporary: &File) -> Result<()> {
     use std::os::fd::AsRawFd;
     use std::os::unix::fs::MetadataExt;
+    use xattr::FileExt;
 
-    let metadata = fs::metadata(path)?;
+    let metadata = source.metadata()?;
     // SAFETY: the descriptor is owned by `temporary` and uid/gid come directly from metadata.
     let result = unsafe { libc::fchown(temporary.as_raw_fd(), metadata.uid(), metadata.gid()) };
     if result != 0 {
         return Err(io::Error::last_os_error()).context("failed to preserve file ownership");
     }
     temporary.set_permissions(metadata.permissions())?;
-    for name in xattr::list(path)? {
-        if let Some(value) = xattr::get(path, &name)? {
-            xattr::set(temporary_path, &name, &value)?;
+    for name in source.list_xattr()? {
+        if let Some(value) = source.get_xattr(&name)? {
+            temporary.set_xattr(&name, &value)?;
         }
     }
     Ok(())
 }
 
 #[cfg(windows)]
-fn copy_file_metadata(_path: &Path, _temporary_path: &Path, _temporary: &File) -> Result<()> {
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "all platform implementations share a fallible metadata-copy call site"
+)]
+fn copy_file_metadata(_source: &File, _temporary: &File) -> Result<()> {
     // ReplaceFileW merges the original file's attributes, ACLs, encryption, and named streams.
     Ok(())
 }
@@ -616,7 +788,11 @@ fn copy_file_metadata(_path: &Path, _temporary_path: &Path, _temporary: &File) -
     unsafe_code,
     reason = "ReplaceFileW is the platform API that atomically preserves Windows file metadata"
 )]
-fn replace_file_windows(path: &Path, temporary: NamedTempFile) -> Result<()> {
+fn replace_file_windows(
+    path: &Path,
+    temporary: NamedTempFile,
+    before_replace: impl FnOnce() -> Result<()>,
+) -> Result<()> {
     use std::os::windows::ffi::OsStrExt;
 
     use windows_sys::Win32::Storage::FileSystem::ReplaceFileW;
@@ -634,6 +810,7 @@ fn replace_file_windows(path: &Path, temporary: NamedTempFile) -> Result<()> {
         .encode_wide()
         .chain(Some(0))
         .collect::<Vec<_>>();
+    before_replace()?;
     // SAFETY: both paths are valid, nul-terminated UTF-16 buffers; optional pointers are null.
     let result = unsafe {
         ReplaceFileW(

@@ -14,6 +14,10 @@ pnpm exec worsier --write .
 
 The CLI uses its opinionated defaults without a configuration file. An optional `worsier.jsonc`
 can override them; run `pnpm exec worsier --init` to create the complete typed configuration.
+Run `pnpm exec worsier --update-config` to migrate a Worsier v1 configuration and expand it with
+every current default. It updates `./worsier.jsonc`; pass `--config PATH` to select one other file.
+Existing values and JSONC comments are preserved, and formatting never updates the file implicitly.
+Only registered v1 keys are migrated; v0.1 configurations and unknown keys remain errors.
 Directory discovery skips `.git`, `node_modules`, and Wrangler's generated
 `worker-configuration.d.ts`. Pass an ignored file explicitly when you do want Worsier to process it.
 

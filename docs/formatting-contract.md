@@ -212,6 +212,13 @@ The CLI searches from each input toward the Git or filesystem root for the neare
 and `--init` creates an optional complete configuration. A discovered or explicit invalid file is
 an error rather than a signal to fall back to defaults.
 
+`--update-config` is an explicit, write-only configuration operation. Without `--config`, it
+updates only `./worsier.jsonc` in the current directory; `--config PATH` selects one other existing
+regular file. The operation migrates supported Worsier v1 keys, adds every missing current default,
+preserves existing values and JSONC formatting, validates the complete result, and replaces the
+file atomically. Formatting commands never invoke it implicitly. New default-enabled rules still
+take effect when Worsier is upgraded even before the file is expanded.
+
 The programmatic `format(fileName, sourceText, config?)` API uses the same defaults when its third
 argument is omitted. It does not discover configuration files.
 
@@ -241,9 +248,12 @@ argument is omitted. It does not discover configuration files.
 
 Unknown keys, invalid interface-layout values, spacing modes, semicolon modes, and trailing-comma
 modes are configuration errors. Interface layout thresholds must be integers from `0` through
-`4294967295`.
-The removed top-level `semicolons` and `trailingCommas`, `rules.imports`, and `rules.variables` keys
-are not aliases. Migrate the old rule keys with the following exact replacements:
+`4294967295`. The updater removes only registered legacy keys; arbitrary unknown keys remain errors.
+Worsier v0.1 configurations predate the focused formatter contract and cannot be updated
+automatically.
+
+The removed top-level `semicolons` and `trailingCommas` are not aliases. The updater migrates the
+removed Worsier v1 rule keys with the following exact replacements:
 
 | Removed setting | Replacement |
 | --- | --- |
@@ -251,6 +261,9 @@ are not aliases. Migrate the old rule keys with the following exact replacements
 | `rules.imports: false` | `rules.importLayout: false` and `rules.statementSpacing.imports: "off"` |
 | `rules.variables: true` | `rules.statementSpacing.variableDeclarations: "separate"` |
 | `rules.variables: false` | `rules.statementSpacing.variableDeclarations: "off"` |
+
+If a legacy key and its current replacement are both present with equivalent values, the updater
+removes the legacy key. Conflicting representations are an error and leave the file unchanged.
 
 When import layout is `false`, interface layout is `"off"`, the `imports`, `typeAliases`, and
 `variableDeclarations` spacing modes are `"off"`, all semicolon groups are `"off"`, and trailing
