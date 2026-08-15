@@ -14,6 +14,8 @@ use tempfile::NamedTempFile;
 use worsier_formatter::{FormatConfig, ResolvedConfig, format_text, resolve_config};
 
 const CONFIG_FILE: &str = "worsier.jsonc";
+const BUILT_IN_IGNORED_ENTRY_NAMES: [&str; 3] =
+    [".git", "node_modules", "worker-configuration.d.ts"];
 
 #[derive(Debug, Parser)]
 #[allow(
@@ -284,7 +286,10 @@ fn collect_files(paths: &[PathBuf]) -> Result<Vec<Candidate>> {
             .git_exclude(true)
             .require_git(false)
             .filter_entry(|entry| {
-                !matches!(entry.file_name().to_str(), Some(".git" | "node_modules"))
+                !entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| BUILT_IN_IGNORED_ENTRY_NAMES.contains(&name))
             })
             .build();
         for entry in walker {
