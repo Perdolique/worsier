@@ -17,6 +17,8 @@ pnpm exec worsier --write .
 The CLI uses its opinionated defaults when no configuration file is present. When present, the
 nearest `worsier.jsonc` overrides those defaults; `--config` selects one file explicitly, and
 `--init` creates an optional complete typed configuration.
+Directory discovery skips `.git`, `node_modules`, and Wrangler's generated
+`worker-configuration.d.ts`. Pass an ignored file explicitly when you do want Worsier to process it.
 
 By default, every nonempty TypeScript interface is expanded with one member per line. Set
 `rules.interfaceLayout` to a member threshold from `0` through `4294967295`, or to `"off"` to

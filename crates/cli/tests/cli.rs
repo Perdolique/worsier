@@ -371,7 +371,7 @@ fn explicit_config_errors_when_inputs_are_empty() {
 }
 
 #[test]
-fn directory_walk_respects_gitignore_config_ignores_and_sorts_diagnostics() {
+fn directory_walk_respects_builtin_gitignore_config_ignores_and_sorts_diagnostics() {
     let directory = tempfile::tempdir().unwrap();
     write(
         &directory.path().join("worsier.jsonc"),
@@ -380,6 +380,10 @@ fn directory_walk_respects_gitignore_config_ignores_and_sorts_diagnostics() {
     write(&directory.path().join(".gitignore"), "gitignored.js\n");
     write(&directory.path().join("ignored/skip.ts"), "const skip=1;");
     write(&directory.path().join("gitignored.js"), "const ignored=1;");
+    write(
+        &directory.path().join("worker-configuration.d.ts"),
+        "declare const generated = @;",
+    );
     write(&directory.path().join("z-invalid.ts"), "const z = @;");
     write(&directory.path().join("a-invalid.ts"), "const a = @;");
 
@@ -391,7 +395,19 @@ fn directory_walk_respects_gitignore_config_ignores_and_sorts_diagnostics() {
     let diagnostics = stderr(&output);
     assert!(!diagnostics.contains("skip.ts"));
     assert!(!diagnostics.contains("gitignored.js"));
+    assert!(!diagnostics.contains("worker-configuration.d.ts"));
     assert!(diagnostics.find("a-invalid.ts").unwrap() < diagnostics.find("z-invalid.ts").unwrap());
+
+    write(
+        &directory.path().join("worker-configuration.d.ts"),
+        "import{Generated}from'pkg';",
+    );
+    let explicit = command(directory.path())
+        .args(["--check", "worker-configuration.d.ts"])
+        .output()
+        .unwrap();
+    assert_eq!(explicit.status.code(), Some(1));
+    assert!(stderr(&explicit).contains("Would format worker-configuration.d.ts"));
 }
 
 #[test]
