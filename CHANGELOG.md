@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.6.0](https://github.com/Perdolique/worsier/compare/v2.5.0...v2.6.0) (2026-08-15)
+
+
+### Features
+
+* **cli:** ignore Wrangler-generated types ([8f227dd](https://github.com/Perdolique/worsier/commit/8f227dd16b66f486c950054b76abcd1a34be25b5))
+
 ## [2.5.0](https://github.com/Perdolique/worsier/compare/v2.4.1...v2.5.0) (2026-08-14)
 
 
