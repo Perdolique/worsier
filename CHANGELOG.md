@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.7.0](https://github.com/Perdolique/worsier/compare/v2.6.0...v2.7.0) (2026-08-15)
+
+
+### Features
+
+* **cli:** add config updater ([5f4b294](https://github.com/Perdolique/worsier/commit/5f4b294ddc07ed3cae0e72f46ea731423c79e8c5))
+
 ## [2.6.0](https://github.com/Perdolique/worsier/compare/v2.5.0...v2.6.0) (2026-08-15)
 
 
