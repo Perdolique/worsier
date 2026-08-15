@@ -51,6 +51,212 @@ fn uses_defaults_without_config_and_init_refuses_to_overwrite() {
 }
 
 #[test]
+fn updates_default_and_explicit_configs_and_is_idempotent() {
+    let directory = tempfile::tempdir().unwrap();
+    let default_config = directory.path().join("worsier.jsonc");
+    write(&default_config, r#"{"lineWidth":80}"#);
+
+    let updated = command(directory.path())
+        .arg("--update-config")
+        .output()
+        .unwrap();
+    assert!(updated.status.success(), "{}", stderr(&updated));
+    let updated_stdout = String::from_utf8(updated.stdout).unwrap();
+    assert!(updated_stdout.contains("Added $schema"));
+    assert!(updated_stdout.contains("Added rules"));
+    assert!(updated_stdout.contains("Updated "));
+    let first_output = fs::read_to_string(&default_config).unwrap();
+    assert!(first_output.contains("\"lineWidth\":80"));
+    assert!(first_output.contains("\"typeAliases\": \"separate\""));
+    let first_metadata = fs::metadata(&default_config).unwrap();
+
+    let unchanged = command(directory.path())
+        .arg("--update-config")
+        .output()
+        .unwrap();
+    assert!(unchanged.status.success(), "{}", stderr(&unchanged));
+    assert!(
+        String::from_utf8(unchanged.stdout)
+            .unwrap()
+            .contains("Configuration is up to date:")
+    );
+    assert_eq!(fs::read_to_string(&default_config).unwrap(), first_output);
+    let unchanged_metadata = fs::metadata(&default_config).unwrap();
+    assert_eq!(
+        unchanged_metadata.modified().unwrap(),
+        first_metadata.modified().unwrap()
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+
+        assert_eq!(unchanged_metadata.ino(), first_metadata.ino());
+    }
+
+    let nested_working_directory = directory.path().join("nested-work");
+    fs::create_dir(&nested_working_directory).unwrap();
+    let not_discovered = command(&nested_working_directory)
+        .arg("--update-config")
+        .output()
+        .unwrap();
+    assert_eq!(not_discovered.status.code(), Some(2));
+    assert!(stderr(&not_discovered).contains("failed to resolve configuration"));
+    assert_eq!(fs::read_to_string(&default_config).unwrap(), first_output);
+
+    let explicit_config = directory.path().join("nested/custom.jsonc");
+    write(
+        &explicit_config,
+        "{\n  \"rules\": {\n    // layout\n    \"imports\": false,\n    \"variables\": true\n  }\n}\n",
+    );
+    let explicit = command(directory.path())
+        .args(["--update-config", "--config", "nested/custom.jsonc"])
+        .output()
+        .unwrap();
+    assert!(explicit.status.success(), "{}", stderr(&explicit));
+    let explicit_stdout = String::from_utf8(explicit.stdout).unwrap();
+    assert!(explicit_stdout.contains("Migrated rules.imports"));
+    assert!(explicit_stdout.contains("Migrated rules.variables"));
+    let explicit_output = fs::read_to_string(explicit_config).unwrap();
+    assert!(explicit_output.contains("// layout"));
+    assert!(explicit_output.contains("\"importLayout\": false"));
+    assert!(explicit_output.contains("\"imports\": \"off\""));
+    assert!(explicit_output.contains("\"variableDeclarations\": \"separate\""));
+    assert!(!explicit_output.contains("\"variables\""));
+}
+
+#[test]
+fn update_config_rejects_conflicts_invalid_targets_and_formatting_modes() {
+    let directory = tempfile::tempdir().unwrap();
+    let config = directory.path().join("worsier.jsonc");
+
+    for (conflicting, conflict_path) in [
+        (
+            r#"{"rules":{"imports":true,"importLayout":false}}"#,
+            "rules.importLayout",
+        ),
+        (
+            r#"{"rules":{"imports":true,"statementSpacing":{"imports":"off"}}}"#,
+            "rules.statementSpacing.imports",
+        ),
+        (
+            r#"{"rules":{"variables":true,"statementSpacing":{"variableDeclarations":"off"}}}"#,
+            "rules.statementSpacing.variableDeclarations",
+        ),
+        (
+            r#"{"rules":{"imports":true,"statementSpacing":"off"}}"#,
+            "rules.statementSpacing",
+        ),
+    ] {
+        write(&config, conflicting);
+        let conflict = command(directory.path())
+            .arg("--update-config")
+            .output()
+            .unwrap();
+        assert_eq!(conflict.status.code(), Some(2));
+        assert!(
+            stderr(&conflict).contains(conflict_path),
+            "{}",
+            stderr(&conflict)
+        );
+        assert_eq!(fs::read(&config).unwrap(), conflicting.as_bytes());
+    }
+
+    let duplicate = r#"{"rules":{},"rules":{"imports":true}}"#;
+    write(&config, duplicate);
+    let duplicate_result = command(directory.path())
+        .arg("--update-config")
+        .output()
+        .unwrap();
+    assert_eq!(duplicate_result.status.code(), Some(2));
+    assert!(stderr(&duplicate_result).contains("duplicate configuration property rules"));
+    assert_eq!(fs::read(&config).unwrap(), duplicate.as_bytes());
+
+    let invalid_ignore = r#"{"ignorePatterns":["[z-a]"]}"#;
+    write(&config, invalid_ignore);
+    let invalid_ignore_result = command(directory.path())
+        .arg("--update-config")
+        .output()
+        .unwrap();
+    assert_eq!(invalid_ignore_result.status.code(), Some(2));
+    assert!(stderr(&invalid_ignore_result).contains("invalid ignore pattern"));
+    assert_eq!(fs::read(&config).unwrap(), invalid_ignore.as_bytes());
+
+    let invalid_current = r#"{"lineWidth":0}"#;
+    write(&config, invalid_current);
+    let invalid = command(directory.path())
+        .arg("--update-config")
+        .output()
+        .unwrap();
+    assert_eq!(invalid.status.code(), Some(2));
+    assert!(stderr(&invalid).contains("lineWidth"));
+    assert_eq!(fs::read_to_string(&config).unwrap(), invalid_current);
+
+    fs::remove_file(&config).unwrap();
+    let missing = command(directory.path())
+        .arg("--update-config")
+        .output()
+        .unwrap();
+    assert_eq!(missing.status.code(), Some(2));
+    assert!(stderr(&missing).contains("failed to resolve configuration"));
+
+    fs::create_dir(&config).unwrap();
+    let directory_target = command(directory.path())
+        .arg("--update-config")
+        .output()
+        .unwrap();
+    assert_eq!(directory_target.status.code(), Some(2));
+    assert!(stderr(&directory_target).contains("is not a file"));
+    fs::remove_dir(&config).unwrap();
+    write(&config, "{}");
+    write(&directory.path().join("sample.ts"), "const value=1;");
+
+    for arguments in [
+        vec!["--update-config", "--init"],
+        vec!["--update-config", "sample.ts"],
+        vec!["--update-config", "--check"],
+        vec!["--update-config", "--write"],
+        vec!["--update-config", "--stdin-filepath", "sample.ts"],
+        vec!["--update-config", "--threads", "2"],
+        vec!["--update-config", "--no-verify"],
+    ] {
+        let output = command(directory.path()).args(arguments).output().unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        assert!(stderr(&output).contains("cannot be used with"));
+    }
+}
+
+#[test]
+fn legacy_config_load_suggests_the_explicit_updater() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path().join("project with spaces");
+    fs::create_dir(&project).unwrap();
+    write(
+        &project.join("worsier.jsonc"),
+        r#"{"rules":{"imports":true}}"#,
+    );
+    write(&project.join("sample.ts"), "const value=1;");
+
+    let output = command(&project).arg("sample.ts").output().unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let diagnostic = stderr(&output);
+    assert!(diagnostic.contains("legacy Worsier v1 rules"));
+    assert!(diagnostic.contains("worsier --update-config --config <PATH>"));
+    let config = project.join("worsier.jsonc").canonicalize().unwrap();
+    let config = config.to_string_lossy();
+    assert!(diagnostic.contains(config.as_ref()));
+    assert!(!diagnostic.contains(&format!("worsier --update-config --config {config}")));
+    assert!(diagnostic.contains("rules.imports"));
+
+    write(
+        &project.join("worsier.jsonc"),
+        r#"{"rules":{"statementSpacing":{"imports":"preserve"}}}"#,
+    );
+    let current_error = command(&project).arg("sample.ts").output().unwrap();
+    assert_eq!(current_error.status.code(), Some(2));
+    assert!(!stderr(&current_error).contains("--update-config"));
+}
+
+#[test]
 fn supports_trailing_comma_modes_from_config() {
     let directory = tempfile::tempdir().unwrap();
     fs::create_dir(directory.path().join(".git")).unwrap();
@@ -465,6 +671,27 @@ fn explicit_symbolic_links_are_rejected_without_modifying_the_target() {
 
 #[cfg(unix)]
 #[test]
+fn config_update_rejects_symbolic_links_without_modifying_the_target() {
+    use std::os::unix::fs::symlink;
+
+    let directory = tempfile::tempdir().unwrap();
+    let target = directory.path().join("target.jsonc");
+    let link = directory.path().join("worsier.jsonc");
+    write(&target, "{}");
+    symlink("target.jsonc", &link).unwrap();
+
+    let output = command(directory.path())
+        .arg("--update-config")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stderr(&output).contains("symbolic link"));
+    assert!(fs::symlink_metadata(link).unwrap().file_type().is_symlink());
+    assert_eq!(fs::read_to_string(target).unwrap(), "{}");
+}
+
+#[cfg(unix)]
+#[test]
 fn atomic_write_preserves_permissions_and_extended_attributes() {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
@@ -496,6 +723,38 @@ fn atomic_write_preserves_permissions_and_extended_attributes() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn config_update_preserves_permissions_and_extended_attributes() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let directory = tempfile::tempdir().unwrap();
+    let config = directory.path().join("worsier.jsonc");
+    write(&config, "{}");
+    fs::set_permissions(&config, fs::Permissions::from_mode(0o640)).unwrap();
+    let attribute = if cfg!(target_os = "macos") {
+        "com.perdolique.worsier-config-test"
+    } else {
+        "user.worsier-config-test"
+    };
+    xattr::set(&config, attribute, b"preserved").unwrap();
+    let before = fs::metadata(&config).unwrap();
+
+    let output = command(directory.path())
+        .arg("--update-config")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+
+    let after = fs::metadata(&config).unwrap();
+    assert_eq!(after.permissions().mode() & 0o777, 0o640);
+    assert_eq!((after.uid(), after.gid()), (before.uid(), before.gid()));
+    assert_eq!(
+        xattr::get(config, attribute).unwrap().unwrap(),
+        b"preserved"
+    );
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn atomic_write_preserves_access_control_lists() {
@@ -518,6 +777,35 @@ fn atomic_write_preserves_access_control_lists() {
     assert!(output.status.success(), "{}", stderr(&output));
 
     let listing = Command::new("ls").arg("-le").arg(&source).output().unwrap();
+    assert!(listing.status.success(), "{}", stderr(&listing));
+    assert!(
+        String::from_utf8(listing.stdout)
+            .unwrap()
+            .contains("user:nobody deny read")
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn config_update_preserves_access_control_lists() {
+    let directory = tempfile::tempdir().unwrap();
+    let config = directory.path().join("worsier.jsonc");
+    write(&config, "{}");
+
+    let chmod = Command::new("chmod")
+        .args(["+a", "nobody deny read"])
+        .arg(&config)
+        .output()
+        .unwrap();
+    assert!(chmod.status.success(), "{}", stderr(&chmod));
+
+    let output = command(directory.path())
+        .arg("--update-config")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+
+    let listing = Command::new("ls").arg("-le").arg(&config).output().unwrap();
     assert!(listing.status.success(), "{}", stderr(&listing));
     assert!(
         String::from_utf8(listing.stdout)

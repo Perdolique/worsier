@@ -36,11 +36,22 @@ assert.equal(
   await readFile(join(project, 'worsier.jsonc'), 'utf8'),
   '{\n  "$schema": "./node_modules/worsier/configuration_schema.json",\n  "lineWidth": 120,\n  "verifyAst": true,\n  "rules": {\n    "importLayout": true,\n    "interfaceLayout": 0,\n    "statementSpacing": {\n      "imports": "separate",\n      "typeAliases": "separate",\n      "variableDeclarations": "separate"\n    },\n    "semicolons": {\n      "statements": "asNeeded",\n      "classMembers": "asNeeded",\n      "typeMembers": "asNeeded"\n    },\n    "trailingCommas": "never"\n  },\n  "ignorePatterns": []\n}\n'
 )
-await writeFile(join(project, 'sample.ts'), "import{value}from'pkg';const raw={items:[1,2]};")
+await writeFile(
+  join(project, 'worsier.jsonc'),
+  '{\n  "$schema": "./node_modules/worsier/configuration_schema.json",\n  "lineWidth": 120,\n  "verifyAst": true,\n  "rules": {\n    // legacy layout\n    "imports": false,\n    "variables": false\n  },\n  "ignorePatterns": []\n}\n'
+)
+const updatedConfig = run(process.execPath, [executable, '--update-config'], project)
+assert.match(updatedConfig.stdout, /Migrated rules\.imports/)
+assert.match(updatedConfig.stdout, /Migrated rules\.variables/)
+assert.equal(
+  await readFile(join(project, 'worsier.jsonc'), 'utf8'),
+  '{\n  "$schema": "./node_modules/worsier/configuration_schema.json",\n  "lineWidth": 120,\n  "verifyAst": true,\n  "rules": {\n    // legacy layout\n    "importLayout": false,\n    "interfaceLayout": 0,\n    "statementSpacing": {\n      "imports": "off",\n      "typeAliases": "separate",\n      "variableDeclarations": "off"\n    },\n    "semicolons": {\n      "statements": "asNeeded",\n      "classMembers": "asNeeded",\n      "typeMembers": "asNeeded"\n    },\n    "trailingCommas": "never"\n  },\n  "ignorePatterns": []\n}\n'
+)
+await writeFile(join(project, 'sample.ts'), 'const first=1;let second=2;')
 run(process.execPath, [executable, '--write', 'sample.ts'], project)
 assert.equal(
   await readFile(join(project, 'sample.ts'), 'utf8'),
-  "import { value } from 'pkg'\n\nconst raw={items:[1,2]}"
+  'const first=1;let second=2'
 )
 
 const api = run(

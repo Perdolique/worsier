@@ -14,7 +14,7 @@ version = "2.6.0"
 anyhow = "1.0.100"
 clap = { version = "4.5.54", features = ["derive"] }
 ignore = "0.4.25"
-jsonc-parser = { version = "0.33.1", features = ["serde"] }
+jsonc-parser = { version = "0.33.1", features = ["cst", "serde", "serde_json"] }
 libc = "0.2.189"
 napi = { version = "3.12.1", default-features = false, features = ["napi8", "tokio_rt"] }
 napi-build = "2.3.1"
