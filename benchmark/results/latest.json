@@ -1,0 +1,782 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-16T13:57:34.894Z",
+  "source": {
+    "worsierSha": "3016bb11dd6a685cbccd238008b8ff309ebcd718"
+  },
+  "environment": {
+    "machineModel": "Mac14,6",
+    "cpu": "Apple M2 Max",
+    "cores": 12,
+    "memoryGb": 32,
+    "osName": "macOS",
+    "osVersion": "26.5.2",
+    "osBuild": "25F84",
+    "architecture": "arm64",
+    "powerSource": "AC power",
+    "powerMode": "normal power mode",
+    "node": "24.19.0",
+    "pnpm": "11.21.0",
+    "rust": "1.97.1",
+    "cargo": "1.97.1",
+    "hyperfine": "1.20.0"
+  },
+  "tools": {
+    "worsier": {
+      "displayName": "Worsier",
+      "version": "2.7.0"
+    },
+    "prettier": {
+      "displayName": "Prettier",
+      "version": "3.9.6"
+    },
+    "oxfmt": {
+      "displayName": "Oxfmt",
+      "version": "0.63.0"
+    }
+  },
+  "fixtures": {
+    "small": {
+      "files": 1,
+      "bytes": 171,
+      "sha256": "98ef00a3eca530a6480a3aae61fb25f0a4d8a0aac8d2a0935938fe93704ea49f",
+      "source": "benchmark/fixtures/small.ts"
+    },
+    "parser": {
+      "files": 1,
+      "bytes": 528769,
+      "sha256": "c882acdd1153ad25b33fe4ec7586a3a53c5de0e8d50bb80a709945a372b6a039",
+      "source": "TypeScript src/compiler/parser.ts",
+      "revision": "5be33469d551655d878876faa9e30aa3b49f8ee9",
+      "tag": "v5.9.2",
+      "lineEndings": "lf"
+    },
+    "outline": {
+      "files": 2456,
+      "bytes": 9564224,
+      "sha256": "ae18e7e2454676292b868c1bdcbc4e5502b149010a9f94dcdd6e1d21128769b7",
+      "source": "Outline JS/JSX/TS/TSX corpus",
+      "revision": "cdc10b45649d04e6dcfb27fb6ca0aeadd100d2bc"
+    }
+  },
+  "settings": {
+    "warmups": 3,
+    "runs": 10,
+    "rssRuns": 5,
+    "lineWidth": 120,
+    "semicolons": false,
+    "trailingCommas": false,
+    "endOfLine": "lf",
+    "worsierVerifyAst": true,
+    "cache": false,
+    "concurrency": "CLI defaults"
+  },
+  "validation": {
+    "baselineManifestHash": "e3a1d91fbfbc9a25a68ded08f4f37e3c00409bb3033f839a57103c9a5ec76b22",
+    "fileCount": 2456,
+    "idempotent": true,
+    "outputHashes": {
+      "worsier": {
+        "small": "5543bd44b008bfb912753bc84ac54aaf6069cec17e08219a39694f98e26af20f",
+        "parser": "0d67a196247c8fba563e45c9cb7f6ac9cdfe746519ddf7aab13cf5c14052df12",
+        "outline": "36148c719278aa247256e741a1af169521b5eb0235c0caead654f262b8222018"
+      },
+      "prettier": {
+        "small": "14cb05078b50d8237b05a2183186e38ddfd6dd0e4805b9c5bb2f6a8d855bafbd",
+        "parser": "97c50a72e674fd906a4c9d0eb73e95b5acedfa6eaad56437fb15df9ceda0881f",
+        "outline": "92130f19c4cd99db8edff1103206efc21e81b0a9a8fe239ca1ac5bac0161d4fa"
+      },
+      "oxfmt": {
+        "small": "14cb05078b50d8237b05a2183186e38ddfd6dd0e4805b9c5bb2f6a8d855bafbd",
+        "parser": "272a93d818b978b2abf26d85fa1fa3400b3257a82c5d8778831ecb62a6345cd3",
+        "outline": "20c8e0c996b035c5118435bcb07452e1b9caaae3e83ada9884a30cbae39c2239"
+      }
+    },
+    "outputBytes": {
+      "worsier": 9458968,
+      "prettier": 9269075,
+      "oxfmt": 9269327
+    }
+  },
+  "scenarios": {
+    "small": {
+      "displayName": "Small TS stdin format",
+      "inputBytes": 171,
+      "inputBytesByTool": null,
+      "results": {
+        "worsier": {
+          "command": "'<node>' '<repo>/packages/npm/bin/worsier.js' --config '<repo>/benchmark/config/worsier.jsonc' --stdin-filepath '<repo>/benchmark/fixtures/small.ts' < '<repo>/benchmark/fixtures/small.ts' > '<repo>/benchmark/.work/timed-output/small/worsier.ts'",
+          "inputBytes": 171,
+          "samplesSeconds": [
+            0.03475821832,
+            0.03527684332,
+            0.03512330232,
+            0.03928417632,
+            0.03451676032,
+            0.03864521832,
+            0.036585093320000005,
+            0.03663871832,
+            0.03601392632,
+            0.03669471832
+          ],
+          "medianSeconds": 0.036299509820000006,
+          "minSeconds": 0.03451676032,
+          "maxSeconds": 0.03928417632,
+          "meanSeconds": 0.036353697520000006,
+          "stddevSeconds": 0.0015099229639876208,
+          "throughputMibPerSecond": 0.004492576040671966,
+          "peakRssSamplesBytes": [
+            49856512,
+            49938432,
+            50003968,
+            50135040,
+            50069504
+          ],
+          "peakRssBytes": 50003968
+        },
+        "prettier": {
+          "command": "'<node>' '<repo>/benchmark/node_modules/prettier/bin/prettier.cjs' --config '<repo>/benchmark/config/prettier.json' --ignore-path '<repo>/benchmark/config/empty-ignore' --stdin-filepath '<repo>/benchmark/fixtures/small.ts' < '<repo>/benchmark/fixtures/small.ts' > '<repo>/benchmark/.work/timed-output/small/prettier.ts'",
+          "inputBytes": 171,
+          "samplesSeconds": [
+            0.08305017632,
+            0.07951342632,
+            0.08138942632,
+            0.07887284332,
+            0.07893530132,
+            0.07976188532,
+            0.08016034332,
+            0.07660738532,
+            0.07966500932,
+            0.07790717632
+          ],
+          "medianSeconds": 0.07958921782,
+          "minSeconds": 0.07660738532,
+          "maxSeconds": 0.08305017632,
+          "meanSeconds": 0.07958629731999999,
+          "stddevSeconds": 0.0016807074127653523,
+          "throughputMibPerSecond": 0.0020490000099547246,
+          "peakRssSamplesBytes": [
+            73056256,
+            74858496,
+            73777152,
+            73121792,
+            73908224
+          ],
+          "peakRssBytes": 73777152
+        },
+        "oxfmt": {
+          "command": "'<node>' '<repo>/benchmark/node_modules/oxfmt/bin/oxfmt' --config '<repo>/benchmark/config/oxfmt.json' --ignore-path '<repo>/benchmark/config/empty-ignore' --stdin-filepath '<repo>/benchmark/fixtures/small.ts' < '<repo>/benchmark/fixtures/small.ts' > '<repo>/benchmark/.work/timed-output/small/oxfmt.ts'",
+          "inputBytes": 171,
+          "samplesSeconds": [
+            0.10361738532,
+            0.10405401032,
+            0.10448076032,
+            0.10431480132,
+            0.10278692632,
+            0.10247567632,
+            0.10388675932,
+            0.10578892632,
+            0.10442817632,
+            0.10081213532
+          ],
+          "medianSeconds": 0.10397038482,
+          "minSeconds": 0.10081213532,
+          "maxSeconds": 0.10578892632,
+          "meanSeconds": 0.10366455572,
+          "stddevSeconds": 0.0012926066786940426,
+          "throughputMibPerSecond": 0.0015685073051119323,
+          "peakRssSamplesBytes": [
+            58621952,
+            59047936,
+            59228160,
+            58605568,
+            59031552
+          ],
+          "peakRssBytes": 59031552
+        }
+      }
+    },
+    "parser": {
+      "displayName": "TypeScript parser.ts stdin format",
+      "inputBytes": 528769,
+      "inputBytesByTool": null,
+      "results": {
+        "worsier": {
+          "command": "'<node>' '<repo>/packages/npm/bin/worsier.js' --config '<repo>/benchmark/config/worsier.jsonc' --stdin-filepath '<repo>/benchmark/.work/fixtures/parser.ts' < '<repo>/benchmark/.work/fixtures/parser.ts' > '<repo>/benchmark/.work/timed-output/parser/worsier.ts'",
+          "inputBytes": 528769,
+          "samplesSeconds": [
+            0.0502829063,
+            0.0500046143,
+            0.0466386153,
+            0.0517401153,
+            0.0495840733,
+            0.0471172403,
+            0.0500409073,
+            0.0506160733,
+            0.0485901153,
+            0.0516561563
+          ],
+          "medianSeconds": 0.050022760799999996,
+          "minSeconds": 0.0466386153,
+          "maxSeconds": 0.0517401153,
+          "meanSeconds": 0.0496270817,
+          "stddevSeconds": 0.0016313010704186522,
+          "throughputMibPerSecond": 10.080879314678219,
+          "peakRssSamplesBytes": [
+            62619648,
+            62357504,
+            62373888,
+            62439424,
+            62570496
+          ],
+          "peakRssBytes": 62439424
+        },
+        "prettier": {
+          "command": "'<node>' '<repo>/benchmark/node_modules/prettier/bin/prettier.cjs' --config '<repo>/benchmark/config/prettier.json' --ignore-path '<repo>/benchmark/config/empty-ignore' --stdin-filepath '<repo>/benchmark/.work/fixtures/parser.ts' < '<repo>/benchmark/.work/fixtures/parser.ts' > '<repo>/benchmark/.work/timed-output/parser/prettier.ts'",
+          "inputBytes": 528769,
+          "samplesSeconds": [
+            0.7248843233000001,
+            0.7359098233000001,
+            0.7429620733000001,
+            0.7309494063,
+            0.7231574903000001,
+            0.7122139073000001,
+            0.7253536563,
+            0.7242597403000001,
+            0.7323141983000001,
+            0.7216942813
+          ],
+          "medianSeconds": 0.7251189898000001,
+          "minSeconds": 0.7122139073000001,
+          "maxSeconds": 0.7429620733000001,
+          "meanSeconds": 0.7273698900000001,
+          "stddevSeconds": 0.008080115658807195,
+          "throughputMibPerSecond": 0.6954353998519656,
+          "peakRssSamplesBytes": [
+            325599232,
+            325844992,
+            326860800,
+            325287936,
+            339836928
+          ],
+          "peakRssBytes": 325844992
+        },
+        "oxfmt": {
+          "command": "'<node>' '<repo>/benchmark/node_modules/oxfmt/bin/oxfmt' --config '<repo>/benchmark/config/oxfmt.json' --ignore-path '<repo>/benchmark/config/empty-ignore' --stdin-filepath '<repo>/benchmark/.work/fixtures/parser.ts' < '<repo>/benchmark/.work/fixtures/parser.ts' > '<repo>/benchmark/.work/timed-output/parser/oxfmt.ts'",
+          "inputBytes": 528769,
+          "samplesSeconds": [
+            0.11424478130000001,
+            0.10981003130000001,
+            0.11019761530000001,
+            0.11449974030000001,
+            0.11515015630000001,
+            0.1148257403,
+            0.11176532330000001,
+            0.11750623930000001,
+            0.1466775733,
+            0.11728628130000002
+          ],
+          "medianSeconds": 0.11466274030000001,
+          "minSeconds": 0.10981003130000001,
+          "maxSeconds": 0.1466775733,
+          "meanSeconds": 0.11719634820000002,
+          "stddevSeconds": 0.010139392729888109,
+          "throughputMibPerSecond": 4.397883857410448,
+          "peakRssSamplesBytes": [
+            76103680,
+            76152832,
+            75759616,
+            76005376,
+            76185600
+          ],
+          "peakRssBytes": 76103680
+        }
+      }
+    },
+    "projectWrite": {
+      "displayName": "Outline project write",
+      "inputBytes": 9564224,
+      "inputBytesByTool": null,
+      "results": {
+        "worsier": {
+          "command": "'<node>' '<repo>/packages/npm/bin/worsier.js' --config '<repo>/benchmark/config/worsier.jsonc' --write '<repo>/benchmark/.work/project-write/worsier'",
+          "inputBytes": 9564224,
+          "samplesSeconds": [
+            0.32492271912,
+            0.33987796912,
+            0.30541509412,
+            0.30509955212,
+            0.32884038512,
+            0.29879955212,
+            0.30245313512,
+            0.31753159412,
+            0.31745913512,
+            0.27883259412
+          ],
+          "medianSeconds": 0.31143711462,
+          "minSeconds": 0.27883259412,
+          "maxSeconds": 0.33987796912,
+          "meanSeconds": 0.31192317302,
+          "stddevSeconds": 0.016566733235884406,
+          "throughputMibPerSecond": 29.287308278223122,
+          "peakRssSamplesBytes": [
+            77905920,
+            81330176,
+            79003648,
+            76906496,
+            80855040
+          ],
+          "peakRssBytes": 79003648
+        },
+        "prettier": {
+          "command": "'<node>' '<repo>/benchmark/node_modules/prettier/bin/prettier.cjs' --config '<repo>/benchmark/config/prettier.json' --ignore-path '<repo>/benchmark/config/empty-ignore' --write '<repo>/benchmark/.work/project-write/prettier'",
+          "inputBytes": 9564224,
+          "samplesSeconds": [
+            10.228254344120002,
+            9.920967844120002,
+            9.93441434412,
+            9.733554427120001,
+            9.844457011120001,
+            10.10862192812,
+            10.15170596912,
+            9.600028511120001,
+            10.116329760120001,
+            9.78974359412
+          ],
+          "medianSeconds": 9.92769109412,
+          "minSeconds": 9.600028511120001,
+          "maxSeconds": 10.228254344120002,
+          "meanSeconds": 9.94280777332,
+          "stddevSeconds": 0.19433372014552489,
+          "throughputMibPerSecond": 0.9187589237701557,
+          "peakRssSamplesBytes": [
+            500826112,
+            557432832,
+            682491904,
+            501350400,
+            430194688
+          ],
+          "peakRssBytes": 501350400
+        },
+        "oxfmt": {
+          "command": "'<node>' '<repo>/benchmark/node_modules/oxfmt/bin/oxfmt' --config '<repo>/benchmark/config/oxfmt.json' --ignore-path '<repo>/benchmark/config/empty-ignore' --disable-nested-config --write '<tmp>/worsier-benchmark-project-write-oxfmt'",
+          "inputBytes": 9564224,
+          "samplesSeconds": [
+            0.29909542712,
+            0.22780734412000003,
+            0.22279667712000004,
+            0.25546446912,
+            0.27731180212,
+            0.23493080212000003,
+            0.25638617812,
+            0.23083646912000003,
+            0.23398638612000003,
+            0.22194567712000002
+          ],
+          "medianSeconds": 0.23445859412000003,
+          "minSeconds": 0.22194567712000002,
+          "maxSeconds": 0.29909542712,
+          "meanSeconds": 0.24605612322000003,
+          "stddevSeconds": 0.024375673950339894,
+          "throughputMibPerSecond": 38.90305160018098,
+          "peakRssSamplesBytes": [
+            150650880,
+            151912448,
+            146489344,
+            151224320,
+            148307968
+          ],
+          "peakRssBytes": 150650880
+        }
+      }
+    },
+    "projectCheck": {
+      "displayName": "Outline project check on canonical output",
+      "inputBytes": null,
+      "inputBytesByTool": {
+        "worsier": 9458968,
+        "prettier": 9269075,
+        "oxfmt": 9269327
+      },
+      "results": {
+        "worsier": {
+          "command": "'<node>' '<repo>/packages/npm/bin/worsier.js' --config '<repo>/benchmark/config/worsier.jsonc' --check '<repo>/benchmark/.work/validation/worsier/outline'",
+          "inputBytes": 9458968,
+          "samplesSeconds": [
+            0.15474393216000001,
+            0.15482547416000003,
+            0.15485793216000002,
+            0.15368134916000004,
+            0.16092847416000003,
+            0.15658001516000003,
+            0.15623009916000002,
+            0.15307480716000002,
+            0.15388909916000001,
+            0.15215980716000002
+          ],
+          "medianSeconds": 0.15478470316000004,
+          "minSeconds": 0.15215980716000002,
+          "maxSeconds": 0.16092847416000003,
+          "meanSeconds": 0.15509709896000007,
+          "stddevSeconds": 0.0023221613308965355,
+          "throughputMibPerSecond": 58.279498278223734,
+          "peakRssSamplesBytes": [
+            69419008,
+            73760768,
+            71974912,
+            75218944,
+            76791808
+          ],
+          "peakRssBytes": 73760768
+        },
+        "prettier": {
+          "command": "'<node>' '<repo>/benchmark/node_modules/prettier/bin/prettier.cjs' --config '<repo>/benchmark/config/prettier.json' --ignore-path '<repo>/benchmark/config/empty-ignore' --check '<repo>/benchmark/.work/validation/prettier/outline'",
+          "inputBytes": 9269075,
+          "samplesSeconds": [
+            8.510134515159999,
+            8.653299599159999,
+            8.34008376616,
+            8.72163176616,
+            8.38192093316,
+            8.413084891159999,
+            8.64715480716,
+            8.46771280716,
+            8.747618057159999,
+            8.55309022416
+          ],
+          "medianSeconds": 8.53161236966,
+          "minSeconds": 8.34008376616,
+          "maxSeconds": 8.747618057159999,
+          "meanSeconds": 8.54357313666,
+          "stddevSeconds": 0.13698113414931093,
+          "throughputMibPerSecond": 1.0361088128873275,
+          "peakRssSamplesBytes": [
+            466796544,
+            564330496,
+            467664896,
+            475185152,
+            546226176
+          ],
+          "peakRssBytes": 475185152
+        },
+        "oxfmt": {
+          "command": "'<node>' '<repo>/benchmark/node_modules/oxfmt/bin/oxfmt' --config '<repo>/benchmark/config/oxfmt.json' --ignore-path '<repo>/benchmark/config/empty-ignore' --disable-nested-config --check '<tmp>/worsier-benchmark-validation-oxfmt-outline'",
+          "inputBytes": 9269327,
+          "samplesSeconds": [
+            0.14750897416000003,
+            0.14639747416,
+            0.14800055816000002,
+            0.14670922416,
+            0.14952568316000003,
+            0.15091459916000002,
+            0.15249922416000003,
+            0.15242909916000003,
+            0.14651318216000003,
+            0.14528784916
+          ],
+          "medianSeconds": 0.14775476616000002,
+          "minSeconds": 0.14528784916,
+          "maxSeconds": 0.15249922416000003,
+          "meanSeconds": 0.14857858676000002,
+          "stddevSeconds": 0.002477430037015952,
+          "throughputMibPerSecond": 59.828317691616554,
+          "peakRssSamplesBytes": [
+            150732800,
+            152420352,
+            154501120,
+            155484160,
+            152649728
+          ],
+          "peakRssBytes": 152649728
+        }
+      }
+    }
+  },
+  "microbenchmarks": [
+    {
+      "measurement": "format_no_verify_default",
+      "input": "1mb",
+      "inputBytes": 1048576,
+      "samplesSeconds": [
+        0.03883459733333334,
+        0.03838775,
+        0.03884378711111111,
+        0.03879260416666666,
+        0.038635063866666666,
+        0.038637152777777774,
+        0.0386027639047619,
+        0.03984447745833333,
+        0.039480973777777775,
+        0.039134061133333335
+      ],
+      "medianSeconds": 0.03881360075,
+      "throughputMibPerSecond": 25.76416464014872
+    },
+    {
+      "measurement": "format_no_verify_default",
+      "input": "50kb",
+      "inputBytes": 51200,
+      "samplesSeconds": [
+        0.0017432861698113207,
+        0.0018756198867924529,
+        0.0017042746289308176,
+        0.001707930424528302,
+        0.0017204262603773585,
+        0.0017160927672955975,
+        0.0017065142641509434,
+        0.0017152463655660379,
+        0.0017199201593291406,
+        0.0017219845924528303
+      ],
+      "medianSeconds": 0.0017180064633123692,
+      "throughputMibPerSecond": 28.42138609063081
+    },
+    {
+      "measurement": "format_no_verify_default",
+      "input": "small",
+      "inputBytes": 512,
+      "samplesSeconds": [
+        0.000017419415399239543,
+        0.00001719542927756654,
+        0.000017253958048162232,
+        0.000018069803564638782,
+        0.00001717940269961977,
+        0.000017265368884664132,
+        0.00001721055247148289,
+        0.000017214918987642584,
+        0.00001727154184621884,
+        0.000017209786121673004
+      ],
+      "medianSeconds": 0.00001723443851790241,
+      "throughputMibPerSecond": 28.331717885255962
+    },
+    {
+      "measurement": "format_no_verify_semicolons_off",
+      "input": "1mb",
+      "inputBytes": 1048576,
+      "samplesSeconds": [
+        0.02987077075,
+        0.029893854125,
+        0.03068831941666667,
+        0.030096177125,
+        0.03028344585,
+        0.030687223958333332,
+        0.03000714732142857,
+        0.02982459765625,
+        0.029670880777777776,
+        0.0301277875
+      ],
+      "medianSeconds": 0.030051662223214284,
+      "throughputMibPerSecond": 33.27602954446629
+    },
+    {
+      "measurement": "format_no_verify_semicolons_off",
+      "input": "50kb",
+      "inputBytes": 51200,
+      "samplesSeconds": [
+        0.0013234166666666668,
+        0.001388766304347826,
+        0.0013121467391304347,
+        0.00131610975,
+        0.0013115035014492752,
+        0.0013080697463768115,
+        0.001308191685300207,
+        0.0013047613967391305,
+        0.001316565619967794,
+        0.0013194939014492754
+      ],
+      "medianSeconds": 0.0013141282445652174,
+      "throughputMibPerSecond": 37.15628607933536
+    },
+    {
+      "measurement": "format_no_verify_semicolons_off",
+      "input": "small",
+      "inputBytes": 512,
+      "samplesSeconds": [
+        0.00001295631043838355,
+        0.000012909982007710982,
+        0.00001292435979818173,
+        0.000013574212266171641,
+        0.000012962698129373126,
+        0.000012970961849683467,
+        0.000012925095020501418,
+        0.000012932336284449522,
+        0.000013004084233741096,
+        0.000012932177281165216
+      ],
+      "medianSeconds": 0.000012944323361416536,
+      "throughputMibPerSecond": 37.72165113361058
+    },
+    {
+      "measurement": "format_no_verify_trailing_commas_off",
+      "input": "1mb",
+      "inputBytes": 1048576,
+      "samplesSeconds": [
+        0.035144847,
+        0.035146569333333336,
+        0.035283449,
+        0.035502368,
+        0.03528715553333333,
+        0.035045963,
+        0.03525018652380952,
+        0.03519062154166666,
+        0.03523318362962963,
+        0.03484719446666667
+      ],
+      "medianSeconds": 0.03521190258564815,
+      "throughputMibPerSecond": 28.399487859755272
+    },
+    {
+      "measurement": "format_no_verify_trailing_commas_off",
+      "input": "50kb",
+      "inputBytes": 51200,
+      "samplesSeconds": [
+        0.0015620387931034483,
+        0.0015640456120689656,
+        0.0015652035402298852,
+        0.0015701106293103447,
+        0.0015715027310344827,
+        0.0015635832126436782,
+        0.001560725472906404,
+        0.0015726076702586207,
+        0.0015969335881226053,
+        0.0016098111344827585
+      ],
+      "medianSeconds": 0.001567657084770115,
+      "throughputMibPerSecond": 31.147197607415702
+    },
+    {
+      "measurement": "format_no_verify_trailing_commas_off",
+      "input": "small",
+      "inputBytes": 512,
+      "samplesSeconds": [
+        0.000016578186647262143,
+        0.000016488262506821902,
+        0.00001656321375295616,
+        0.00001641887429507004,
+        0.000016296739130434782,
+        0.000016341589109211085,
+        0.00001652916744198134,
+        0.000016423510346552665,
+        0.000016444249065146647,
+        0.00001651917029288703
+      ],
+      "medianSeconds": 0.000016466255785984276,
+      "throughputMibPerSecond": 29.65344741065024
+    },
+    {
+      "measurement": "parse_and_verify",
+      "input": "1mb",
+      "inputBytes": 1048576,
+      "samplesSeconds": [
+        0.0099762625,
+        0.009935927050000001,
+        0.009987981933333334,
+        0.010034455199999999,
+        0.00999629834,
+        0.00990810625,
+        0.010077364285714286,
+        0.0099139895875,
+        0.009960814355555556,
+        0.01016411333
+      ],
+      "medianSeconds": 0.009982122216666667,
+      "throughputMibPerSecond": 100.17909802089463
+    },
+    {
+      "measurement": "parse_and_verify",
+      "input": "50kb",
+      "inputBytes": 51200,
+      "samplesSeconds": [
+        0.0005010994475138122,
+        0.0005131731132596685,
+        0.000500229817679558,
+        0.0005030681395027624,
+        0.0004993766110497238,
+        0.0005028654465930019,
+        0.0005028744743488556,
+        0.0005014253570441989,
+        0.0005013072688766114,
+        0.0005014310309392265
+      ],
+      "medianSeconds": 0.0005014281939917127,
+      "throughputMibPerSecond": 97.37810036427071
+    },
+    {
+      "measurement": "parse_and_verify",
+      "input": "small",
+      "inputBytes": 512,
+      "samplesSeconds": [
+        0.000005681804790419162,
+        0.000005699935676016388,
+        0.000006034709528311798,
+        0.000005712591270091396,
+        0.000005698619086038449,
+        0.0000056834563294463704,
+        0.00000579406901085048,
+        0.0000056479882366845255,
+        0.000005685961410512309,
+        0.000005703158682634731
+      ],
+      "medianSeconds": 0.000005699277381027419,
+      "throughputMibPerSecond": 85.67423856671047
+    },
+    {
+      "measurement": "single_parse",
+      "input": "1mb",
+      "inputBytes": 1048576,
+      "samplesSeconds": [
+        0.00462676665,
+        0.00461494375,
+        0.004632,
+        0.0046979599000000006,
+        0.00462081709,
+        0.004622401391666667,
+        0.00464271875,
+        0.00464398645625,
+        0.004631767822222223,
+        0.00464623208
+      ],
+      "medianSeconds": 0.004631883911111111,
+      "throughputMibPerSecond": 215.89487543095976
+    },
+    {
+      "measurement": "single_parse",
+      "input": "50kb",
+      "inputBytes": 51200,
+      "samplesSeconds": [
+        0.00023617244764397906,
+        0.0002359622054973822,
+        0.00023704948429319374,
+        0.00023643692735602096,
+        0.00024195848586387435,
+        0.00023664476090750437,
+        0.00023628585452505608,
+        0.0002361072480366492,
+        0.0002358682495636998,
+        0.00023589698952879582
+      ],
+      "medianSeconds": 0.00023622915108451755,
+      "throughputMibPerSecond": 206.69813516169467
+    },
+    {
+      "measurement": "single_parse",
+      "input": "small",
+      "inputBytes": 512,
+      "samplesSeconds": [
+        0.000002708152108251782,
+        0.0000026941398906608676,
+        0.000002702076879706818,
+        0.000002717351795638516,
+        0.0000027310841246828564,
+        0.000002811950661471548,
+        0.000002722773628298728,
+        0.0000027223617592424795,
+        0.0000027392612963634165,
+        0.0000027216163767065365
+      ],
+      "medianSeconds": 0.000002721989067974508,
+      "throughputMibPerSecond": 179.38398641818972
+    }
+  ]
+}

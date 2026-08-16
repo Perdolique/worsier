@@ -106,22 +106,29 @@ fn formatter_benchmarks(criterion: &mut Criterion) {
     group.finish();
 }
 
-fn source_with_size(minimum_bytes: usize) -> String {
-    let mut source = String::with_capacity(minimum_bytes + 128);
+fn source_with_size(bytes: usize) -> String {
+    let mut source = String::with_capacity(bytes);
     let mut index = 0;
-    while source.len() < minimum_bytes {
+    loop {
+        let mut statements = String::new();
         writeln!(
-            source,
+            statements,
             "import {{ value{index}, type Type{index} }} from 'package-{index}';"
         )
         .unwrap();
         writeln!(
-            source,
+            statements,
             "const value{index}={{ index:{index},items:[1,2,3],active:true }};"
         )
         .unwrap();
+        if source.len() + statements.len() > bytes {
+            break;
+        }
+        source.push_str(&statements);
         index += 1;
     }
+    source.push_str(&" ".repeat(bytes - source.len()));
+    debug_assert_eq!(source.len(), bytes);
     source
 }
 

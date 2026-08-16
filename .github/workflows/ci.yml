@@ -18,7 +18,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - run: cargo check --manifest-path fuzz/Cargo.toml
-      - run: cargo bench -p worsier-formatter --features benchmarking --no-run
+      - run: cargo bench -p worsier-benchmark --bench formatter --no-run
 
   cli-platform:
     strategy:
@@ -44,3 +44,6 @@ jobs:
       - run: pnpm --filter worsier build:native
       - run: pnpm --filter worsier test
       - run: pnpm --filter worsier test:packed
+      - run: pnpm --filter worsier-benchmark test
+      - run: pnpm --filter worsier-benchmark smoke
+      - run: pnpm --filter worsier-benchmark benchmark:verify

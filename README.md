@@ -181,17 +181,23 @@ const output = await format(
 
 ## Performance benchmarks
 
-Benchmarks are report-only until release measurements establish a stable threshold. Tagged releases run the complete Rust Criterion suite and Node.js cold-start benchmark and include the report in the GitHub release.
+Benchmarks are manual snapshots, not release gates. The comparative suite measures Worsier, Prettier, and Oxfmt on the same small TypeScript input, TypeScript's `parser.ts`, and a pinned Outline source corpus. Run `vp run benchmark` for an ignored draft or `vp run benchmark:update` from a clean committed worktree to replace the published snapshot. See the [benchmark guide](benchmark/README.md) for the complete methodology.
 
-After building and testing the workspace, run them locally with:
+<!-- benchmark-results:start -->
+The latest manual snapshot compares end-to-end CLI time on identical inputs, not feature or output equivalence.
 
-```sh
-vp run check
-cargo bench -p worsier-formatter --features benchmarking --bench formatter -- --noplot
-vp run benchmark:node
-```
+Relative time normalizes each scenario to its fastest median (`1.00×`); higher values are slower.
 
-The suite compares parsing, AST verification, full formatting, semicolons disabled, and trailing commas disabled across small, 50 KB, and 1 MB import-heavy inputs. The Node.js benchmark measures API and CLI cold starts in fresh processes.
+| Formatter | Small TS | TypeScript `parser.ts` | Outline project write | Project peak RSS |
+| --- | ---: | ---: | ---: | ---: |
+| Worsier 2.7.0 | 36.30 ms (1.00×) | 50.02 ms (1.00×) | 311.44 ms (1.33×) | 75.3 MiB |
+| Prettier 3.9.6 | 79.59 ms (2.19×) | 725.12 ms (14.50×) | 9.93 s (42.34×) | 478.1 MiB |
+| Oxfmt 0.63.0 | 103.97 ms (2.86×) | 114.66 ms (2.29×) | 234.46 ms (1.00×) | 143.7 MiB |
+
+Environment: Mac14,6, Apple M2 Max, 12 cores, 32 GB RAM, macOS 26.5.2 arm64, Node 24.19.0.
+
+[Methodology, commands, raw samples, and diagnostic microbenchmarks](benchmark/results/latest.md).
+<!-- benchmark-results:end -->
 
 ## Alternatives
 

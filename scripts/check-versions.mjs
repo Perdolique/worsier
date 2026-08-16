@@ -44,13 +44,26 @@ assert.deepEqual(
   'worsier optionalDependencies must match the platform package manifests'
 )
 
-const metadata = spawnSync('cargo', ['metadata', '--locked', '--no-deps', '--format-version', '1'], {
+const metadata = spawnSync('cargo', ['metadata', '--locked', '--format-version', '1'], {
   cwd: root,
   encoding: 'utf8',
   stdio: ['ignore', 'pipe', 'pipe']
 })
 if (metadata.status !== 0) {
   throw new Error(`cargo metadata --locked failed\n${metadata.stdout}${metadata.stderr}`)
+}
+const cargoMetadata = JSON.parse(metadata.stdout)
+const workspacePackageIds = new Set(cargoMetadata.workspace_members)
+const workspacePackages = cargoMetadata.packages.filter((entry) => workspacePackageIds.has(entry.id))
+for (const workspacePackage of workspacePackages) {
+  assert.equal(workspacePackage.version, npmPackage.version, `${workspacePackage.name} version must match worsier`)
+}
+
+const releasePlease = JSON.parse(await readFile(new URL('release-please-config.json', root), 'utf8'))
+const cargoLockUpdate = releasePlease.packages['packages/npm']['extra-files'].find((entry) => typeof entry === 'object' && entry.path === '/Cargo.lock')
+assert.ok(cargoLockUpdate, 'Release Please must update Cargo.lock')
+for (const workspacePackage of workspacePackages) {
+  assert.ok(cargoLockUpdate.jsonpath.includes(`@.name.value == '${workspacePackage.name}'`), `Release Please Cargo.lock update must include ${workspacePackage.name}`)
 }
 
 const fuzzMetadata = spawnSync(

@@ -4,5 +4,6 @@ node_modules/
 npm/*/index.d.ts
 *.tgz
 coverage/
+/benchmark/.work/
 /fuzz/artifacts/
 /fuzz/coverage/
