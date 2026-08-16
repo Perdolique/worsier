@@ -1334,6 +1334,7 @@ fn rewrite_edits(
     newline: &str,
     rules: RewriteRules,
 ) -> Result<Vec<Edit>, FormatError> {
+    let initial_import_layout = FinalImportLayout::default();
     let mut import_rewrites = format_import_edits(
         source,
         program,
@@ -1341,7 +1342,7 @@ fn rewrite_edits(
         line_width,
         newline,
         rules,
-        &HashSet::new(),
+        &initial_import_layout,
     )?;
     let mut layout_edits = collect_layout_edits(
         source,
@@ -1351,22 +1352,31 @@ fn rewrite_edits(
         rules,
         &import_rewrites.formatted_imports,
     )?;
-    let line_break_after = if rules.statement_semicolons == SemicolonMode::AsNeeded {
-        layout_edits
-            .iter()
-            .filter(|edit| contains_line_break(&edit.replacement))
-            .map(|edit| edit.start)
-            .collect::<HashSet<_>>()
-    } else {
-        HashSet::new()
+    let final_import_layout = FinalImportLayout {
+        line_break_after: if rules.statement_semicolons == SemicolonMode::AsNeeded {
+            layout_edits
+                .iter()
+                .filter(|edit| contains_line_break(&edit.replacement))
+                .map(|edit| edit.start)
+                .collect()
+        } else {
+            HashSet::new()
+        },
+        base_indents: layout_import_base_indents(&layout_edits, &import_rewrites),
     };
-    // A layout-added line break can make an import semicolon removable, which changes the final
-    // flat width. Recompute both import and layout edits once with that final boundary shape.
-    if import_rewrites
+    let import_indent_changed = final_import_layout
+        .base_indents
+        .iter()
+        .any(|(start, indent)| line_indent_at(source, *start) != *indent);
+    let import_semicolon_changed = import_rewrites
         .deferred_semicolon_ends
         .iter()
-        .any(|offset| contains_deferred_import_boundary(&line_break_after, *offset))
-    {
+        .any(|offset| {
+            contains_deferred_import_boundary(&final_import_layout.line_break_after, *offset)
+        });
+    // A layout-added line break can change an import's final indentation or make its semicolon
+    // removable. Recompute both import and layout edits once with that final boundary shape.
+    if import_indent_changed || import_semicolon_changed {
         import_rewrites = format_import_edits(
             source,
             program,
@@ -1374,7 +1384,7 @@ fn rewrite_edits(
             line_width,
             newline,
             rules,
-            &line_break_after,
+            &final_import_layout,
         )?;
         layout_edits = collect_layout_edits(
             source,
@@ -1400,6 +1410,31 @@ struct ImportRewrites {
     deferred_semicolon_ends: HashSet<u32>,
 }
 
+#[derive(Default)]
+struct FinalImportLayout {
+    line_break_after: HashSet<u32>,
+    base_indents: HashMap<u32, String>,
+}
+
+fn layout_import_base_indents(
+    layout_edits: &[Edit],
+    import_rewrites: &ImportRewrites,
+) -> HashMap<u32, String> {
+    layout_edits
+        .iter()
+        .filter_map(|edit| {
+            if !import_rewrites.formatted_imports.contains_key(&edit.end) {
+                return None;
+            }
+            let (_, indent) = edit.replacement.rsplit_once('\n')?;
+            indent
+                .chars()
+                .all(|character| matches!(character, ' ' | '\t'))
+                .then(|| (edit.end, indent.to_owned()))
+        })
+        .collect()
+}
+
 fn format_import_edits(
     source: &str,
     program: &Program<'_>,
@@ -1407,7 +1442,7 @@ fn format_import_edits(
     line_width: u32,
     newline: &str,
     rules: RewriteRules,
-    line_break_after: &HashSet<u32>,
+    final_layout: &FinalImportLayout,
 ) -> Result<ImportRewrites, FormatError> {
     let mut rewrites = ImportRewrites::default();
     if !rules.import_layout {
@@ -1430,7 +1465,7 @@ fn format_import_edits(
             SemicolonMode::Always => true,
             SemicolonMode::AsNeeded => trailing_semicolon.is_some_and(|token| {
                 !can_remove_trailing_semicolon(source, tokens, token.span())
-                    && !line_break_after.contains(&token.end())
+                    && !final_layout.line_break_after.contains(&token.end())
             }),
         };
         let semicolon_shape = ImportSemicolonShape {
@@ -1444,10 +1479,16 @@ fn format_import_edits(
         {
             rewrites.deferred_semicolon_ends.insert(semicolon.end());
         }
+        let base_indent = final_layout
+            .base_indents
+            .get(&span.start)
+            .cloned()
+            .unwrap_or_else(|| line_indent_at(source, span.start));
         let formatted = format_import(
             declaration,
             span,
             source,
+            &base_indent,
             declaration_tokens,
             declaration_comments,
             line_width,
@@ -2451,7 +2492,9 @@ impl LayoutIndents {
         }
         indent_resolution();
         let indent = match lists[list_index].container {
-            ListContainer::Program { .. } => String::new(),
+            ListContainer::Program { .. } => {
+                line_indent_at(source, lists[list_index].items[0].span.start)
+            }
             ListContainer::Braced { .. } => {
                 format!(
                     "{}  ",
@@ -2754,6 +2797,7 @@ fn format_import(
     declaration: &ImportDeclaration<'_>,
     span: Span,
     source: &str,
+    base_indent: &str,
     tokens: &[Token],
     comments: &[Comment],
     line_width: u32,
@@ -2775,10 +2819,13 @@ fn format_import(
             comments,
             newline,
             false,
+            base_indent,
             trailing_commas,
             omitted_attribute_comma,
         )?;
-        let effective_width = semicolon_shape.adjust_width(flat.chars().count());
+        let effective_width = semicolon_shape
+            .adjust_width(flat.chars().count())
+            .saturating_add(base_indent.chars().count());
         if contains_line_break(&flat) || effective_width > line_width as usize {
             format_named_import(
                 span,
@@ -2789,6 +2836,7 @@ fn format_import(
                 comments,
                 newline,
                 true,
+                base_indent,
                 trailing_commas,
                 omitted_attribute_comma,
             )?
@@ -2871,6 +2919,7 @@ fn format_named_import(
     comments: &[Comment],
     newline: &str,
     multiline: bool,
+    base_indent: &str,
     trailing_commas: TrailingCommaMode,
     omitted_attribute_comma: Option<Span>,
 ) -> Result<String, FormatError> {
@@ -2920,11 +2969,13 @@ fn format_named_import(
     if segments.is_empty() {
         output.push('}');
     } else if multiline {
+        let item_indent = format!("{base_indent}  ");
         output.push_str(newline);
         for segment in &segments {
-            output.push_str(&indent_lines(&segment.text, "  "));
+            output.push_str(&indent_lines(&segment.text, &item_indent));
             output.push_str(newline);
         }
+        output.push_str(base_indent);
         output.push('}');
     } else {
         output.push(' ');
