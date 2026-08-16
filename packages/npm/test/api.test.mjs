@@ -48,6 +48,20 @@ test('formats through the asynchronous native API', async () => {
   assert.equal(partialNested, 'const first=1\n\nwork()')
 })
 
+test('formats inline Vue scripts through the native API', async () => {
+  const source = '<template>{{ "<template>" }}</template>\n<i18n>{"message":"<!--"}</i18n>\n<script setup lang="ts">import{value}from\'pkg\';const count:number=1;</script>\n<style>.x{color:red}</style>'
+  const output = '<template>{{ "<template>" }}</template>\n<i18n>{"message":"<!--"}</i18n>\n<script setup lang="ts">import { value } from \'pkg\'\n\nconst count:number=1</script>\n<style>.x{color:red}</style>'
+
+  assert.equal(await format('component.vue', source), output)
+  assert.equal(await format('component.vue', output), output)
+  await assert.rejects(format('component.vue', '<script>const value = @;</script>'), {
+    code: 'PARSE_ERROR'
+  })
+  await assert.rejects(format('component.vue', '<script>const value=1;'), {
+    code: 'PARSE_ERROR'
+  })
+})
+
 test('formats interface layouts through the native API', async () => {
   const source = 'interface Shape { value: string; run(): void; }'
   assert.equal(

@@ -107,23 +107,27 @@ fn maybe_corrupt_rewrite_for_test(rewritten: &mut String) {
 #[cfg(not(test))]
 fn maybe_corrupt_rewrite_for_test(_: &mut String) {}
 
-/// Formats static imports, TypeScript interface layout, statement and member semicolons, trailing
-/// commas, and runtime variable declaration boundaries in JavaScript, TypeScript, JSX, or TSX
-/// source text.
+#[cfg(test)]
+pub(crate) fn corrupt_next_rewrite_for_test() {
+    CORRUPT_REWRITE_FOR_TEST.set(true);
+}
+
+/// Formats one JavaScript, TypeScript, JSX, or TSX source using an already resolved source type.
 ///
 /// # Errors
 ///
 /// Returns a [`FormatError`] when the source type is unsupported, parsing fails, or semantic
 /// verification finds that a rewrite changed the program AST.
-pub fn format_text(
+pub(crate) fn format_script(
     file_name: &Path,
     source_text: &str,
+    source_type: SourceType,
+    newline_hint: Option<&'static str>,
     config: &ResolvedConfig,
 ) -> Result<Option<String>, FormatError> {
     let (bom, source) = source_text
         .strip_prefix(BOM)
         .map_or(("", source_text), |text| ("\u{feff}", text));
-    let source_type = source_type(file_name)?;
     let allocator = Allocator::default();
     let parsed = parse_with_tokens(&allocator, source, source_type)?;
 
@@ -145,7 +149,7 @@ pub fn format_text(
         return Ok(None);
     }
 
-    let newline = detect_newline(source);
+    let newline = detect_newline(source, newline_hint);
     let single_arrow_comma = single_arrow_comma_rule(source_type);
     let edits = rewrite_edits(
         source,
@@ -315,16 +319,6 @@ fn single_arrow_comma_rule(source_type: SourceType) -> SingleArrowCommaRule {
     } else {
         SingleArrowCommaRule::Optional
     }
-}
-
-fn source_type(path: &Path) -> Result<SourceType, FormatError> {
-    let source_type =
-        SourceType::from_path(path).map_err(|_| FormatError::unsupported_source(path))?;
-    Ok(if source_type.is_javascript() {
-        source_type.with_jsx(true)
-    } else {
-        source_type
-    })
 }
 
 fn parse<'a>(
@@ -2724,7 +2718,7 @@ fn append_leading_comments_and_destination(
 
 fn append_comment_gap(output: &mut String, gap: &str, separator: &str, indent: &str) {
     if contains_line_break(gap) && gap.chars().all(char::is_whitespace) {
-        output.push_str(detect_newline(separator));
+        output.push_str(detect_newline(separator, None));
         output.push_str(indent);
     } else {
         output.push_str(gap);
@@ -3119,7 +3113,7 @@ fn indent_lines(text: &str, indent: &str) -> String {
     output
 }
 
-fn detect_newline(source: &str) -> &'static str {
+pub(crate) fn detect_newline(source: &str, fallback: Option<&'static str>) -> &'static str {
     let bytes = source.as_bytes();
     for (index, byte) in bytes.iter().enumerate() {
         if *byte == b'\n' {
@@ -3130,7 +3124,7 @@ fn detect_newline(source: &str) -> &'static str {
             };
         }
     }
-    "\n"
+    fallback.unwrap_or("\n")
 }
 
 fn contains_line_break(text: &str) -> bool {
@@ -3171,10 +3165,12 @@ fn apply_edits(source: &str, edits: &[Edit]) -> Result<String, FormatError> {
 ///
 /// # Errors
 ///
-/// Returns the same parse and source-type errors as [`format_text`].
+/// Returns the same parse and source-type errors as [`crate::format_text`].
 pub fn benchmark_parse(file_name: &Path, source: &str) -> Result<(), FormatError> {
     let allocator = Allocator::default();
-    parse(&allocator, source, source_type(file_name)?)?;
+    let source_type = crate::document::script_source_type(file_name)
+        .ok_or_else(|| FormatError::unsupported_source(file_name))?;
+    parse(&allocator, source, source_type)?;
     Ok(())
 }
 
@@ -3183,13 +3179,13 @@ pub fn benchmark_parse(file_name: &Path, source: &str) -> Result<(), FormatError
 ///
 /// # Errors
 ///
-/// Returns the same errors as [`format_text`].
+/// Returns the same errors as [`crate::format_text`].
 pub fn benchmark_rewrite(
     file_name: &Path,
     source: &str,
     config: &ResolvedConfig,
 ) -> Result<Option<String>, FormatError> {
-    format_text(file_name, source, config)
+    crate::format_text(file_name, source, config)
 }
 
 #[cfg(feature = "benchmarking")]
@@ -3197,9 +3193,10 @@ pub fn benchmark_rewrite(
 ///
 /// # Errors
 ///
-/// Returns the same parse, source-type, and verification errors as [`format_text`].
+/// Returns the same parse, source-type, and verification errors as [`crate::format_text`].
 pub fn benchmark_verify(file_name: &Path, source: &str) -> Result<(), FormatError> {
-    let source_type = source_type(file_name)?;
+    let source_type = crate::document::script_source_type(file_name)
+        .ok_or_else(|| FormatError::unsupported_source(file_name))?;
     let allocator = Allocator::default();
     let parsed = parse(&allocator, source, source_type)?;
     verify(file_name, source_type, &parsed.program, source)
@@ -3216,7 +3213,7 @@ mod tests {
         CORRUPT_REWRITE_FOR_TEST, DEFERRED_IMPORT_BOUNDARY_LOOKUPS, IMPORT_MULTILINE_SCANS,
         INDENT_RESOLUTIONS, LINE_BREAK_INDEX_BUILDS, LINE_BREAK_QUERIES, PARENTHESIS_INDEX_BUILDS,
         PARENTHESIS_LOOKUPS, SPAN_LOOKUP_COMPARISONS, TOKEN_PARSER_RUNS, TOKEN_PREFLIGHT_PARSES,
-        TYPE_ALIAS_MULTILINE_SCANS, VARIABLE_MULTILINE_SCANS, parse, source_type, verify,
+        TYPE_ALIAS_MULTILINE_SCANS, VARIABLE_MULTILINE_SCANS, parse, verify,
     };
     use crate::{
         FormatConfig, InterfaceLayoutMode, InterfaceLayoutRule, RulesConfig, SemicolonConfig,
@@ -4802,7 +4799,7 @@ mod tests {
     #[test]
     fn verification_rejects_a_different_program() {
         let file_name = Path::new("sample.ts");
-        let source_type = source_type(file_name).unwrap();
+        let source_type = crate::document::script_source_type(file_name).unwrap();
         let allocator = Allocator::default();
         let input = parse(&allocator, "import { original } from 'pkg';", source_type).unwrap();
 

@@ -1,6 +1,6 @@
 # Worsier
 
-Worsier is a focused JavaScript, TypeScript, JSX, and TSX formatter powered by Rust. Each rule is independently configurable, and source outside enabled rules is preserved instead of being reprinted.
+Worsier is a focused JavaScript, TypeScript, JSX, TSX, and Vue SFC script formatter powered by Rust. Each rule is independently configurable, and source outside enabled rules is preserved instead of being reprinted.
 
 Node.js 24.0.0 or newer is required.
 
@@ -15,6 +15,8 @@ pnpm exec worsier --write .
 ```
 
 The CLI uses its defaults when no configuration file is present. Run `pnpm exec worsier --init` to create a complete typed `worsier.jsonc`.
+
+For `.vue` files, Worsier formats inline `<script>` and `<script setup>` blocks using JavaScript, JSX, TypeScript, or TSX. Templates, styles, custom blocks, external `src` scripts, and unknown languages remain byte-for-byte unchanged.
 
 ## Programmatic API
 

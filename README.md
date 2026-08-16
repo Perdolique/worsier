@@ -1,6 +1,6 @@
 # Worsier
 
-Worsier is a focused JavaScript, TypeScript, JSX, and TSX formatter powered by Rust. Each rule is independently configurable, and source outside enabled rules is preserved instead of being reprinted.
+Worsier is a focused JavaScript, TypeScript, JSX, TSX, and Vue SFC script formatter powered by Rust. Each rule is independently configurable, and source outside enabled rules is preserved instead of being reprinted.
 
 Node.js 24.0.0 or newer is required.
 
@@ -10,6 +10,7 @@ Node.js 24.0.0 or newer is required.
 - [CLI](#cli)
 - [Configuration](#configuration)
 - [Formatting rules](#formatting-rules)
+- [Vue SFC support](#vue-sfc-support)
 - [Programmatic API](#programmatic-api)
 - [Guarantees and scope](#guarantees-and-scope)
 - [Performance benchmarks](#performance-benchmarks)
@@ -47,6 +48,8 @@ pnpm exec worsier --write .
 | `worsier --no-verify` | Disable AST verification for one invocation |
 
 Directories and multiple files require either `--check` or `--write`. Directory discovery skips `.git`, `node_modules`, and Wrangler's generated `worker-configuration.d.ts`. An explicitly passed file is still processed even when it matches an ignore rule.
+
+Supported files are `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts`, `.tsx`, and `.vue`.
 
 `--write` opens each source without following a leaf symbolic link and overwrites changed files directly through the verified file handle, so the file itself must be writable; multiple input paths that identify the same file are rejected, an interrupted write can leave a partial file, and successful exit does not force data to persistent storage.
 
@@ -157,6 +160,12 @@ Required semicolons, `for` header separators, standalone empty statements, and c
 
 The rule covers object and array literals, destructuring, named static imports and exports, parameters, arguments, tuples, enums, and type parameters. It preserves commas that are required by syntax or semantics, including sparse-array elisions, and never adds a comma after a rest item. Dynamic `import()` arguments and TypeScript type arguments are not changed.
 
+## Vue SFC support
+
+For `.vue` files, Worsier formats inline `<script>` and `<script setup>` blocks. Scripts without `lang` and scripts using `lang="js"`, `lang="jsx"`, `lang="ts"`, or `lang="tsx"` use the corresponding JavaScript or TypeScript parser.
+
+Templates, styles, custom blocks, tags, and attributes are preserved byte-for-byte. Scripts with a `src` attribute and scripts using any other `lang` value or a valueless `lang` attribute are also preserved; Worsier never reads an external script referenced by `src`.
+
 ## Programmatic API
 
 ```js
@@ -175,7 +184,7 @@ const output = await format(
 
 - Worsier preserves source outside the imports, interfaces, semicolons, trailing commas, and statement boundaries controlled by enabled rules.
 - Rewritten text keeps the source's LF or CRLF line endings. UTF-8 BOM and final-newline presence are preserved.
-- `verifyAst: true` reparses the result and rejects changes that do not match the input Oxc AST.
+- `verifyAst: true` reparses each rewritten script and rejects changes that do not match its input Oxc AST.
 - Formatting is idempotent: formatting an already formatted file produces no further changes.
 - Set every rule to `"off"` or `false` to make formatting return the source unchanged.
 
