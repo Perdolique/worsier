@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.8.1](https://github.com/Perdolique/worsier/compare/v2.8.0...v2.8.1) (2026-08-16)
+
+
+### Bug Fixes
+
+* **formatter:** preserve embedded indentation ([470f000](https://github.com/Perdolique/worsier/commit/470f00060dfb08180f5e5b87209b5c81e7e86f30))
+
 ## [2.8.0](https://github.com/Perdolique/worsier/compare/v2.7.1...v2.8.0) (2026-08-16)
 
 
