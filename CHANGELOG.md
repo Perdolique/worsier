@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.8.0](https://github.com/Perdolique/worsier/compare/v2.7.1...v2.8.0) (2026-08-16)
+
+
+### Features
+
+* **formatter:** support Vue SFC scripts ([d70b1c3](https://github.com/Perdolique/worsier/commit/d70b1c351d4d69b99174fb098c9895dda124064e))
+
 ## [2.7.1](https://github.com/Perdolique/worsier/compare/v2.7.0...v2.7.1) (2026-08-16)
 
 

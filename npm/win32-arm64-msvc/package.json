@@ -1,6 +1,6 @@
 {
   "name": "worsier-win32-arm64-msvc",
-  "version": "2.7.1",
+  "version": "2.8.0",
   "license": "MIT",
   "repository": {
     "type": "git",
