@@ -50,6 +50,7 @@ thread_local! {
     static LINE_BREAK_QUERIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static PARENTHESIS_INDEX_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static PARENTHESIS_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static DEFERRED_IMPORT_BOUNDARY_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static CORRUPT_REWRITE_FOR_TEST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
@@ -85,6 +86,13 @@ fn type_alias_is_multiline(source: &str, span: Span) -> bool {
     #[cfg(test)]
     TYPE_ALIAS_MULTILINE_SCANS.set(TYPE_ALIAS_MULTILINE_SCANS.get() + 1);
     source_slice(source, span).is_ok_and(contains_line_break)
+}
+
+#[inline]
+fn contains_deferred_import_boundary(boundaries: &HashSet<u32>, offset: u32) -> bool {
+    #[cfg(test)]
+    DEFERRED_IMPORT_BOUNDARY_LOOKUPS.set(DEFERRED_IMPORT_BOUNDARY_LOOKUPS.get() + 1);
+    boundaries.contains(&offset)
 }
 
 #[cfg(test)]
@@ -155,6 +163,7 @@ pub fn format_text(
             } else {
                 config.variable_declaration_spacing()
             },
+            statement_semicolons: config.statement_semicolons(),
             trailing_commas: config.trailing_commas(),
             single_arrow_comma,
         },
@@ -1246,6 +1255,7 @@ struct RewriteRules {
     import_spacing: StatementSpacingMode,
     type_alias_spacing: StatementSpacingMode,
     variable_spacing: StatementSpacingMode,
+    statement_semicolons: SemicolonMode,
     trailing_commas: TrailingCommaMode,
     single_arrow_comma: SingleArrowCommaRule,
 }
@@ -1330,53 +1340,163 @@ fn rewrite_edits(
     newline: &str,
     rules: RewriteRules,
 ) -> Result<Vec<Edit>, FormatError> {
-    let mut edits = Vec::new();
-    let mut formatted_imports = HashMap::new();
-
-    if rules.import_layout {
-        for statement in &program.body {
-            let Statement::ImportDeclaration(declaration) = statement else {
-                continue;
-            };
-            let span = statement_syntax_span(source, tokens, statement.span());
-            let declaration_tokens = tokens_in_span(tokens, span);
-            let declaration_comments = comments_in_span(&program.comments, span);
-            let formatted = format_import(
-                declaration,
-                span,
-                source,
-                declaration_tokens,
-                declaration_comments,
-                line_width,
-                newline,
-                rules.trailing_commas,
-            )?;
-            let original = source_slice(source, span)?;
-            if formatted.text != original {
-                edits.push(Edit {
-                    start: span.start,
-                    end: span.end,
-                    replacement: formatted.text,
-                });
-            }
-            formatted_imports.insert(span.start, formatted.multiline);
-        }
+    let mut import_rewrites = format_import_edits(
+        source,
+        program,
+        tokens,
+        line_width,
+        newline,
+        rules,
+        &HashSet::new(),
+    )?;
+    let mut layout_edits = collect_layout_edits(
+        source,
+        program,
+        tokens,
+        newline,
+        rules,
+        &import_rewrites.formatted_imports,
+    )?;
+    let line_break_after = if rules.statement_semicolons == SemicolonMode::AsNeeded {
+        layout_edits
+            .iter()
+            .filter(|edit| contains_line_break(&edit.replacement))
+            .map(|edit| edit.start)
+            .collect::<HashSet<_>>()
+    } else {
+        HashSet::new()
+    };
+    // A layout-added line break can make an import semicolon removable, which changes the final
+    // flat width. Recompute both import and layout edits once with that final boundary shape.
+    if import_rewrites
+        .deferred_semicolon_ends
+        .iter()
+        .any(|offset| contains_deferred_import_boundary(&line_break_after, *offset))
+    {
+        import_rewrites = format_import_edits(
+            source,
+            program,
+            tokens,
+            line_width,
+            newline,
+            rules,
+            &line_break_after,
+        )?;
+        layout_edits = collect_layout_edits(
+            source,
+            program,
+            tokens,
+            newline,
+            rules,
+            &import_rewrites.formatted_imports,
+        )?;
     }
 
+    let mut edits = import_rewrites.edits;
+    edits.extend(layout_edits);
+    append_never_comma_edits(source, program, tokens, rules, &mut edits);
+    edits.sort_by_key(|edit| (edit.start, edit.end));
+    Ok(edits)
+}
+
+#[derive(Default)]
+struct ImportRewrites {
+    edits: Vec<Edit>,
+    formatted_imports: HashMap<u32, bool>,
+    deferred_semicolon_ends: HashSet<u32>,
+}
+
+fn format_import_edits(
+    source: &str,
+    program: &Program<'_>,
+    tokens: &[Token],
+    line_width: u32,
+    newline: &str,
+    rules: RewriteRules,
+    line_break_after: &HashSet<u32>,
+) -> Result<ImportRewrites, FormatError> {
+    let mut rewrites = ImportRewrites::default();
+    if !rules.import_layout {
+        return Ok(rewrites);
+    }
+
+    for statement in &program.body {
+        let Statement::ImportDeclaration(declaration) = statement else {
+            continue;
+        };
+        let span = statement_syntax_span(source, tokens, statement.span());
+        let declaration_tokens = tokens_in_span(tokens, span);
+        let declaration_comments = comments_in_span(&program.comments, span);
+        let trailing_semicolon = declaration_tokens
+            .last()
+            .filter(|token| token.kind() == Kind::Semicolon);
+        let original_semicolon = trailing_semicolon.is_some();
+        let final_semicolon = match rules.statement_semicolons {
+            SemicolonMode::Off => original_semicolon,
+            SemicolonMode::Always => true,
+            SemicolonMode::AsNeeded => trailing_semicolon.is_some_and(|token| {
+                !can_remove_trailing_semicolon(source, tokens, token.span())
+                    && !line_break_after.contains(&token.end())
+            }),
+        };
+        let semicolon_shape = ImportSemicolonShape {
+            original: original_semicolon,
+            formatted: final_semicolon,
+        };
+        if rules.statement_semicolons == SemicolonMode::AsNeeded
+            && original_semicolon
+            && final_semicolon
+            && let Some(semicolon) = trailing_semicolon
+        {
+            rewrites.deferred_semicolon_ends.insert(semicolon.end());
+        }
+        let formatted = format_import(
+            declaration,
+            span,
+            source,
+            declaration_tokens,
+            declaration_comments,
+            line_width,
+            newline,
+            rules.trailing_commas,
+            semicolon_shape,
+        )?;
+        let original = source_slice(source, span)?;
+        if formatted.text != original {
+            rewrites.edits.push(Edit {
+                start: span.start,
+                end: span.end,
+                replacement: formatted.text,
+            });
+        }
+        rewrites
+            .formatted_imports
+            .insert(span.start, formatted.multiline);
+    }
+
+    Ok(rewrites)
+}
+
+fn collect_layout_edits(
+    source: &str,
+    program: &Program<'_>,
+    tokens: &[Token],
+    newline: &str,
+    rules: RewriteRules,
+    formatted_imports: &HashMap<u32, bool>,
+) -> Result<Vec<Edit>, FormatError> {
     if rules.import_spacing == StatementSpacingMode::Off
         && rules.type_alias_spacing == StatementSpacingMode::Off
         && rules.variable_spacing == StatementSpacingMode::Off
         && rules.interface_layout_threshold.is_none()
     {
-        append_never_comma_edits(source, program, tokens, rules, &mut edits);
-        edits.sort_by_key(|edit| (edit.start, edit.end));
-        return Ok(edits);
+        return Ok(Vec::new());
     }
 
     let mut collector = StatementCollector {
         source,
         tokens,
-        formatted_imports: &formatted_imports,
+        formatted_imports,
         interface_layout_threshold: rules.interface_layout_threshold,
         import_spacing: rules.import_spacing,
         type_alias_spacing: rules.type_alias_spacing,
@@ -1396,6 +1516,7 @@ fn rewrite_edits(
         &mut collector.switches,
         &collector.interfaces,
     );
+    let mut edits = Vec::new();
     append_layout_edits(
         source,
         &program.comments,
@@ -1405,9 +1526,6 @@ fn rewrite_edits(
         &collector.interfaces,
         &mut edits,
     )?;
-    append_never_comma_edits(source, program, tokens, rules, &mut edits);
-
-    edits.sort_by_key(|edit| (edit.start, edit.end));
     Ok(edits)
 }
 
@@ -2272,7 +2390,12 @@ fn existing_boundary_indent(
         .iter()
         .find(|comment| comment.position == CommentPosition::Leading)
         .map_or(next_start, |comment| comment.span.start);
-    let indent = line_indent_at(source, anchor);
+    let mut indent = line_indent_at(source, anchor);
+    if indent.is_empty()
+        && let Some(guard_indent) = line_indent_before_guard(source, anchor)
+    {
+        indent = guard_indent;
+    }
     let boundary_is_multiline = source
         .get(span.start as usize..span.end as usize)
         .is_some_and(contains_line_break);
@@ -2463,6 +2586,19 @@ fn line_indent_if_standalone(source: &str, offset: u32) -> Option<String> {
     }
 }
 
+fn line_indent_before_guard(source: &str, offset: u32) -> Option<String> {
+    let prefix = source.get(..offset as usize).unwrap_or(source);
+    let line = prefix.rsplit_once('\n').map_or(prefix, |(_, line)| line);
+    let before_guard = line
+        .trim_end_matches('\r')
+        .trim_end_matches([' ', '\t'])
+        .strip_suffix(';')?;
+    before_guard
+        .chars()
+        .all(|character| matches!(character, ' ' | '\t'))
+        .then(|| before_guard.to_owned())
+}
+
 fn format_boundary_separator(
     source: &str,
     span: Span,
@@ -2600,6 +2736,22 @@ struct FormattedImport {
     multiline: bool,
 }
 
+#[derive(Clone, Copy)]
+struct ImportSemicolonShape {
+    original: bool,
+    formatted: bool,
+}
+
+impl ImportSemicolonShape {
+    const fn adjust_width(self, width: usize) -> usize {
+        match (self.original, self.formatted) {
+            (true, false) => width.saturating_sub(1),
+            (false, true) => width.saturating_add(1),
+            _ => width,
+        }
+    }
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "the import formatter needs both AST and effective source-span evidence"
@@ -2613,6 +2765,7 @@ fn format_import(
     line_width: u32,
     newline: &str,
     trailing_commas: TrailingCommaMode,
+    semicolon_shape: ImportSemicolonShape,
 ) -> Result<FormattedImport, FormatError> {
     let omitted_attribute_comma = (trailing_commas == TrailingCommaMode::Never)
         .then(|| import_attribute_trailing_comma(declaration, tokens))
@@ -2631,7 +2784,8 @@ fn format_import(
             trailing_commas,
             omitted_attribute_comma,
         )?;
-        if contains_line_break(&flat) || flat.chars().count() > line_width as usize {
+        let effective_width = semicolon_shape.adjust_width(flat.chars().count());
+        if contains_line_break(&flat) || effective_width > line_width as usize {
             format_named_import(
                 span,
                 left_brace,
@@ -3059,9 +3213,9 @@ mod tests {
     use oxc_allocator::Allocator;
 
     use super::{
-        CORRUPT_REWRITE_FOR_TEST, IMPORT_MULTILINE_SCANS, INDENT_RESOLUTIONS,
-        LINE_BREAK_INDEX_BUILDS, LINE_BREAK_QUERIES, PARENTHESIS_INDEX_BUILDS, PARENTHESIS_LOOKUPS,
-        SPAN_LOOKUP_COMPARISONS, TOKEN_PARSER_RUNS, TOKEN_PREFLIGHT_PARSES,
+        CORRUPT_REWRITE_FOR_TEST, DEFERRED_IMPORT_BOUNDARY_LOOKUPS, IMPORT_MULTILINE_SCANS,
+        INDENT_RESOLUTIONS, LINE_BREAK_INDEX_BUILDS, LINE_BREAK_QUERIES, PARENTHESIS_INDEX_BUILDS,
+        PARENTHESIS_LOOKUPS, SPAN_LOOKUP_COMPARISONS, TOKEN_PARSER_RUNS, TOKEN_PREFLIGHT_PARSES,
         TYPE_ALIAS_MULTILINE_SCANS, VARIABLE_MULTILINE_SCANS, parse, source_type, verify,
     };
     use crate::{
@@ -3596,6 +3750,18 @@ mod tests {
         assert_eq!(
             format_semicolons("sample.js", preserved, semicolons_off()),
             preserved
+        );
+    }
+
+    #[test]
+    fn preserves_nested_guard_indentation_across_statement_spacing_passes() {
+        let source = "function update() {\n        const node = value()\n        ;   (node as Mutable<Node>).value = 1;\n        return node;\n}";
+        let output = format_file_with("sample.ts", source, FormatConfig::default());
+
+        assert!(output.contains("\n        ;(node as Mutable<Node>).value = 1\n"));
+        assert_eq!(
+            format_file_with("sample.ts", &output, FormatConfig::default()),
+            output
         );
     }
 
@@ -4284,6 +4450,71 @@ mod tests {
     }
 
     #[test]
+    fn import_width_uses_the_final_as_needed_semicolon_shape() {
+        let import_shell = "import { one, two } from ''";
+        let package = "x".repeat(120 - import_shell.len());
+        let expected_import = format!("import {{ one, two }} from '{package}'");
+        let source = format!("import{{one,two}}from'{package}';work();");
+        let output = format_file_with(
+            "sample.ts",
+            &source,
+            FormatConfig {
+                line_width: 120,
+                ..FormatConfig::default()
+            },
+        );
+        let expected = format!("{expected_import}\n\nwork()");
+
+        assert_eq!(output, expected);
+        assert_eq!(
+            format_file_with(
+                "sample.ts",
+                &output,
+                FormatConfig {
+                    line_width: 120,
+                    ..FormatConfig::default()
+                },
+            ),
+            output
+        );
+    }
+
+    #[test]
+    fn import_width_uses_the_final_always_semicolon_shape() {
+        let import_shell = "import { one, two } from '';";
+        let package = "x".repeat(120 - import_shell.len());
+        let source = format!("import{{one,two}}from'{package}'");
+        let config = || FormatConfig {
+            line_width: 120,
+            rules: RulesConfig {
+                semicolons: SemicolonConfig {
+                    statements: SemicolonMode::Always,
+                    class_members: SemicolonMode::Off,
+                    type_members: SemicolonMode::Off,
+                },
+                ..RulesConfig::default()
+            },
+            ..FormatConfig::default()
+        };
+
+        let flat = format_file_with("sample.ts", &source, config());
+        assert_eq!(flat, format!("import {{ one, two }} from '{package}';"));
+        assert_eq!(format_file_with("sample.ts", &flat, config()), flat);
+
+        let long_package = format!("{package}x");
+        let long_source = format!("import{{one,two}}from'{long_package}'");
+        let multiline = format_file_with("sample.ts", &long_source, config());
+        assert_eq!(
+            multiline,
+            format!("import {{\n  one,\n  two\n}} from '{long_package}';")
+        );
+        assert_eq!(
+            format_file_with("sample.ts", &multiline, config()),
+            multiline
+        );
+    }
+
+    #[test]
     fn applies_the_import_spacing_matrix_in_both_directions() {
         let source = "const before={raw:true};\n\n\nimport a from'a'\n\nimport{one,two}from'long-package'\nimport{three,four}from'other-long-package'\n\nimport b from'b'\n\nconst after=[1,2];";
         let output = format_with_semicolons_off(
@@ -4624,6 +4855,42 @@ mod tests {
         assert!(
             comparisons < import_count * 256,
             "span lookups performed {comparisons} comparisons for {import_count} imports"
+        );
+    }
+
+    #[test]
+    fn deferred_import_boundary_lookups_stay_linear() {
+        let item_count = 512;
+        let mut source = String::new();
+        for index in 0..item_count {
+            write!(source, "import{{value{index}}}from'package-{index}';").unwrap();
+        }
+        source.push_str("\nfunction work(){");
+        for index in 0..item_count {
+            write!(source, "const value{index}={index};").unwrap();
+        }
+        source.push('}');
+        let config = resolve_config(FormatConfig {
+            verify_ast: false,
+            rules: RulesConfig {
+                statement_spacing: StatementSpacingConfig {
+                    imports: StatementSpacingMode::Off,
+                    type_aliases: StatementSpacingMode::Off,
+                    variable_declarations: StatementSpacingMode::Compact,
+                },
+                ..RulesConfig::default()
+            },
+            ..FormatConfig::default()
+        })
+        .unwrap();
+
+        DEFERRED_IMPORT_BOUNDARY_LOOKUPS.set(0);
+        format_text(Path::new("deferred-imports.ts"), &source, &config).unwrap();
+        let lookups = DEFERRED_IMPORT_BOUNDARY_LOOKUPS.get();
+        assert!(lookups > 0);
+        assert!(
+            lookups <= item_count,
+            "deferred import boundary lookup ran {lookups} times for {item_count} imports"
         );
     }
 
