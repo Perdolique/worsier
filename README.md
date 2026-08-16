@@ -48,6 +48,8 @@ pnpm exec worsier --write .
 
 Directories and multiple files require either `--check` or `--write`. Directory discovery skips `.git`, `node_modules`, and Wrangler's generated `worker-configuration.d.ts`. An explicitly passed file is still processed even when it matches an ignore rule.
 
+`--write` opens each source without following a leaf symbolic link and overwrites changed files directly through the verified file handle, so the file itself must be writable; multiple input paths that identify the same file are rejected, an interrupted write can leave a partial file, and successful exit does not force data to persistent storage.
+
 ## Configuration
 
 A configuration file is optional. For every input, the CLI searches upward for the nearest `worsier.jsonc`, stopping at the Git or filesystem root. An invalid discovered or explicit file is an error; Worsier does not silently fall back to defaults.
