@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/cli", "crates/formatter", "crates/napi"]
+members = ["benchmark/rust", "crates/cli", "crates/formatter", "crates/napi"]
 exclude = ["fuzz"]
 resolver = "2"
 

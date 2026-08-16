@@ -356,7 +356,7 @@ fn supports_interface_layout_thresholds_and_off_from_config() {
 }
 
 #[test]
-fn supports_stdout_stdin_check_and_atomic_write() {
+fn supports_stdout_stdin_check_and_direct_write() {
     let directory = tempfile::tempdir().unwrap();
     fs::create_dir(directory.path().join(".git")).unwrap();
     write(
@@ -669,6 +669,35 @@ fn explicit_symbolic_links_are_rejected_without_modifying_the_target() {
     );
 }
 
+#[test]
+fn hard_link_aliases_are_rejected_before_parallel_writes() {
+    let directory = tempfile::tempdir().unwrap();
+    let first = directory.path().join("a/shared.ts");
+    let second = directory.path().join("b/shared.ts");
+    write(
+        &directory.path().join("a/worsier.jsonc"),
+        r#"{"rules":{"statementSpacing":{"variableDeclarations":"compact"},"semicolons":{"statements":"always"}}}"#,
+    );
+    write(
+        &directory.path().join("b/worsier.jsonc"),
+        r#"{"rules":{"statementSpacing":{"variableDeclarations":"compact"},"semicolons":{"statements":"asNeeded"}}}"#,
+    );
+    write(&first, "const first=1;const second=2;");
+    fs::hard_link(&first, &second).unwrap();
+
+    let output = command(directory.path())
+        .args(["--write", "--threads", "2", "a/shared.ts", "b/shared.ts"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stderr(&output).contains("identify the same file"));
+    assert_eq!(
+        fs::read_to_string(first).unwrap(),
+        "const first=1;const second=2;"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn config_update_rejects_symbolic_links_without_modifying_the_target() {
@@ -692,7 +721,7 @@ fn config_update_rejects_symbolic_links_without_modifying_the_target() {
 
 #[cfg(unix)]
 #[test]
-fn atomic_write_preserves_permissions_and_extended_attributes() {
+fn direct_write_preserves_inode_permissions_and_extended_attributes() {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
     let directory = tempfile::tempdir().unwrap();
@@ -715,6 +744,7 @@ fn atomic_write_preserves_permissions_and_extended_attributes() {
     assert!(output.status.success(), "{}", stderr(&output));
 
     let after = fs::metadata(&source).unwrap();
+    assert_eq!((after.dev(), after.ino()), (before.dev(), before.ino()));
     assert_eq!(after.permissions().mode() & 0o777, 0o640);
     assert_eq!((after.uid(), after.gid()), (before.uid(), before.gid()));
     assert_eq!(
@@ -757,7 +787,7 @@ fn config_update_preserves_permissions_and_extended_attributes() {
 
 #[cfg(target_os = "macos")]
 #[test]
-fn atomic_write_preserves_access_control_lists() {
+fn direct_write_preserves_access_control_lists() {
     let directory = tempfile::tempdir().unwrap();
     write(&directory.path().join("worsier.jsonc"), "{}");
     let source = directory.path().join("protected.ts");

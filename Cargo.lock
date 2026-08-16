@@ -1524,6 +1524,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "worsier-benchmark"
+version = "2.7.0"
+dependencies = [
+ "criterion",
+ "worsier-formatter",
+]
+
+[[package]]
 name = "worsier-cli"
 version = "2.7.0"
 dependencies = [
@@ -1546,7 +1554,6 @@ dependencies = [
 name = "worsier-formatter"
 version = "2.7.0"
 dependencies = [
- "criterion",
  "oxc_allocator",
  "oxc_ast",
  "oxc_ast_visit",

@@ -26,6 +26,103 @@ const CONFIG_FILE: &str = "worsier.jsonc";
 const BUILT_IN_IGNORED_ENTRY_NAMES: [&str; 3] =
     [".git", "node_modules", "worker-configuration.d.ts"];
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct FileIdentity {
+    volume: u64,
+    index: u64,
+}
+
+fn open_read_only_no_follow(path: &Path) -> io::Result<File> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path)
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
+
+        OpenOptions::new()
+            .read(true)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)
+    }
+}
+
+fn open_read_write_no_follow(path: &Path) -> io::Result<File> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path)
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
+
+        OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)
+    }
+}
+
+#[cfg(unix)]
+fn file_identity(file: &File) -> io::Result<FileIdentity> {
+    Ok(file_identity_from_metadata(&file.metadata()?))
+}
+
+#[cfg(unix)]
+fn file_identity_from_metadata(metadata: &fs::Metadata) -> FileIdentity {
+    use std::os::unix::fs::MetadataExt;
+
+    FileIdentity {
+        volume: metadata.dev(),
+        index: metadata.ino(),
+    }
+}
+
+#[cfg(windows)]
+#[allow(
+    unsafe_code,
+    reason = "GetFileInformationByHandle provides stable Windows file identity for an open handle"
+)]
+fn file_identity(file: &File) -> io::Result<FileIdentity> {
+    use std::os::windows::io::AsRawHandle;
+
+    use windows_sys::Win32::Foundation::HANDLE;
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+    };
+
+    let mut information = BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: the file owns a valid handle and information points to writable initialized storage.
+    let result =
+        unsafe { GetFileInformationByHandle(file.as_raw_handle() as HANDLE, &raw mut information) };
+    if result == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(FileIdentity {
+        volume: u64::from(information.dwVolumeSerialNumber),
+        index: u64::from(information.nFileIndexHigh) << 32 | u64::from(information.nFileIndexLow),
+    })
+}
+
 #[derive(Debug, Parser)]
 #[allow(
     clippy::struct_excessive_bools,
@@ -167,11 +264,13 @@ fn run_args(args: &Args) -> Result<i32> {
             continue;
         }
         jobs.push(Job {
+            identity: identify_source_path(&candidate.path)?,
             path: candidate.path,
             config: Arc::clone(&loaded.config),
         });
     }
 
+    reject_duplicate_job_targets(&jobs)?;
     run_jobs(args, &jobs)
 }
 
@@ -345,6 +444,16 @@ fn collect_files(paths: &[PathBuf]) -> Result<Vec<Candidate>> {
     Ok(files)
 }
 
+fn identify_source_path(path: &Path) -> Result<FileIdentity> {
+    let file = open_read_only_no_follow(path)
+        .with_context(|| format!("failed to open {}", escaped_path(path)))?;
+    let metadata = file.metadata()?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        bail!("{} changed while it was being opened", escaped_path(path));
+    }
+    Ok(file_identity(&file)?)
+}
+
 fn is_supported(path: &Path) -> bool {
     matches!(
         path.extension().and_then(std::ffi::OsStr::to_str),
@@ -495,6 +604,21 @@ fn build_config_ignore(path: &Path, config: &ResolvedConfig) -> Result<Gitignore
 struct Job {
     path: PathBuf,
     config: Arc<ResolvedConfig>,
+    identity: FileIdentity,
+}
+
+fn reject_duplicate_job_targets(jobs: &[Job]) -> Result<()> {
+    let mut paths_by_identity = HashMap::new();
+    for job in jobs {
+        if let Some(existing) = paths_by_identity.insert(job.identity, &job.path) {
+            bail!(
+                "{} and {} identify the same file; pass each source file once",
+                escaped_path(existing),
+                escaped_path(&job.path)
+            );
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy)]
@@ -520,9 +644,7 @@ enum JobResult {
 }
 
 fn format_job(job: &Job, mode: JobMode) -> JobResult {
-    let source = match fs::read_to_string(&job.path)
-        .with_context(|| format!("failed to read {}", escaped_path(&job.path)))
-    {
+    let source = match read_source(job) {
         Ok(source) => source,
         Err(error) => {
             return JobResult::Failed {
@@ -535,7 +657,7 @@ fn format_job(job: &Job, mode: JobMode) -> JobResult {
     match result {
         Ok(Some(output)) => {
             if matches!(mode, JobMode::Write)
-                && let Err(error) = atomic_write(&job.path, output.as_bytes())
+                && let Err(error) = write_source_direct(&job.path, job.identity, output.as_bytes())
             {
                 return JobResult::Failed {
                     path: job.path.clone(),
@@ -558,17 +680,47 @@ fn format_job(job: &Job, mode: JobMode) -> JobResult {
     }
 }
 
+fn read_source(job: &Job) -> Result<String> {
+    let mut file = open_validated_source(&job.path, job.identity, false)?;
+    let mut source = String::new();
+    file.read_to_string(&mut source)
+        .with_context(|| format!("failed to read {}", escaped_path(&job.path)))?;
+    Ok(source)
+}
+
+fn write_source_direct(path: &Path, identity: FileIdentity, output: &[u8]) -> Result<()> {
+    let mut file = open_validated_source(path, identity, true)?;
+    file.set_len(0)
+        .with_context(|| format!("failed to truncate {}", escaped_path(path)))?;
+    file.write_all(output)
+        .with_context(|| format!("failed to write {}", escaped_path(path)))?;
+    Ok(())
+}
+
+fn open_validated_source(path: &Path, identity: FileIdentity, writable: bool) -> Result<File> {
+    let file = if writable {
+        open_read_write_no_follow(path)
+    } else {
+        open_read_only_no_follow(path)
+    }
+    .with_context(|| format!("failed to open {}", escaped_path(path)))?;
+    let metadata = file.metadata()?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() || file_identity(&file)? != identity
+    {
+        bail!(
+            "{} changed while it was being formatted; no changes were written",
+            escaped_path(path)
+        );
+    }
+    Ok(file)
+}
+
 fn result_path(result: &JobResult) -> &Path {
     match result {
         JobResult::Clean { path, .. }
         | JobResult::Changed { path, .. }
         | JobResult::Failed { path, .. } => path,
     }
-}
-
-fn atomic_write(path: &Path, output: &[u8]) -> Result<()> {
-    let source = File::open(path)?;
-    atomic_write_from_source(path, output, &source, || Ok(()))
 }
 
 #[cfg(test)]
@@ -851,9 +1003,18 @@ mod tests {
 
     use super::{
         CONFIG_FILE, Job, JobMode, JobResult, atomic_write_with_before_replace, escaped_path,
-        format_job, init_config, load_config_with_override, load_discovered_config,
+        format_job, identify_source_path, init_config, load_config_with_override,
+        load_discovered_config, write_source_direct,
     };
     use worsier_formatter::{FormatConfig, resolve_config};
+
+    fn job(path: std::path::PathBuf, config: worsier_formatter::ResolvedConfig) -> Job {
+        Job {
+            identity: identify_source_path(&path).unwrap(),
+            path,
+            config: Arc::new(config),
+        }
+    }
 
     #[test]
     fn init_writes_a_loadable_complete_config_without_overwriting() {
@@ -910,10 +1071,7 @@ mod tests {
         let clean = directory.path().join("clean.ts");
         fs::write(&clean, "import { value } from 'pkg'").unwrap();
         let config = resolve_config(FormatConfig::default()).unwrap();
-        let clean_job = Job {
-            path: clean,
-            config: Arc::new(config.clone()),
-        };
+        let clean_job = job(clean, config.clone());
         assert!(matches!(
             format_job(&clean_job, JobMode::Check),
             JobResult::Clean { source: None, .. }
@@ -921,10 +1079,7 @@ mod tests {
 
         let changed = directory.path().join("changed.ts");
         fs::write(&changed, "import{value}from'pkg';").unwrap();
-        let changed_job = Job {
-            path: changed,
-            config: Arc::new(config),
-        };
+        let changed_job = job(changed, config);
         assert!(matches!(
             format_job(&changed_job, JobMode::Check),
             JobResult::Changed { output: None, .. }
@@ -940,7 +1095,48 @@ mod tests {
     }
 
     #[test]
-    fn atomic_write_failure_before_replace_leaves_original_unchanged() {
+    fn direct_write_rejects_a_path_replaced_with_another_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source.ts");
+        let original = directory.path().join("original.ts");
+        fs::write(&source, "import{value}from'pkg';").unwrap();
+        let identity = identify_source_path(&source).unwrap();
+        fs::rename(&source, &original).unwrap();
+        fs::write(&source, "doNotChange()").unwrap();
+
+        assert!(write_source_direct(&source, identity, b"changed").is_err());
+        assert_eq!(fs::read_to_string(&source).unwrap(), "doNotChange()");
+        assert_eq!(
+            fs::read_to_string(&original).unwrap(),
+            "import{value}from'pkg';"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn direct_write_rejects_a_path_replaced_with_a_symbolic_link() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source.ts");
+        let original = directory.path().join("original.ts");
+        let victim = directory.path().join("victim.ts");
+        fs::write(&source, "import{value}from'pkg';").unwrap();
+        fs::write(&victim, "doNotChange()").unwrap();
+        let identity = identify_source_path(&source).unwrap();
+        fs::rename(&source, &original).unwrap();
+        symlink(&victim, &source).unwrap();
+
+        assert!(write_source_direct(&source, identity, b"changed").is_err());
+        assert_eq!(
+            fs::read_to_string(&original).unwrap(),
+            "import{value}from'pkg';"
+        );
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "doNotChange()");
+    }
+
+    #[test]
+    fn config_atomic_write_failure_before_replace_leaves_original_unchanged() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("sample.ts");
         fs::write(&path, "original").unwrap();

@@ -17,7 +17,7 @@
         {
           "type": "toml",
           "path": "/Cargo.lock",
-          "jsonpath": "$.package[?(@.name.value == 'worsier-cli' || @.name.value == 'worsier-formatter' || @.name.value == 'worsier-napi')].version"
+          "jsonpath": "$.package[?(@.name.value == 'worsier-benchmark' || @.name.value == 'worsier-cli' || @.name.value == 'worsier-formatter' || @.name.value == 'worsier-napi')].version"
         },
         {
           "type": "toml",

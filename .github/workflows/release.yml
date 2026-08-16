@@ -203,30 +203,8 @@ jobs:
           path: artifacts/*.node
           if-no-files-found: error
 
-  benchmarks:
-    needs: [release-please, validate]
-    if: needs.release-please.outputs.release_created == 'true'
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: Perdolique/automations/.github/actions/setup-pnpm@v3
-        with:
-          ref: ${{ needs.release-please.outputs.sha }}
-          install-dependencies: true
-      - run: rustup toolchain install
-      - name: Run report-only benchmarks
-        shell: bash
-        run: cargo bench -p worsier-formatter --features benchmarking --bench formatter -- --noplot 2>&1 | tee benchmark-results.txt
-      - run: pnpm --filter worsier build
-      - run: pnpm --filter worsier build:native
-      - name: Measure Node.js cold start
-        run: pnpm benchmark:node | tee -a benchmark-results.txt
-      - uses: actions/upload-artifact@v7
-        with:
-          name: benchmark-results
-          path: benchmark-results.txt
-
   publish:
-    needs: [release-please, native, benchmarks]
+    needs: [release-please, native]
     if: needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-24.04
     environment: npm
@@ -245,9 +223,6 @@ jobs:
           pattern: binding-*
           path: artifacts
           merge-multiple: true
-      - uses: actions/download-artifact@v8
-        with:
-          name: benchmark-results
       - run: pnpm --filter worsier build
       - name: Distribute artifacts
         run: pnpm exec napi artifacts --package-json-path packages/npm/package.json --output-dir artifacts --npm-dir npm
@@ -306,7 +281,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
-        run: gh release upload "${TAG_NAME}" benchmark-results.txt artifacts/*.node --clobber
+        run: gh release upload "${TAG_NAME}" artifacts/*.node --clobber
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

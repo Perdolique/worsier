@@ -1,6 +1,6 @@
 use std::collections::HashSet;
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read};
+use std::fs::{self, File};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -11,7 +11,12 @@ use jsonc_parser::{ParseOptions, parse_to_serde_value};
 use serde_json::Value;
 use worsier_formatter::{FormatConfig, resolve_config};
 
-use super::{atomic_write_from_source, build_config_ignore, escaped_path};
+#[cfg(unix)]
+use super::file_identity_from_metadata;
+use super::{
+    FileIdentity, atomic_write_from_source, build_config_ignore, escaped_path, file_identity,
+    open_read_only_no_follow,
+};
 
 const DEFAULT_SCHEMA: &str = "./node_modules/worsier/configuration_schema.json";
 const LEGACY_V0_KEYS: [&str; 12] = [
@@ -54,12 +59,6 @@ struct UpdateTarget {
     file: File,
     identity: FileIdentity,
     path: PathBuf,
-}
-
-#[derive(Clone, Copy, Eq, PartialEq)]
-struct FileIdentity {
-    volume: u64,
-    index: u64,
 }
 
 struct DeferredComments {
@@ -156,71 +155,6 @@ fn resolve_update_target(path: &Path) -> Result<UpdateTarget> {
         file,
         identity,
         path: absolute_path,
-    })
-}
-
-fn open_read_only_no_follow(path: &Path) -> io::Result<File> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-
-        OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(path)
-    }
-
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt;
-
-        use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
-
-        OpenOptions::new()
-            .read(true)
-            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
-            .open(path)
-    }
-}
-
-#[cfg(unix)]
-fn file_identity(file: &File) -> io::Result<FileIdentity> {
-    Ok(file_identity_from_metadata(&file.metadata()?))
-}
-
-#[cfg(unix)]
-fn file_identity_from_metadata(metadata: &fs::Metadata) -> FileIdentity {
-    use std::os::unix::fs::MetadataExt;
-
-    FileIdentity {
-        volume: metadata.dev(),
-        index: metadata.ino(),
-    }
-}
-
-#[cfg(windows)]
-#[allow(
-    unsafe_code,
-    reason = "GetFileInformationByHandle provides stable Windows file identity for an open handle"
-)]
-fn file_identity(file: &File) -> io::Result<FileIdentity> {
-    use std::os::windows::io::AsRawHandle;
-
-    use windows_sys::Win32::Foundation::HANDLE;
-    use windows_sys::Win32::Storage::FileSystem::{
-        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
-    };
-
-    let mut information = BY_HANDLE_FILE_INFORMATION::default();
-    // SAFETY: the file owns a valid handle and information points to writable initialized storage.
-    let result =
-        unsafe { GetFileInformationByHandle(file.as_raw_handle() as HANDLE, &raw mut information) };
-    if result == 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(FileIdentity {
-        volume: u64::from(information.dwVolumeSerialNumber),
-        index: u64::from(information.nFileIndexHigh) << 32 | u64::from(information.nFileIndexLow),
     })
 }
 

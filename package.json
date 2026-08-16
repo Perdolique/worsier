@@ -3,9 +3,11 @@
   "private": true,
   "packageManager": "pnpm@11.21.0",
   "scripts": {
-    "benchmark:node": "node scripts/benchmark-node.mjs",
+    "benchmark": "pnpm --filter worsier build && pnpm --filter worsier build:native && pnpm --filter worsier-benchmark benchmark",
+    "benchmark:update": "pnpm --filter worsier build && pnpm --filter worsier build:native && pnpm --filter worsier-benchmark benchmark:update",
+    "benchmark:verify": "pnpm --filter worsier-benchmark benchmark:verify",
     "build": "pnpm --filter worsier build",
-    "check": "pnpm check:versions && cargo test --workspace && pnpm --filter worsier build && pnpm --filter worsier build:native && pnpm --filter worsier test && pnpm --filter worsier test:packed",
+    "check": "pnpm check:versions && cargo test --workspace && pnpm --filter worsier-benchmark test && pnpm --filter worsier build && pnpm --filter worsier build:native && pnpm --filter worsier test && pnpm --filter worsier test:packed && pnpm --filter worsier-benchmark smoke && pnpm --filter worsier-benchmark benchmark:verify",
     "check:versions": "node scripts/check-versions.mjs",
     "generate": "cargo run -p worsier-formatter --example generate_schema && node scripts/generate-types.mjs"
   },

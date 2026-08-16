@@ -1,0 +1,21 @@
+{
+  "$schema": "../../packages/npm/configuration_schema.json",
+  "lineWidth": 120,
+  "verifyAst": true,
+  "rules": {
+    "importLayout": true,
+    "interfaceLayout": 0,
+    "statementSpacing": {
+      "imports": "separate",
+      "typeAliases": "separate",
+      "variableDeclarations": "separate"
+    },
+    "semicolons": {
+      "statements": "asNeeded",
+      "classMembers": "asNeeded",
+      "typeMembers": "asNeeded"
+    },
+    "trailingCommas": "never"
+  },
+  "ignorePatterns": []
+}
