@@ -164,6 +164,8 @@ The rule covers object and array literals, destructuring, named static imports a
 
 For `.vue` files, Worsier formats inline `<script>` and `<script setup>` blocks. Scripts without `lang` and scripts using `lang="js"`, `lang="jsx"`, `lang="ts"`, or `lang="tsx"` use the corresponding JavaScript or TypeScript parser.
 
+Generated lines preserve the script's existing top-level indentation, and import wrapping counts that indentation toward `lineWidth`.
+
 Templates, styles, custom blocks, tags, and attributes are preserved byte-for-byte. Scripts with a `src` attribute and scripts using any other `lang` value or a valueless `lang` attribute are also preserved; Worsier never reads an external script referenced by `src`.
 
 ## Programmatic API

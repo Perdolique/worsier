@@ -170,6 +170,29 @@ mod tests {
     }
 
     #[test]
+    fn preserves_vue_script_indent_across_layout_rules() {
+        let source = "<script setup lang=\"ts\">\n  import{first,second}from'pkg';type Alias=string;interface Shape { first: string; second: number; }class Store { value=1; }const value={items:[1,2,],};run();\n</script>";
+        let config = resolve_config(FormatConfig {
+            line_width: 36,
+            ..FormatConfig::default()
+        })
+        .unwrap();
+        let output = format_text(Path::new("component.vue"), source, &config)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            output,
+            "<script setup lang=\"ts\">\n  import {\n    first,\n    second\n  } from 'pkg'\n\n  type Alias=string\n\n  interface Shape {\n    first: string\n    second: number\n  }\n  class Store { value=1 }\n\n  const value={items:[1,2]}\n\n  run()\n</script>"
+        );
+        assert!(
+            format_text(Path::new("component.vue"), &output, &config)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
     fn preserves_the_complete_vue_document_when_rules_are_off() {
         let source = "<template> untouched </template>\n<script>const value={a:1,};</script>";
         let raw = r#"{

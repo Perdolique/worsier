@@ -16,7 +16,7 @@ pnpm exec worsier --write .
 
 The CLI uses its defaults when no configuration file is present. Run `pnpm exec worsier --init` to create a complete typed `worsier.jsonc`.
 
-For `.vue` files, Worsier formats inline `<script>` and `<script setup>` blocks using JavaScript, JSX, TypeScript, or TSX. Templates, styles, custom blocks, external `src` scripts, and unknown languages remain byte-for-byte unchanged.
+For `.vue` files, Worsier formats inline `<script>` and `<script setup>` blocks using JavaScript, JSX, TypeScript, or TSX while preserving their existing top-level indentation. Templates, styles, custom blocks, external `src` scripts, and unknown languages remain byte-for-byte unchanged.
 
 ## Programmatic API
 

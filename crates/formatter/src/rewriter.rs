@@ -2451,7 +2451,9 @@ impl LayoutIndents {
         }
         indent_resolution();
         let indent = match lists[list_index].container {
-            ListContainer::Program { .. } => String::new(),
+            ListContainer::Program { .. } => {
+                line_indent_at(source, lists[list_index].items[0].span.start)
+            }
             ListContainer::Braced { .. } => {
                 format!(
                     "{}  ",
@@ -2761,6 +2763,7 @@ fn format_import(
     trailing_commas: TrailingCommaMode,
     semicolon_shape: ImportSemicolonShape,
 ) -> Result<FormattedImport, FormatError> {
+    let base_indent = line_indent_at(source, span.start);
     let omitted_attribute_comma = (trailing_commas == TrailingCommaMode::Never)
         .then(|| import_attribute_trailing_comma(declaration, tokens))
         .flatten();
@@ -2775,10 +2778,13 @@ fn format_import(
             comments,
             newline,
             false,
+            &base_indent,
             trailing_commas,
             omitted_attribute_comma,
         )?;
-        let effective_width = semicolon_shape.adjust_width(flat.chars().count());
+        let effective_width = semicolon_shape
+            .adjust_width(flat.chars().count())
+            .saturating_add(base_indent.chars().count());
         if contains_line_break(&flat) || effective_width > line_width as usize {
             format_named_import(
                 span,
@@ -2789,6 +2795,7 @@ fn format_import(
                 comments,
                 newline,
                 true,
+                &base_indent,
                 trailing_commas,
                 omitted_attribute_comma,
             )?
@@ -2871,6 +2878,7 @@ fn format_named_import(
     comments: &[Comment],
     newline: &str,
     multiline: bool,
+    base_indent: &str,
     trailing_commas: TrailingCommaMode,
     omitted_attribute_comma: Option<Span>,
 ) -> Result<String, FormatError> {
@@ -2920,11 +2928,13 @@ fn format_named_import(
     if segments.is_empty() {
         output.push('}');
     } else if multiline {
+        let item_indent = format!("{base_indent}  ");
         output.push_str(newline);
         for segment in &segments {
-            output.push_str(&indent_lines(&segment.text, "  "));
+            output.push_str(&indent_lines(&segment.text, &item_indent));
             output.push_str(newline);
         }
+        output.push_str(base_indent);
         output.push('}');
     } else {
         output.push(' ');
