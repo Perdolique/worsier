@@ -10,11 +10,15 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     let config = resolve_config(FormatConfig::default()).unwrap();
-    for file_name in ["fuzz.js", "fuzz.ts", "fuzz.tsx"] {
+    for file_name in ["fuzz.js", "fuzz.ts", "fuzz.tsx", "fuzz.vue"] {
         let path = Path::new(file_name);
         let formatted = match format_text(path, source, &config) {
             Ok(formatted) => formatted,
-            Err(FormatError::Parse { .. } | FormatError::UnsupportedSource { .. }) => continue,
+            Err(
+                FormatError::Parse { .. }
+                | FormatError::EmbeddedParse { .. }
+                | FormatError::UnsupportedSource { .. },
+            ) => continue,
             Err(error) => panic!("{file_name}: formatting failed: {error}\nsource:\n{source}"),
         };
         if let Some(output) = formatted {

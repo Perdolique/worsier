@@ -1554,6 +1554,7 @@ dependencies = [
 name = "worsier-formatter"
 version = "2.7.1"
 dependencies = [
+ "memchr",
  "oxc_allocator",
  "oxc_ast",
  "oxc_ast_visit",

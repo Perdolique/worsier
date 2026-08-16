@@ -885,15 +885,81 @@ fn accepts_every_documented_source_extension() {
         ("sample.mts", "const value:number=1;"),
         ("sample.cts", "const value:number=1;"),
         ("sample.tsx", "const element: JSX.Element=<div/>;"),
+        (
+            "sample.vue",
+            "<template><div>untouched</div></template><script setup lang=\"ts\">const value:number=1;</script>",
+        ),
     ];
 
     for (file_name, source) in cases {
         write(&directory.path().join(file_name), source);
         let output = command(directory.path()).arg(file_name).output().unwrap();
         assert!(output.status.success(), "{file_name}: {}", stderr(&output));
-        assert_eq!(
-            String::from_utf8(output.stdout).unwrap(),
-            source.strip_suffix(';').unwrap()
-        );
+        let expected = if file_name == "sample.vue" {
+            source.replace("value:number=1;</script>", "value:number=1</script>")
+        } else {
+            source.strip_suffix(';').unwrap().to_owned()
+        };
+        assert_eq!(String::from_utf8(output.stdout).unwrap(), expected);
     }
+}
+
+#[test]
+fn supports_vue_in_directory_stdin_check_and_write_flows() {
+    let directory = tempfile::tempdir().unwrap();
+    write(&directory.path().join("worsier.jsonc"), "{}");
+    let source = "<template><div data-label=\">\">{{ \"<template>\" }}</div></template>\n<i18n>{\"message\":\"<!--\"}</i18n>\n<script setup lang=\"ts\">import{value}from'pkg';const count:number=1;</script>\n<style>.x{color:red}</style>";
+    let expected = "<template><div data-label=\">\">{{ \"<template>\" }}</div></template>\n<i18n>{\"message\":\"<!--\"}</i18n>\n<script setup lang=\"ts\">import { value } from 'pkg'\n\nconst count:number=1</script>\n<style>.x{color:red}</style>";
+    write(&directory.path().join("nested/component.vue"), source);
+
+    let explicit = command(directory.path())
+        .arg("nested/component.vue")
+        .output()
+        .unwrap();
+    assert!(explicit.status.success(), "{}", stderr(&explicit));
+    assert_eq!(String::from_utf8(explicit.stdout).unwrap(), expected);
+
+    let mut stdin = command(directory.path());
+    stdin
+        .args(["--stdin-filepath", "nested/component.vue"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped());
+    let mut child = stdin.spawn().unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(source.as_bytes())
+        .unwrap();
+    let stdin_output = child.wait_with_output().unwrap();
+    assert!(stdin_output.status.success(), "{}", stderr(&stdin_output));
+    assert_eq!(String::from_utf8(stdin_output.stdout).unwrap(), expected);
+
+    let checked = command(directory.path())
+        .args(["--check", "."])
+        .output()
+        .unwrap();
+    assert_eq!(checked.status.code(), Some(1));
+    let checked_stderr = stderr(&checked);
+    let expected_path = Path::new("nested")
+        .join("component.vue")
+        .to_string_lossy()
+        .into_owned();
+    assert!(checked_stderr.contains(&expected_path), "{checked_stderr}");
+
+    let written = command(directory.path())
+        .args(["--write", "."])
+        .output()
+        .unwrap();
+    assert!(written.status.success(), "{}", stderr(&written));
+    assert_eq!(
+        fs::read_to_string(directory.path().join("nested/component.vue")).unwrap(),
+        expected
+    );
+
+    let clean = command(directory.path())
+        .args(["--check", "."])
+        .output()
+        .unwrap();
+    assert!(clean.status.success(), "{}", stderr(&clean));
 }

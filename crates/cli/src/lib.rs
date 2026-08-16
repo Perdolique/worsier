@@ -16,7 +16,9 @@ use rayon::prelude::*;
 use tempfile::Builder as TempFileBuilder;
 #[cfg(windows)]
 use tempfile::NamedTempFile;
-use worsier_formatter::{FormatConfig, ResolvedConfig, format_text, resolve_config};
+use worsier_formatter::{
+    FormatConfig, ResolvedConfig, format_text, is_supported_path, resolve_config,
+};
 
 mod config_update;
 
@@ -131,7 +133,7 @@ fn file_identity(file: &File) -> io::Result<FileIdentity> {
 #[command(
     name = "worsier",
     version,
-    about = "Format JavaScript and TypeScript with focused Worsier rules"
+    about = "Format JavaScript, TypeScript, and inline Vue scripts with focused Worsier rules"
 )]
 struct Args {
     /// Create an optional complete worsier.jsonc in the current directory.
@@ -246,7 +248,7 @@ fn run_args(args: &Args) -> Result<i32> {
     if candidates.is_empty() {
         if explicit_single_file {
             bail!(
-                "{} is not a supported JavaScript or TypeScript file",
+                "{} is not a supported JavaScript, TypeScript, or Vue file",
                 escaped_path(&args.paths[0])
             );
         }
@@ -392,14 +394,14 @@ fn collect_files(paths: &[PathBuf]) -> Result<Vec<Candidate>> {
             );
         }
         if path.is_file() {
-            if is_supported(path) {
+            if is_supported_path(path) {
                 files.push(Candidate {
                     path: path.clone(),
                     discovered: false,
                 });
             } else {
                 bail!(
-                    "{} is not a supported JavaScript or TypeScript file",
+                    "{} is not a supported JavaScript, TypeScript, or Vue file",
                     escaped_path(path)
                 );
             }
@@ -423,7 +425,9 @@ fn collect_files(paths: &[PathBuf]) -> Result<Vec<Candidate>> {
             .build();
         for entry in walker {
             let entry = entry.with_context(|| format!("failed to walk {}", escaped_path(path)))?;
-            if entry.file_type().is_some_and(|kind| kind.is_file()) && is_supported(entry.path()) {
+            if entry.file_type().is_some_and(|kind| kind.is_file())
+                && is_supported_path(entry.path())
+            {
                 files.push(Candidate {
                     path: entry.into_path(),
                     discovered: true,
@@ -452,13 +456,6 @@ fn identify_source_path(path: &Path) -> Result<FileIdentity> {
         bail!("{} changed while it was being opened", escaped_path(path));
     }
     Ok(file_identity(&file)?)
-}
-
-fn is_supported(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(std::ffi::OsStr::to_str),
-        Some("js" | "mjs" | "cjs" | "jsx" | "ts" | "mts" | "cts" | "tsx")
-    )
 }
 
 fn load_discovered_config(file: &Path, no_verify: bool) -> Result<Arc<ResolvedConfig>> {

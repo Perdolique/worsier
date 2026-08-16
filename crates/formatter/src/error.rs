@@ -6,6 +6,8 @@ use thiserror::Error;
 pub enum FormatError {
     #[error("JavaScript or TypeScript parsing failed: {diagnostics}")]
     Parse { diagnostics: String },
+    #[error("embedded document parsing failed: {diagnostics}")]
+    EmbeddedParse { diagnostics: String },
     #[error("unsupported source: {message}")]
     UnsupportedSource { message: String },
     #[error("invalid configuration: {message}")]
@@ -20,7 +22,7 @@ impl FormatError {
     #[must_use]
     pub const fn code(&self) -> &'static str {
         match self {
-            Self::Parse { .. } => "PARSE_ERROR",
+            Self::Parse { .. } | Self::EmbeddedParse { .. } => "PARSE_ERROR",
             Self::UnsupportedSource { .. } => "UNSUPPORTED_SOURCE",
             Self::InvalidConfig { .. } => "CONFIG_ERROR",
             Self::Verification { .. } => "VERIFICATION_ERROR",
@@ -68,6 +70,12 @@ mod tests {
                     message: String::new(),
                 },
                 "UNSUPPORTED_SOURCE",
+            ),
+            (
+                FormatError::EmbeddedParse {
+                    diagnostics: String::new(),
+                },
+                "PARSE_ERROR",
             ),
             (FormatError::invalid_config("invalid"), "CONFIG_ERROR"),
             (

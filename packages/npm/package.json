@@ -1,7 +1,7 @@
 {
   "name": "worsier",
   "version": "2.7.1",
-  "description": "A focused JavaScript and TypeScript import, interface-layout, semicolon, trailing-comma, and statement-boundary formatter powered by Rust",
+  "description": "A focused JavaScript, TypeScript, and Vue SFC script formatter powered by Rust",
   "license": "MIT",
   "repository": {
     "type": "git",
