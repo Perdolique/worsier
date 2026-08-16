@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.7.1](https://github.com/Perdolique/worsier/compare/v2.7.0...v2.7.1) (2026-08-16)
+
+
+### Performance Improvements
+
+* **all:** streamline Worsier formatting ([88d1af4](https://github.com/Perdolique/worsier/commit/88d1af4fd17fe1be18040d69f6d15b0e7b255f92))
+
 ## [2.7.0](https://github.com/Perdolique/worsier/compare/v2.6.0...v2.7.0) (2026-08-15)
 
 
