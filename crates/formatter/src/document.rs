@@ -193,6 +193,34 @@ mod tests {
     }
 
     #[test]
+    fn formats_inline_vue_import_with_final_indent_idempotently() {
+        let config = resolve_config(FormatConfig {
+            line_width: 24,
+            ..FormatConfig::default()
+        })
+        .unwrap();
+
+        for newline in ["\n", "\r\n"] {
+            let source = format!(
+                "<script setup lang=\"ts\">{newline}  run();import{{x}}from'pkg';{newline}</script>"
+            );
+            let expected = format!(
+                "<script setup lang=\"ts\">{newline}  run(){newline}{newline}  import {{{newline}    x{newline}  }} from 'pkg'{newline}</script>"
+            );
+            let output = format_text(Path::new("component.vue"), &source, &config)
+                .unwrap()
+                .unwrap();
+
+            assert_eq!(output, expected);
+            assert!(
+                format_text(Path::new("component.vue"), &output, &config)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
     fn preserves_the_complete_vue_document_when_rules_are_off() {
         let source = "<template> untouched </template>\n<script>const value={a:1,};</script>";
         let raw = r#"{
