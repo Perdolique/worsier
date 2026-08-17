@@ -20,13 +20,13 @@ assert.equal(variablesDisabled, 'const first=1;let second=2')
 const compactTypeAliases = await binding.format(
   'smoke.ts',
   'type A=1;type B={\n value:string\n};\n\n\nrun();',
-  '{"rules":{"importLayout":false,"interfaceLayout":"off","statementSpacing":{"imports":"off","typeAliases":"compact","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}'
+  '{"rules":{"importLayout":false,"interfaceLayout":"off","statementSpacing":{"imports":"off","returnStatements":"off","typeAliases":"compact","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}'
 )
 assert.equal(compactTypeAliases, 'type A=1;\ntype B={\n value:string\n};\nrun();')
 const trailingAlways = await binding.format(
   'smoke.ts',
   'const value={\n  item: true\n};',
-  '{"rules":{"importLayout":false,"statementSpacing":{"imports":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"always"}}'
+  '{"rules":{"importLayout":false,"statementSpacing":{"imports":"off","returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"always"}}'
 )
 assert.equal(trailingAlways, 'const value={\n  item: true,\n};')
 console.log(`Native smoke passed for ${addonPath}`)

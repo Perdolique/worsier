@@ -159,6 +159,7 @@ pub enum SemicolonMode {
 #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
 pub struct StatementSpacingConfig {
     pub imports: StatementSpacingMode,
+    pub return_statements: StatementSpacingMode,
     pub type_aliases: StatementSpacingMode,
     pub variable_declarations: StatementSpacingMode,
 }
@@ -167,6 +168,7 @@ impl Default for StatementSpacingConfig {
     fn default() -> Self {
         Self {
             imports: StatementSpacingMode::Separate,
+            return_statements: StatementSpacingMode::Separate,
             type_aliases: StatementSpacingMode::Separate,
             variable_declarations: StatementSpacingMode::Separate,
         }
@@ -223,6 +225,11 @@ impl ResolvedConfig {
     #[must_use]
     pub const fn import_spacing(&self) -> StatementSpacingMode {
         self.value.rules.statement_spacing.imports
+    }
+
+    #[must_use]
+    pub const fn return_statement_spacing(&self) -> StatementSpacingMode {
+        self.value.rules.statement_spacing.return_statements
     }
 
     #[must_use]
@@ -291,6 +298,10 @@ mod tests {
         assert!(config.import_layout_enabled());
         assert_eq!(config.interface_layout_threshold(), Some(0));
         assert_eq!(config.import_spacing(), StatementSpacingMode::Separate);
+        assert_eq!(
+            config.return_statement_spacing(),
+            StatementSpacingMode::Separate
+        );
         assert_eq!(config.type_alias_spacing(), StatementSpacingMode::Separate);
         assert_eq!(
             config.variable_declaration_spacing(),
@@ -327,6 +338,7 @@ mod tests {
             r#"{"rules":{"semicolons":{"statements":"never"}}}"#,
             r#"{"rules":{"semicolons":{"extra":"off"}}}"#,
             r#"{"rules":{"statementSpacing":{"imports":"preserve"}}}"#,
+            r#"{"rules":{"statementSpacing":{"returnStatements":"preserve"}}}"#,
             r#"{"rules":{"statementSpacing":{"typeAliases":"preserve"}}}"#,
             r#"{"rules":{"statementSpacing":{"variables":"compact"}}}"#,
         ] {
@@ -350,6 +362,10 @@ mod tests {
         assert!(!config.import_layout_enabled());
         assert_eq!(config.interface_layout_threshold(), Some(0));
         assert_eq!(config.import_spacing(), StatementSpacingMode::Compact);
+        assert_eq!(
+            config.return_statement_spacing(),
+            StatementSpacingMode::Separate
+        );
         assert_eq!(config.type_alias_spacing(), StatementSpacingMode::Off);
         assert_eq!(
             config.variable_declaration_spacing(),
