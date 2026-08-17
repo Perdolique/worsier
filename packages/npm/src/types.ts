@@ -12,6 +12,7 @@ export interface FormatConfig {
 export interface RulesConfig {
   importLayout?: boolean
   interfaceLayout?: number | InterfaceLayoutMode
+  objectPropertySpacing?: boolean
   semicolons?: SemicolonConfig
   statementSpacing?: StatementSpacingConfig
   trailingCommas?: 'always' | 'never' | 'off'

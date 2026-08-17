@@ -5,6 +5,7 @@
   "rules": {
     "importLayout": true,
     "interfaceLayout": 0,
+    "objectPropertySpacing": true,
     "statementSpacing": {
       "controlFlowStatements": "separate",
       "imports": "separate",

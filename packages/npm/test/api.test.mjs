@@ -16,6 +16,7 @@ test('formats through the asynchronous native API', async () => {
   const variablesOnly = await format('sample.ts', source, {
     rules: {
       importLayout: false,
+      objectPropertySpacing: false,
       statementSpacing: { imports: 'off' }
     }
   })
@@ -34,6 +35,7 @@ test('formats through the asynchronous native API', async () => {
   const disabled = await format('sample.ts', source, {
     rules: {
       importLayout: false,
+      objectPropertySpacing: false,
       interfaceLayout: 'off',
       statementSpacing: { controlFlowStatements: 'off', imports: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
       semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
@@ -46,6 +48,31 @@ test('formats through the asynchronous native API', async () => {
     rules: { statementSpacing: { imports: 'compact' } }
   })
   assert.equal(partialNested, 'const first=1\n\nwork()')
+})
+
+test('formats object property spacing through the native API', async () => {
+  const source = 'const value={first:1,second:2};'
+  assert.equal(
+    await format('sample.ts', source),
+    'const value={\n  first:1,\n  second:2\n}'
+  )
+  assert.equal(
+    await format('sample.ts', source, { rules: { importLayout: false } }),
+    'const value={\n  first:1,\n  second:2\n}'
+  )
+  assert.equal(
+    await format('sample.ts', source, {
+      rules: {
+        importLayout: false,
+        interfaceLayout: 'off',
+        objectPropertySpacing: false,
+        statementSpacing: { controlFlowStatements: 'off', imports: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
+        semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
+        trailingCommas: 'off'
+      }
+    }),
+    source
+  )
 })
 
 test('formats inline Vue scripts through the native API', async () => {
@@ -71,6 +98,7 @@ test('formats interface layouts through the native API', async () => {
 
   const isolatedRules = {
     importLayout: false,
+    objectPropertySpacing: false,
     statementSpacing: { controlFlowStatements: 'off', imports: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
     semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
     trailingCommas: 'off'
@@ -124,6 +152,7 @@ test('formats type alias spacing through the native API', async () => {
   const output = await format('sample.ts', source, {
     rules: {
       importLayout: false,
+      objectPropertySpacing: false,
       interfaceLayout: 'off',
       statementSpacing: { controlFlowStatements: 'off', imports: 'off', returnStatements: 'off', typeAliases: 'compact', variableDeclarations: 'off' },
       semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
@@ -138,6 +167,7 @@ test('formats return statement spacing through the native API', async () => {
   const output = await format('sample.ts', source, {
     rules: {
       importLayout: false,
+      objectPropertySpacing: false,
       interfaceLayout: 'off',
       statementSpacing: { controlFlowStatements: 'off', imports: 'off', returnStatements: 'separate', typeAliases: 'off', variableDeclarations: 'off' },
       semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
@@ -152,6 +182,7 @@ test('formats control-flow statement spacing through the native API', async () =
   const output = await format('sample.ts', source, {
     rules: {
       importLayout: false,
+      objectPropertySpacing: false,
       interfaceLayout: 'off',
       statementSpacing: { controlFlowStatements: 'separate', imports: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
       semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
@@ -167,6 +198,7 @@ test('formats granular semicolon groups through the native API', async () => {
   const output = await format('sample.ts', source, {
     rules: {
       importLayout: false,
+      objectPropertySpacing: false,
       statementSpacing: { controlFlowStatements: 'off', imports: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
       semicolons: { statements: 'off', classMembers: 'asNeeded', typeMembers: 'always' },
       trailingCommas: 'off'
@@ -183,6 +215,7 @@ test('formats trailing commas through the native API', async () => {
   const withCommas = 'const value = {\n  items: [\n    1,\n  ],\n};'
   const disabledRules = {
     importLayout: false,
+    objectPropertySpacing: false,
     statementSpacing: { controlFlowStatements: 'off', imports: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
     semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' }
   }
@@ -222,6 +255,7 @@ test('maps native failures to stable error codes', async () => {
     [{ interfaceLayout: -1 }, 'rules.interfaceLayout'],
     [{ interfaceLayout: 1.5 }, 'rules.interfaceLayout'],
     [{ interfaceLayout: 'always' }, 'rules.interfaceLayout'],
+    [{ objectPropertySpacing: 'always' }, 'rules.objectPropertySpacing'],
     [{ semicolons: 'always' }, 'rules.semicolons'],
     [{ semicolons: { statements: 'never' } }, 'rules.semicolons.statements'],
     [{ semicolons: { extra: 'off' } }, 'rules.semicolons.extra'],
