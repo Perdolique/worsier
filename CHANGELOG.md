@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.11.0](https://github.com/Perdolique/worsier/compare/v2.10.0...v2.11.0) (2026-08-17)
+
+
+### Features
+
+* **formatter:** add object property spacing ([bf32936](https://github.com/Perdolique/worsier/commit/bf32936efc23486c23b6efb396aecec2e5021c78))
+
 ## [2.10.0](https://github.com/Perdolique/worsier/compare/v2.9.0...v2.10.0) (2026-08-17)
 
 
