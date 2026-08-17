@@ -697,7 +697,7 @@ mod tests {
         let result = update_config_source("{}", Path::new("worsier.jsonc")).unwrap();
         assert_eq!(
             result.output,
-            "{\n  \"$schema\": \"./node_modules/worsier/configuration_schema.json\",\n  \"lineWidth\": 120,\n  \"verifyAst\": true,\n  \"rules\": {\n    \"importLayout\": true,\n    \"interfaceLayout\": 0,\n    \"statementSpacing\": {\n      \"controlFlowStatements\": \"separate\",\n      \"imports\": \"separate\",\n      \"returnStatements\": \"separate\",\n      \"typeAliases\": \"separate\",\n      \"variableDeclarations\": \"separate\"\n    },\n    \"semicolons\": {\n      \"statements\": \"asNeeded\",\n      \"classMembers\": \"asNeeded\",\n      \"typeMembers\": \"asNeeded\"\n    },\n    \"trailingCommas\": \"never\"\n  },\n  \"ignorePatterns\": []\n}"
+            "{\n  \"$schema\": \"./node_modules/worsier/configuration_schema.json\",\n  \"lineWidth\": 120,\n  \"verifyAst\": true,\n  \"rules\": {\n    \"importLayout\": true,\n    \"interfaceLayout\": 0,\n    \"objectPropertySpacing\": true,\n    \"statementSpacing\": {\n      \"controlFlowStatements\": \"separate\",\n      \"imports\": \"separate\",\n      \"returnStatements\": \"separate\",\n      \"typeAliases\": \"separate\",\n      \"variableDeclarations\": \"separate\"\n    },\n    \"semicolons\": {\n      \"statements\": \"asNeeded\",\n      \"classMembers\": \"asNeeded\",\n      \"typeMembers\": \"asNeeded\"\n    },\n    \"trailingCommas\": \"never\"\n  },\n  \"ignorePatterns\": []\n}"
         );
         assert_eq!(result.changes.len(), 5);
     }
@@ -729,6 +729,15 @@ mod tests {
                 .contains("\"statementSpacing\"/* variables key */:/* variables value */{")
         );
         assert!(result.output.contains("\"imports\": \"off\""));
+        assert!(result.output.contains("\"objectPropertySpacing\": true"));
+        assert!(
+            result.output.find("\"interfaceLayout\"")
+                < result.output.find("\"objectPropertySpacing\"")
+        );
+        assert!(
+            result.output.find("\"objectPropertySpacing\"")
+                < result.output.find("\"statementSpacing\"")
+        );
         assert!(
             result
                 .output
@@ -776,6 +785,7 @@ mod tests {
             let value = parsed_output(source);
             let rules = value["rules"].as_object().unwrap();
             assert_eq!(rules["importLayout"], import_layout, "{source}");
+            assert_eq!(rules["objectPropertySpacing"], true, "{source}");
             assert_eq!(
                 rules["statementSpacing"]["controlFlowStatements"], "separate",
                 "{source}"

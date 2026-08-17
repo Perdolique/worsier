@@ -48,6 +48,8 @@ thread_local! {
     static TOKEN_PARSER_RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static LINE_BREAK_INDEX_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static LINE_BREAK_QUERIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static LINE_START_INDEX_QUERIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static RAW_LINE_START_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static PARENTHESIS_INDEX_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static PARENTHESIS_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static DEFERRED_IMPORT_BOUNDARY_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -138,6 +140,7 @@ pub(crate) fn format_script(
     }
     if !config.import_layout_enabled()
         && config.interface_layout_threshold().is_none()
+        && !config.object_property_spacing_enabled()
         && config.control_flow_statement_spacing() == StatementSpacingMode::Off
         && config.import_spacing() == StatementSpacingMode::Off
         && config.return_statement_spacing() == StatementSpacingMode::Off
@@ -162,6 +165,7 @@ pub(crate) fn format_script(
         RewriteRules {
             import_layout: config.import_layout_enabled(),
             interface_layout_threshold: config.interface_layout_threshold(),
+            object_property_spacing: config.object_property_spacing_enabled(),
             control_flow_spacing: config.control_flow_statement_spacing(),
             import_spacing: config.import_spacing(),
             return_spacing: config.return_statement_spacing(),
@@ -1121,6 +1125,18 @@ impl LineBreakIndex {
             .get(index)
             .is_some_and(|offset| *offset < span.end)
     }
+
+    fn line_start(&self, offset: u32) -> u32 {
+        #[cfg(test)]
+        LINE_START_INDEX_QUERIES.set(LINE_START_INDEX_QUERIES.get() + 1);
+        let index = self
+            .offsets
+            .partition_point(|line_break| *line_break < offset);
+        index
+            .checked_sub(1)
+            .and_then(|index| self.offsets.get(index))
+            .map_or(0, |line_break| line_break.saturating_add(1))
+    }
 }
 
 struct ParenthesisIndex {
@@ -1256,6 +1272,7 @@ enum StatementTarget {
 struct RewriteRules {
     import_layout: bool,
     interface_layout_threshold: Option<u32>,
+    object_property_spacing: bool,
     control_flow_spacing: StatementSpacingMode,
     import_spacing: StatementSpacingMode,
     return_spacing: StatementSpacingMode,
@@ -1267,9 +1284,19 @@ struct RewriteRules {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct ParentItem {
-    list_index: usize,
-    item_index: usize,
+enum ParentItem {
+    Statement {
+        list_index: usize,
+        item_index: usize,
+    },
+    ObjectProperty {
+        object_index: usize,
+        item_index: usize,
+    },
+    SwitchCaseLabel {
+        switch_index: usize,
+        list_index: Option<usize>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -1277,6 +1304,7 @@ enum ExpandedLayout {
     List(usize),
     Switch(usize),
     Interface(usize),
+    Object(usize),
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -1342,6 +1370,24 @@ struct InterfaceBodyLayout {
     members: Vec<Span>,
     layout_parent: Option<ExpandedLayout>,
     parent_item: Option<ParentItem>,
+}
+
+#[derive(Debug)]
+struct ObjectItemLayout {
+    span: Span,
+    boundary_end: u32,
+    multiline: bool,
+}
+
+#[derive(Debug)]
+struct ObjectLayout {
+    open: Span,
+    close: Span,
+    items: Vec<ObjectItemLayout>,
+    layout_parent: Option<ExpandedLayout>,
+    parent_item: Option<ParentItem>,
+    original_multiline: bool,
+    expanded: bool,
 }
 
 fn rewrite_edits(
@@ -1544,15 +1590,21 @@ fn collect_layout_edits(
         && rules.type_alias_spacing == StatementSpacingMode::Off
         && rules.variable_spacing == StatementSpacingMode::Off
         && rules.interface_layout_threshold.is_none()
+        && !rules.object_property_spacing
     {
         return Ok(Vec::new());
     }
 
+    let object_line_breaks = rules
+        .object_property_spacing
+        .then(|| LineBreakIndex::new(source));
     let mut collector = StatementCollector {
         source,
         tokens,
         formatted_imports,
+        object_line_breaks: object_line_breaks.as_ref(),
         interface_layout_threshold: rules.interface_layout_threshold,
+        object_property_spacing: rules.object_property_spacing,
         control_flow_spacing: rules.control_flow_spacing,
         import_spacing: rules.import_spacing,
         return_spacing: rules.return_spacing,
@@ -1566,12 +1618,14 @@ fn collect_layout_edits(
         lists: Vec::new(),
         switches: Vec::new(),
         interfaces: Vec::new(),
+        objects: Vec::new(),
     };
     collector.visit_program(program);
     mark_expanded_layouts(
         &mut collector.lists,
         &mut collector.switches,
         &collector.interfaces,
+        &mut collector.objects,
     );
     let mut edits = Vec::new();
     append_layout_edits(
@@ -1581,6 +1635,8 @@ fn collect_layout_edits(
         &collector.lists,
         &collector.switches,
         &collector.interfaces,
+        &collector.objects,
+        object_line_breaks.as_ref(),
         &mut edits,
     )?;
     Ok(edits)
@@ -1610,7 +1666,9 @@ struct StatementCollector<'s> {
     source: &'s str,
     tokens: &'s [Token],
     formatted_imports: &'s HashMap<u32, bool>,
+    object_line_breaks: Option<&'s LineBreakIndex>,
     interface_layout_threshold: Option<u32>,
+    object_property_spacing: bool,
     control_flow_spacing: StatementSpacingMode,
     import_spacing: StatementSpacingMode,
     return_spacing: StatementSpacingMode,
@@ -1624,6 +1682,7 @@ struct StatementCollector<'s> {
     lists: Vec<StatementList>,
     switches: Vec<SwitchLayout>,
     interfaces: Vec<InterfaceBodyLayout>,
+    objects: Vec<ObjectLayout>,
 }
 
 impl StatementCollector<'_> {
@@ -1743,7 +1802,7 @@ impl StatementCollector<'_> {
         if item_span.start != statement_span.start || item_span.end != statement_span.end {
             return None;
         }
-        Some(ParentItem {
+        Some(ParentItem::Statement {
             list_index,
             item_index,
         })
@@ -1793,6 +1852,69 @@ impl<'a> Visit<'a> for StatementCollector<'_> {
         self.current_layout = self.current_list.map(ExpandedLayout::List);
         walk_program(self, program);
         self.current_list = previous_list;
+        self.current_layout = previous_layout;
+    }
+
+    fn visit_object_expression(&mut self, expression: &ObjectExpression<'a>) {
+        if !self.object_property_spacing || expression.properties.is_empty() {
+            walk_object_expression(self, expression);
+            return;
+        }
+        let Some((open, close)) = brace_tokens(self.tokens, expression.span) else {
+            walk_object_expression(self, expression);
+            return;
+        };
+        let original_multiline = self
+            .object_line_breaks
+            .is_some_and(|line_breaks| line_breaks.contains(expression.span));
+        let object_index = self.objects.len();
+        let mut items = expression
+            .properties
+            .iter()
+            .map(|property| {
+                let span = property.span();
+                ObjectItemLayout {
+                    span,
+                    boundary_end: span.end,
+                    multiline: self
+                        .object_line_breaks
+                        .is_some_and(|line_breaks| line_breaks.contains(span)),
+                }
+            })
+            .collect::<Vec<_>>();
+        for item_index in 0..items.len() {
+            let boundary_limit = items
+                .get(item_index + 1)
+                .map_or(close.start, |next| next.span.start);
+            items[item_index].boundary_end = tokens_in_span(
+                self.tokens,
+                Span::new(items[item_index].span.end, boundary_limit),
+            )
+            .iter()
+            .find(|token| token.kind() == Kind::Comma)
+            .map_or(items[item_index].span.end, Token::end);
+        }
+        self.objects.push(ObjectLayout {
+            open,
+            close,
+            items,
+            layout_parent: self.current_layout,
+            parent_item: self.current_item,
+            original_multiline,
+            expanded: expression.properties.len() >= 2 && !original_multiline,
+        });
+
+        let previous_layout = self
+            .current_layout
+            .replace(ExpandedLayout::Object(object_index));
+        for (item_index, property) in expression.properties.iter().enumerate() {
+            let previous_item = self.current_item.replace(ParentItem::ObjectProperty {
+                object_index,
+                item_index,
+            });
+            self.visit_object_property_kind(property);
+            self.current_item = previous_item;
+        }
         self.current_layout = previous_layout;
     }
 
@@ -1882,7 +2004,7 @@ impl<'a> Visit<'a> for StatementCollector<'_> {
     fn visit_switch_case(&mut self, case: &SwitchCase<'a>) {
         let previous_list = self.current_list;
         let previous_layout = self.current_layout;
-        self.current_list = if !case.consequent.is_empty()
+        let case_list = if !case.consequent.is_empty()
             && let Some(switch_index) = self.current_switch
             && let Some(colon) = case_colon(self.tokens, case)
         {
@@ -1898,10 +2020,25 @@ impl<'a> Visit<'a> for StatementCollector<'_> {
         } else {
             None
         };
+
+        let previous_item = self.current_item;
+        if let Some(test) = &case.test {
+            self.current_item =
+                self.current_switch
+                    .map(|switch_index| ParentItem::SwitchCaseLabel {
+                        switch_index,
+                        list_index: case_list,
+                    });
+            self.visit_expression(test);
+            self.current_item = previous_item;
+        }
+
+        self.current_list = case_list;
         self.current_layout = self.current_list.map(ExpandedLayout::List);
-        walk_switch_case(self, case);
+        self.visit_statements(&case.consequent);
         self.current_list = previous_list;
         self.current_layout = previous_layout;
+        self.current_item = previous_item;
     }
 
     fn visit_ts_interface_body(&mut self, body: &TSInterfaceBody<'a>) {
@@ -1987,10 +2124,15 @@ fn case_colon(tokens: &[Token], case: &SwitchCase<'_>) -> Option<Span> {
         .map(Token::span)
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the single cascade queue handles every layout kind without repeated ancestor passes"
+)]
 fn mark_expanded_layouts(
     lists: &mut [StatementList],
     switches: &mut [SwitchLayout],
     interfaces: &[InterfaceBodyLayout],
+    objects: &mut [ObjectLayout],
 ) {
     let mut pending = VecDeque::new();
     let mut queued = HashSet::new();
@@ -2014,6 +2156,16 @@ fn mark_expanded_layouts(
             LayoutExpansionCause::Cascading,
         );
     }
+    for (object_index, object) in objects.iter().enumerate() {
+        if object.expanded {
+            enqueue_layout_expansion(
+                &mut pending,
+                &mut queued,
+                ExpandedLayout::Object(object_index),
+                LayoutExpansionCause::Cascading,
+            );
+        }
+    }
 
     while let Some((layout, cause)) = pending.pop_front() {
         let (parent, parent_item) = match layout {
@@ -2029,23 +2181,51 @@ fn mark_expanded_layouts(
                 interfaces[interface_index].layout_parent,
                 interfaces[interface_index].parent_item,
             ),
+            ExpandedLayout::Object(object_index) => (
+                objects[object_index].layout_parent,
+                objects[object_index].parent_item,
+            ),
         };
+        if let Some(parent_item) = parent_item {
+            mark_parent_item_multiline(lists, objects, parent_item);
+            if let ParentItem::SwitchCaseLabel {
+                list_index: Some(list_index),
+                ..
+            } = parent_item
+                && !lists[list_index].original_multiline
+            {
+                lists[list_index].expanded = true;
+                enqueue_layout_expansion(
+                    &mut pending,
+                    &mut queued,
+                    ExpandedLayout::List(list_index),
+                    LayoutExpansionCause::Cascading,
+                );
+            }
+        }
         match parent {
             Some(ExpandedLayout::List(list_index)) => {
                 let parent_list = &mut lists[list_index];
                 if cause == LayoutExpansionCause::DirectStatementSpacing
                     && is_lone_direct_statement_spacing_list(parent_list)
                 {
+                    enqueue_layout_expansion(
+                        &mut pending,
+                        &mut queued,
+                        ExpandedLayout::List(list_index),
+                        LayoutExpansionCause::Cascading,
+                    );
                     continue;
                 }
                 let participates = if parent_list.original_multiline {
-                    parent_item.is_some_and(|item| {
-                        if item.list_index != list_index {
-                            return false;
-                        }
-                        parent_list.unfolded_items.insert(item.item_index);
-                        true
-                    })
+                    matches!(
+                        parent_item,
+                        Some(ParentItem::Statement {
+                            list_index: parent_list_index,
+                            item_index,
+                        }) if parent_list_index == list_index
+                            && parent_list.unfolded_items.insert(item_index)
+                    )
                 } else {
                     parent_list.expanded = true;
                     true
@@ -2071,8 +2251,41 @@ fn mark_expanded_layouts(
                     );
                 }
             }
+            Some(ExpandedLayout::Object(object_index)) => {
+                enqueue_layout_expansion(
+                    &mut pending,
+                    &mut queued,
+                    ExpandedLayout::Object(object_index),
+                    LayoutExpansionCause::Cascading,
+                );
+            }
             Some(ExpandedLayout::Interface(_)) | None => {}
         }
+    }
+}
+
+fn mark_parent_item_multiline(
+    lists: &mut [StatementList],
+    objects: &mut [ObjectLayout],
+    parent: ParentItem,
+) {
+    match parent {
+        ParentItem::Statement {
+            list_index,
+            item_index,
+        } => match &mut lists[list_index].items[item_index].target {
+            StatementTarget::Import { multiline, .. }
+            | StatementTarget::TypeAlias { multiline, .. }
+            | StatementTarget::Variable { multiline, .. } => *multiline = true,
+            StatementTarget::ControlFlow { .. }
+            | StatementTarget::Other
+            | StatementTarget::Return { .. } => {}
+        },
+        ParentItem::ObjectProperty {
+            object_index,
+            item_index,
+        } => objects[object_index].items[item_index].multiline = true,
+        ParentItem::SwitchCaseLabel { .. } => {}
     }
 }
 
@@ -2125,6 +2338,10 @@ fn enqueue_layout_expansion(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "layout edit orchestration shares all collected container kinds"
+)]
 fn append_layout_edits(
     source: &str,
     comments: &[Comment],
@@ -2132,9 +2349,11 @@ fn append_layout_edits(
     lists: &[StatementList],
     switches: &[SwitchLayout],
     interfaces: &[InterfaceBodyLayout],
+    objects: &[ObjectLayout],
+    object_line_breaks: Option<&LineBreakIndex>,
     edits: &mut Vec<Edit>,
 ) -> Result<(), FormatError> {
-    let mut indents = LayoutIndents::new(lists.len(), switches.len());
+    let mut indents = LayoutIndents::new(lists.len(), switches.len(), objects.len());
     let directive_target_lines = typescript_directive_target_lines(source, comments)?;
     append_list_layout_edits(
         source,
@@ -2143,6 +2362,7 @@ fn append_layout_edits(
         &directive_target_lines,
         lists,
         switches,
+        objects,
         &mut indents,
         edits,
     )?;
@@ -2152,6 +2372,7 @@ fn append_layout_edits(
         newline,
         lists,
         switches,
+        objects,
         &mut indents,
         edits,
     )?;
@@ -2162,7 +2383,19 @@ fn append_layout_edits(
         &directive_target_lines,
         lists,
         switches,
+        objects,
         interfaces,
+        &mut indents,
+        edits,
+    )?;
+    append_object_layout_edits(
+        source,
+        comments,
+        newline,
+        lists,
+        switches,
+        objects,
+        object_line_breaks,
         &mut indents,
         edits,
     )
@@ -2179,13 +2412,14 @@ fn append_list_layout_edits(
     directive_target_lines: &HashSet<u32>,
     lists: &[StatementList],
     switches: &[SwitchLayout],
+    objects: &[ObjectLayout],
     indents: &mut LayoutIndents,
     edits: &mut Vec<Edit>,
 ) -> Result<(), FormatError> {
     for (list_index, list) in lists.iter().enumerate() {
         let expanded_item_indent = list
             .expanded
-            .then(|| indents.item_indent(source, lists, switches, list_index));
+            .then(|| indents.item_indent(source, lists, switches, objects, list_index));
 
         let opening_boundary = list_opening_boundary(list);
         let unfold_first = !list.expanded
@@ -2195,7 +2429,7 @@ fn append_list_layout_edits(
             && let Some(span) = opening_boundary
         {
             let item_indent = expanded_item_indent.clone().unwrap_or_else(|| {
-                indents.existing_item_indent(source, lists, switches, list_index, 0)
+                indents.existing_item_indent(source, lists, switches, objects, list_index, 0)
             });
             append_boundary_edit(source, comments, span, newline, &item_indent, edits)?;
         }
@@ -2237,7 +2471,14 @@ fn append_list_layout_edits(
             let indent = if list.expanded {
                 expanded_item_indent.clone().unwrap()
             } else if unfold_boundary {
-                indents.existing_item_indent(source, lists, switches, list_index, pair_index + 1)
+                indents.existing_item_indent(
+                    source,
+                    lists,
+                    switches,
+                    objects,
+                    list_index,
+                    pair_index + 1,
+                )
             } else {
                 existing_boundary_indent(
                     source,
@@ -2259,7 +2500,8 @@ fn append_list_layout_edits(
         if (list.expanded || unfold_last)
             && let Some(span) = closing_boundary
         {
-            let base_indent = indents.list_base_indent(source, lists, switches, list_index);
+            let base_indent =
+                indents.list_base_indent(source, lists, switches, objects, list_index);
             append_boundary_edit(source, comments, span, newline, &base_indent, edits)?;
         }
     }
@@ -2283,12 +2525,17 @@ fn list_closing_boundary(list: &StatementList) -> Option<Span> {
     Some(Span::new(list.items.last()?.span.end, close.start))
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "switch indentation can depend on every collected parent container kind"
+)]
 fn append_switch_layout_edits(
     source: &str,
     comments: &[Comment],
     newline: &str,
     lists: &[StatementList],
     switches: &[SwitchLayout],
+    objects: &[ObjectLayout],
     indents: &mut LayoutIndents,
     edits: &mut Vec<Edit>,
 ) -> Result<(), FormatError> {
@@ -2300,7 +2547,7 @@ fn append_switch_layout_edits(
         if switch.cases.is_empty() {
             continue;
         }
-        let switch_indent = indents.switch_indent(source, lists, switches, switch_index);
+        let switch_indent = indents.switch_indent(source, lists, switches, objects, switch_index);
         let case_indent = format!("{switch_indent}  ");
         append_boundary_edit(
             source,
@@ -2344,6 +2591,7 @@ fn append_interface_layout_edits(
     directive_target_lines: &HashSet<u32>,
     lists: &[StatementList],
     switches: &[SwitchLayout],
+    objects: &[ObjectLayout],
     interfaces: &[InterfaceBodyLayout],
     indents: &mut LayoutIndents,
     edits: &mut Vec<Edit>,
@@ -2352,7 +2600,8 @@ fn append_interface_layout_edits(
         let Some(first) = interface.members.first() else {
             continue;
         };
-        let base_indent = indents.interface_base_indent(source, lists, switches, interface);
+        let base_indent =
+            indents.interface_base_indent(source, lists, switches, objects, interface);
         let member_indent = format!("{base_indent}  ");
         append_boundary_edit(
             source,
@@ -2385,6 +2634,152 @@ fn append_interface_layout_edits(
         )?;
     }
 
+    Ok(())
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "object boundaries share the collected layout and source context"
+)]
+fn append_object_layout_edits(
+    source: &str,
+    comments: &[Comment],
+    newline: &str,
+    lists: &[StatementList],
+    switches: &[SwitchLayout],
+    objects: &[ObjectLayout],
+    line_breaks: Option<&LineBreakIndex>,
+    indents: &mut LayoutIndents,
+    edits: &mut Vec<Edit>,
+) -> Result<(), FormatError> {
+    if objects.is_empty() {
+        return Ok(());
+    }
+    let line_breaks = line_breaks
+        .ok_or_else(|| FormatError::internal("object layout line index was not available"))?;
+    for (object_index, object) in objects.iter().enumerate() {
+        let [first, .., last] = object.items.as_slice() else {
+            continue;
+        };
+        let base_indent =
+            indents.object_base_indent(source, lists, switches, objects, object_index);
+        let canonical_item_indent = format!("{base_indent}  ");
+        let opening = Span::new(object.open.end, first.span.start);
+        let opening_indent = if object.expanded {
+            canonical_item_indent.clone()
+        } else {
+            existing_boundary_indent(
+                source,
+                comments,
+                opening,
+                "",
+                first.span.start,
+                &canonical_item_indent,
+            )
+        };
+        append_object_boundary_edit(
+            source,
+            comments,
+            opening,
+            newline,
+            &opening_indent,
+            None,
+            Some(first.span.start),
+            line_breaks,
+            edits,
+        )?;
+
+        let mut fallback_indent = opening_indent;
+        for pair in object.items.windows(2) {
+            let [previous, next] = pair else {
+                unreachable!("windows(2) always contains two object items")
+            };
+            let span = Span::new(previous.boundary_end, next.span.start);
+            let separator = if previous.multiline || next.multiline {
+                newline.repeat(2)
+            } else {
+                newline.to_owned()
+            };
+            let next_indent = if object.expanded {
+                canonical_item_indent.clone()
+            } else {
+                existing_boundary_indent(
+                    source,
+                    comments,
+                    span,
+                    &line_indent_at(source, previous.span.start),
+                    next.span.start,
+                    &fallback_indent,
+                )
+            };
+            if !next_indent.is_empty() {
+                fallback_indent.clone_from(&next_indent);
+            }
+            append_object_boundary_edit(
+                source,
+                comments,
+                span,
+                &separator,
+                &next_indent,
+                Some(previous.span.end),
+                Some(next.span.start),
+                line_breaks,
+                edits,
+            )?;
+        }
+
+        let closing = Span::new(last.boundary_end, object.close.start);
+        append_object_boundary_edit(
+            source,
+            comments,
+            closing,
+            newline,
+            &base_indent,
+            Some(last.span.end),
+            None,
+            line_breaks,
+            edits,
+        )?;
+    }
+    Ok(())
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "object comment attachment needs both neighboring syntax anchors"
+)]
+fn append_object_boundary_edit(
+    source: &str,
+    comments: &[Comment],
+    span: Span,
+    separator: &str,
+    indent: &str,
+    previous_end: Option<u32>,
+    next_start: Option<u32>,
+    line_breaks: &LineBreakIndex,
+    edits: &mut Vec<Edit>,
+) -> Result<(), FormatError> {
+    let mut boundary_comments = comments_in_span(comments, span).to_vec();
+    if !boundary_comments.is_empty() {
+        let previous_line = previous_end.map(|offset| line_breaks.line_start(offset));
+        for comment in &mut boundary_comments {
+            let comment_line = line_breaks.line_start(comment.span.start);
+            if previous_line.is_some_and(|previous_line| comment_line == previous_line) {
+                comment.position = CommentPosition::Trailing;
+            } else if next_start.is_some() {
+                comment.position = CommentPosition::Leading;
+            }
+        }
+    }
+    let original = source_slice(source, span)?;
+    let formatted = format_boundary_separator(source, span, &boundary_comments, separator, indent)?;
+    if original != formatted {
+        edits.push(Edit {
+            start: span.start,
+            end: span.end,
+            replacement: formatted,
+        });
+    }
     Ok(())
 }
 
@@ -2430,6 +2825,8 @@ fn next_line_start(source: &str, offset: u32) -> Option<u32> {
 }
 
 fn line_start(source: &str, offset: u32) -> Option<u32> {
+    #[cfg(test)]
+    RAW_LINE_START_SCANS.set(RAW_LINE_START_SCANS.get() + 1);
     let offset = usize::try_from(offset).ok()?;
     let start = source
         .get(..offset)?
@@ -2556,16 +2953,9 @@ fn existing_boundary_indent(
         .iter()
         .find(|comment| comment.position == CommentPosition::Leading)
         .map_or(next_start, |comment| comment.span.start);
-    let mut indent = line_indent_at(source, anchor);
-    if indent.is_empty()
-        && let Some(guard_indent) = line_indent_before_guard(source, anchor)
+    if let Some(indent) = line_indent_if_standalone(source, anchor)
+        .or_else(|| line_indent_before_guard(source, anchor))
     {
-        indent = guard_indent;
-    }
-    let boundary_is_multiline = source
-        .get(span.start as usize..span.end as usize)
-        .is_some_and(contains_line_break);
-    if !indent.is_empty() || boundary_is_multiline {
         return indent;
     }
     if previous_indent.is_empty() {
@@ -2579,14 +2969,18 @@ struct LayoutIndents {
     list_bases: Vec<Option<String>>,
     list_items: Vec<Option<String>>,
     switches: Vec<Option<String>>,
+    object_bases: Vec<Option<String>>,
+    object_items: Vec<Option<String>>,
 }
 
 impl LayoutIndents {
-    fn new(list_count: usize, switch_count: usize) -> Self {
+    fn new(list_count: usize, switch_count: usize, object_count: usize) -> Self {
         Self {
             list_bases: vec![None; list_count],
             list_items: vec![None; list_count],
             switches: vec![None; switch_count],
+            object_bases: vec![None; object_count],
+            object_items: vec![None; object_count],
         }
     }
 
@@ -2595,6 +2989,7 @@ impl LayoutIndents {
         source: &str,
         lists: &[StatementList],
         switches: &[SwitchLayout],
+        objects: &[ObjectLayout],
         list_index: usize,
         item_index: usize,
     ) -> String {
@@ -2608,7 +3003,7 @@ impl LayoutIndents {
                 return indent;
             }
         }
-        self.item_indent(source, lists, switches, list_index)
+        self.item_indent(source, lists, switches, objects, list_index)
     }
 
     fn item_indent(
@@ -2616,6 +3011,7 @@ impl LayoutIndents {
         source: &str,
         lists: &[StatementList],
         switches: &[SwitchLayout],
+        objects: &[ObjectLayout],
         list_index: usize,
     ) -> String {
         if let Some(indent) = self.list_items[list_index].clone() {
@@ -2629,13 +3025,13 @@ impl LayoutIndents {
             ListContainer::Braced { .. } => {
                 format!(
                     "{}  ",
-                    self.list_base_indent(source, lists, switches, list_index)
+                    self.list_base_indent(source, lists, switches, objects, list_index)
                 )
             }
             ListContainer::SwitchCase { switch_index, .. } => {
                 format!(
                     "{}    ",
-                    self.switch_indent(source, lists, switches, switch_index)
+                    self.switch_indent(source, lists, switches, objects, switch_index)
                 )
             }
         };
@@ -2648,6 +3044,7 @@ impl LayoutIndents {
         source: &str,
         lists: &[StatementList],
         switches: &[SwitchLayout],
+        objects: &[ObjectLayout],
         list_index: usize,
     ) -> String {
         if let Some(indent) = self.list_bases[list_index].clone() {
@@ -2655,24 +3052,12 @@ impl LayoutIndents {
         }
         indent_resolution();
         let indent = match lists[list_index].parent_item {
-            Some(parent) => {
-                if lists[parent.list_index].expanded {
-                    self.item_indent(source, lists, switches, parent.list_index)
-                } else {
-                    self.existing_item_indent(
-                        source,
-                        lists,
-                        switches,
-                        parent.list_index,
-                        parent.item_index,
-                    )
-                }
-            }
+            Some(parent) => self.parent_item_indent(source, lists, switches, objects, parent),
             None => match lists[list_index].container {
                 ListContainer::Program { .. } => String::new(),
                 ListContainer::Braced { open, .. } => line_indent_at(source, open.start),
                 ListContainer::SwitchCase { switch_index, .. } => {
-                    self.switch_indent(source, lists, switches, switch_index)
+                    self.switch_indent(source, lists, switches, objects, switch_index)
                 }
             },
         };
@@ -2685,6 +3070,7 @@ impl LayoutIndents {
         source: &str,
         lists: &[StatementList],
         switches: &[SwitchLayout],
+        objects: &[ObjectLayout],
         switch_index: usize,
     ) -> String {
         if let Some(indent) = self.switches[switch_index].clone() {
@@ -2693,17 +3079,7 @@ impl LayoutIndents {
         indent_resolution();
         let switch = &switches[switch_index];
         let indent = if let Some(parent) = switch.parent_item {
-            if lists[parent.list_index].expanded {
-                self.item_indent(source, lists, switches, parent.list_index)
-            } else {
-                self.existing_item_indent(
-                    source,
-                    lists,
-                    switches,
-                    parent.list_index,
-                    parent.item_index,
-                )
-            }
+            self.parent_item_indent(source, lists, switches, objects, parent)
         } else {
             line_indent_at(source, switch.span.start)
         };
@@ -2716,29 +3092,125 @@ impl LayoutIndents {
         source: &str,
         lists: &[StatementList],
         switches: &[SwitchLayout],
+        objects: &[ObjectLayout],
         interface: &InterfaceBodyLayout,
     ) -> String {
         indent_resolution();
         if let Some(parent) = interface.parent_item {
-            if lists[parent.list_index].expanded {
-                self.item_indent(source, lists, switches, parent.list_index)
-            } else {
-                self.existing_item_indent(
-                    source,
-                    lists,
-                    switches,
-                    parent.list_index,
-                    parent.item_index,
-                )
-            }
+            self.parent_item_indent(source, lists, switches, objects, parent)
         } else {
             line_indent_at(source, interface.open.start)
+        }
+    }
+
+    fn object_base_indent(
+        &mut self,
+        source: &str,
+        lists: &[StatementList],
+        switches: &[SwitchLayout],
+        objects: &[ObjectLayout],
+        object_index: usize,
+    ) -> String {
+        if let Some(indent) = self.object_bases[object_index].clone() {
+            return indent;
+        }
+        indent_resolution();
+        let object = &objects[object_index];
+        let indent = if object.original_multiline
+            && let Some(indent) = line_indent_if_standalone(source, object.close.start)
+        {
+            indent
+        } else {
+            let source_indent = line_leading_indent_at(source, object.open.start);
+            match object.parent_item {
+                Some(parent @ ParentItem::ObjectProperty { .. }) => {
+                    self.parent_item_indent(source, lists, switches, objects, parent)
+                }
+                Some(parent) if source_indent.is_empty() => {
+                    self.parent_item_indent(source, lists, switches, objects, parent)
+                }
+                Some(_) | None => source_indent,
+            }
+        };
+        self.object_bases[object_index] = Some(indent.clone());
+        indent
+    }
+
+    fn object_item_indent(
+        &mut self,
+        source: &str,
+        lists: &[StatementList],
+        switches: &[SwitchLayout],
+        objects: &[ObjectLayout],
+        object_index: usize,
+        item_index: usize,
+    ) -> String {
+        if let Some(indent) =
+            line_indent_if_standalone(source, objects[object_index].items[item_index].span.start)
+        {
+            return indent;
+        }
+        if let Some(indent) = self.object_items[object_index].clone() {
+            return indent;
+        }
+        indent_resolution();
+        let object = &objects[object_index];
+        let base = self.object_base_indent(source, lists, switches, objects, object_index);
+        let indent = if object.expanded || object.original_multiline {
+            format!("{base}  ")
+        } else {
+            base
+        };
+        self.object_items[object_index] = Some(indent.clone());
+        indent
+    }
+
+    fn parent_item_indent(
+        &mut self,
+        source: &str,
+        lists: &[StatementList],
+        switches: &[SwitchLayout],
+        objects: &[ObjectLayout],
+        parent: ParentItem,
+    ) -> String {
+        match parent {
+            ParentItem::Statement {
+                list_index,
+                item_index,
+            } => {
+                if lists[list_index].expanded {
+                    self.item_indent(source, lists, switches, objects, list_index)
+                } else {
+                    self.existing_item_indent(
+                        source, lists, switches, objects, list_index, item_index,
+                    )
+                }
+            }
+            ParentItem::ObjectProperty {
+                object_index,
+                item_index,
+            } => {
+                self.object_item_indent(source, lists, switches, objects, object_index, item_index)
+            }
+            ParentItem::SwitchCaseLabel { switch_index, .. } => format!(
+                "{}  ",
+                self.switch_indent(source, lists, switches, objects, switch_index)
+            ),
         }
     }
 }
 
 fn line_indent_at(source: &str, offset: u32) -> String {
     line_indent_if_standalone(source, offset).unwrap_or_default()
+}
+
+fn line_leading_indent_at(source: &str, offset: u32) -> String {
+    let prefix = source.get(..offset as usize).unwrap_or(source);
+    let line = prefix.rsplit_once('\n').map_or(prefix, |(_, line)| line);
+    line.chars()
+        .take_while(|character| matches!(character, ' ' | '\t' | '\r'))
+        .filter(|character| *character != '\r')
+        .collect()
 }
 
 fn line_indent_if_standalone(source: &str, offset: u32) -> Option<String> {
@@ -3435,8 +3907,9 @@ mod tests {
 
     use super::{
         CORRUPT_REWRITE_FOR_TEST, DEFERRED_IMPORT_BOUNDARY_LOOKUPS, IMPORT_MULTILINE_SCANS,
-        INDENT_RESOLUTIONS, LINE_BREAK_INDEX_BUILDS, LINE_BREAK_QUERIES, PARENTHESIS_INDEX_BUILDS,
-        PARENTHESIS_LOOKUPS, SPAN_LOOKUP_COMPARISONS, TOKEN_PARSER_RUNS, TOKEN_PREFLIGHT_PARSES,
+        INDENT_RESOLUTIONS, LINE_BREAK_INDEX_BUILDS, LINE_BREAK_QUERIES, LINE_START_INDEX_QUERIES,
+        PARENTHESIS_INDEX_BUILDS, PARENTHESIS_LOOKUPS, RAW_LINE_START_SCANS,
+        SPAN_LOOKUP_COMPARISONS, TOKEN_PARSER_RUNS, TOKEN_PREFLIGHT_PARSES,
         TYPE_ALIAS_MULTILINE_SCANS, VARIABLE_MULTILINE_SCANS, parse, verify,
     };
     use crate::{
@@ -3469,6 +3942,328 @@ mod tests {
         }
     }
 
+    fn object_spacing_config(enabled: bool) -> FormatConfig {
+        FormatConfig {
+            rules: RulesConfig {
+                import_layout: false,
+                interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                object_property_spacing: enabled,
+                statement_spacing: StatementSpacingConfig {
+                    control_flow_statements: StatementSpacingMode::Off,
+                    imports: StatementSpacingMode::Off,
+                    return_statements: StatementSpacingMode::Off,
+                    type_aliases: StatementSpacingMode::Off,
+                    variable_declarations: StatementSpacingMode::Off,
+                },
+                semicolons: semicolons_off(),
+                trailing_commas: TrailingCommaMode::Off,
+            },
+            ..FormatConfig::default()
+        }
+    }
+
+    fn format_object(source: &str) -> String {
+        format_file_with("sample.ts", source, object_spacing_config(true))
+    }
+
+    #[test]
+    fn spaces_object_properties_from_their_final_multiline_shape() {
+        for (source, expected) in [
+            (
+                "const value = {\n  first: 1,\n\n\n  second: 2\n}",
+                "const value = {\n  first: 1,\n  second: 2\n}",
+            ),
+            (
+                "const value = {\n  first: 1,\n  second: [\n    2\n  ]\n}",
+                "const value = {\n  first: 1,\n\n  second: [\n    2\n  ]\n}",
+            ),
+            (
+                "const value = {\n  first: [\n    1\n  ],\n  second: 2\n}",
+                "const value = {\n  first: [\n    1\n  ],\n\n  second: 2\n}",
+            ),
+            (
+                "const value = {\n  first: [\n    1\n  ],\n\n\n  second: [\n    2\n  ]\n}",
+                "const value = {\n  first: [\n    1\n  ],\n\n  second: [\n    2\n  ]\n}",
+            ),
+        ] {
+            let output = format_object(source);
+            assert_eq!(output, expected, "{source}");
+            assert_eq!(format_object(&output), output, "{source}");
+        }
+    }
+
+    #[test]
+    fn expands_inline_objects_recursively_in_one_run() {
+        assert_eq!(
+            format_object("const value = { first: 1, second: 2 }"),
+            "const value = {\n  first: 1,\n  second: 2\n}"
+        );
+        assert_eq!(
+            format_object("const empty = {}; const one = { value: 1 }"),
+            "const empty = {}; const one = { value: 1 }"
+        );
+        assert_eq!(
+            format_object("const value = { first: { nested: 1, sibling: 2 }, second: 3 }"),
+            "const value = {\n  first: {\n    nested: 1,\n    sibling: 2\n  },\n\n  second: 3\n}"
+        );
+        assert_eq!(
+            format_object("function run(){const value={first:1,second:2};done();}"),
+            "function run(){\n  const value={\n    first:1,\n    second:2\n  };\n  done();\n}"
+        );
+    }
+
+    #[test]
+    fn preserves_host_indentation_for_expanded_objects() {
+        for (source, expected) in [
+            (
+                "call(\n  {first:1,second:2}\n)",
+                "call(\n  {\n    first:1,\n    second:2\n  }\n)",
+            ),
+            (
+                "class Example {\n  value = {first:1,second:2}\n}",
+                "class Example {\n  value = {\n    first:1,\n    second:2\n  }\n}",
+            ),
+        ] {
+            let output = format_object(source);
+            assert_eq!(output, expected, "{source}");
+            assert_eq!(format_object(&output), output, "{source}");
+        }
+    }
+
+    #[test]
+    fn formats_every_direct_object_element_kind_together() {
+        let source = "const value = { regular: 1, shorthand, [key]: 2, method() { return 1 }, get result() { return 1 }, set result(next) { value = next }, ...rest }";
+        assert_eq!(
+            format_object(source),
+            "const value = {\n  regular: 1,\n  shorthand,\n  [key]: 2,\n  method() { return 1 },\n  get result() { return 1 },\n  set result(next) { value = next },\n  ...rest\n}"
+        );
+    }
+
+    #[test]
+    fn leaves_non_object_expression_families_unchanged() {
+        let source = "const { a, b } = input; ({ a, b } = input); type Shape = { a: 1; b: 2 }; interface Pair { a: 1; b: 2 } class Pair { a = 1; b = 2 } import { a, b } from 'pkg'; export { a, b };";
+        assert_eq!(format_object(source), source);
+    }
+
+    #[test]
+    fn disabled_object_property_spacing_is_a_complete_no_op() {
+        let source = "const value = { first: 1, second: { nested: 2, sibling: 3 } };";
+        let config = resolve_config(object_spacing_config(false)).unwrap();
+        assert!(
+            format_text(Path::new("sample.ts"), source, &config)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn cascades_statement_layout_into_object_property_spacing() {
+        let source = "const value={first:1,method(){before();if(ok)work();after();},last:3}";
+        let mut config = object_spacing_config(true);
+        config.rules.statement_spacing.control_flow_statements = StatementSpacingMode::Separate;
+        assert_eq!(
+            format_file_with("sample.ts", source, config),
+            "const value={\n  first:1,\n\n  method(){\n    before();\n\n    if(ok)work();\n\n    after();\n  },\n\n  last:3\n}"
+        );
+    }
+
+    #[test]
+    fn propagates_lone_statement_layout_into_object_property_spacing() {
+        let source = "const value={first(){return (()=>{work();return value})()},second:2}";
+        let mut config = object_spacing_config(true);
+        config.rules.statement_spacing.return_statements = StatementSpacingMode::Separate;
+        assert_eq!(
+            format_file_with("sample.ts", source, config),
+            "const value={\n  first(){return (()=>{\n      work();\n\n      return value\n    })()},\n\n  second:2\n}"
+        );
+    }
+
+    #[test]
+    fn indents_expanded_objects_in_switch_case_labels() {
+        let source = "switch(value){case {first:1,second:2}:work();break;default:break;}";
+        assert_eq!(
+            format_object(source),
+            "switch(value){\n  case {\n    first:1,\n    second:2\n  }:\n    work();\n    break;\n  default:break;\n}"
+        );
+    }
+
+    #[test]
+    fn keeps_object_boundary_comments_and_typescript_directives_attached() {
+        let source = "const value={/* first */ first:1, // first trailing\n// @ts-ignore\nsecond:2, // second trailing\n/* third leading */ third:[\n  3\n] /* third trailing */}";
+        assert_eq!(
+            format_object(source),
+            "const value={\n  /* first */ first:1, // first trailing\n// @ts-ignore\nsecond:2, // second trailing\n\n/* third leading */ third:[\n  3\n] /* third trailing */\n}"
+        );
+    }
+
+    #[test]
+    fn preserves_object_indentation_after_multiline_boundary_comments() {
+        let source = "const value = { first: 1, /* second\nlead */ second: 2 }";
+        let expected = "const value = {\n  first: 1, /* second\nlead */\n  second: 2\n}";
+        let output = format_object(source);
+        assert_eq!(output, expected);
+        assert_eq!(format_object(&output), output);
+    }
+
+    #[test]
+    fn keeps_object_spacing_independent_from_optional_trailing_commas() {
+        for (mode, source, expected) in [
+            (
+                TrailingCommaMode::Never,
+                "const value={first:1,second:2,};",
+                "const value={\n  first:1,\n  second:2\n};",
+            ),
+            (
+                TrailingCommaMode::Always,
+                "const value={first:1,second:2};",
+                "const value={\n  first:1,\n  second:2,\n};",
+            ),
+            (
+                TrailingCommaMode::Off,
+                "const value={first:1,second:2,};",
+                "const value={\n  first:1,\n  second:2,\n};",
+            ),
+        ] {
+            let mut config = object_spacing_config(true);
+            config.rules.trailing_commas = mode;
+            assert_eq!(format_file_with("sample.ts", source, config), expected);
+        }
+    }
+
+    #[test]
+    fn keeps_object_spacing_independent_from_statement_semicolon_modes() {
+        for (mode, source, expected) in [
+            (
+                SemicolonMode::Off,
+                "const value={first:1,second:2};",
+                "const value={\n  first:1,\n  second:2\n};",
+            ),
+            (
+                SemicolonMode::AsNeeded,
+                "const value={first:1,second:2};",
+                "const value={\n  first:1,\n  second:2\n}",
+            ),
+            (
+                SemicolonMode::Always,
+                "const value={first:1,second:2}",
+                "const value={\n  first:1,\n  second:2\n};",
+            ),
+        ] {
+            let mut config = object_spacing_config(true);
+            config.rules.semicolons.statements = mode;
+            assert_eq!(format_file_with("sample.ts", source, config), expected);
+        }
+    }
+
+    #[test]
+    fn preserves_bom_newlines_eof_shape_and_vue_host_indentation() {
+        assert_eq!(
+            format_file_with(
+                "sample.ts",
+                "\u{feff}const value={first:1,second:2}",
+                object_spacing_config(true),
+            ),
+            "\u{feff}const value={\n  first:1,\n  second:2\n}"
+        );
+        assert_eq!(
+            format_file_with(
+                "sample.ts",
+                "const value={first:1,second:2}\r\n",
+                object_spacing_config(true),
+            ),
+            "const value={\r\n  first:1,\r\n  second:2\r\n}\r\n"
+        );
+        assert_eq!(
+            format_file_with(
+                "sample.vue",
+                "<script>\n  const value={first:1,second:2}\n</script>\n",
+                object_spacing_config(true),
+            ),
+            "<script>\n  const value={\n    first:1,\n    second:2\n  }\n</script>\n"
+        );
+    }
+
+    #[test]
+    fn verifies_object_layout_ast_and_is_idempotent() {
+        let source = "const value={first:{nested:1,sibling:2},second:3}";
+        let config = resolve_config(object_spacing_config(true)).unwrap();
+        let output = format_text(Path::new("sample.ts"), source, &config)
+            .unwrap()
+            .unwrap();
+        assert!(
+            format_text(Path::new("sample.ts"), &output, &config)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn nested_object_indent_resolution_stays_linear() {
+        let depth = 128;
+        let mut source = String::from("const value=");
+        for _ in 0..depth {
+            source.push_str("{nested:");
+        }
+        source.push('0');
+        for index in 0..depth {
+            write!(source, ",sibling:{index}}}").unwrap();
+        }
+        let mut config = object_spacing_config(true);
+        config.verify_ast = false;
+        let config = resolve_config(config).unwrap();
+
+        INDENT_RESOLUTIONS.set(0);
+        format_text(Path::new("nested-objects.ts"), &source, &config).unwrap();
+        let resolutions = INDENT_RESOLUTIONS.get();
+        assert!(resolutions >= depth);
+        assert!(
+            resolutions < depth * 4,
+            "indent resolution performed {resolutions} steps for {depth} nested objects"
+        );
+    }
+
+    #[test]
+    fn object_line_break_queries_stay_indexed() {
+        let depth = 128;
+        let mut nested = String::from("const value=");
+        for _ in 0..depth {
+            nested.push_str("{nested:");
+        }
+        nested.push('0');
+        for _ in 0..depth {
+            nested.push('}');
+        }
+        let mut config = object_spacing_config(true);
+        config.verify_ast = false;
+        let config = resolve_config(config).unwrap();
+
+        LINE_BREAK_INDEX_BUILDS.set(0);
+        LINE_BREAK_QUERIES.set(0);
+        assert!(
+            format_text(Path::new("nested-objects.ts"), &nested, &config)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(LINE_BREAK_INDEX_BUILDS.get(), 1);
+        assert_eq!(LINE_BREAK_QUERIES.get(), depth * 2);
+
+        let property_count = 256;
+        let mut commented = String::from("const value={");
+        for index in 0..property_count {
+            if index > 0 {
+                commented.push_str(",/* next */");
+            }
+            write!(commented, "p{index}:{index}").unwrap();
+        }
+        commented.push('}');
+
+        LINE_START_INDEX_QUERIES.set(0);
+        RAW_LINE_START_SCANS.set(0);
+        format_text(Path::new("commented-object.ts"), &commented, &config).unwrap();
+        assert_eq!(RAW_LINE_START_SCANS.get(), 0);
+        assert_eq!(LINE_START_INDEX_QUERIES.get(), (property_count - 1) * 2);
+    }
+
     fn format_semicolons(file_name: &str, source: &str, semicolons: SemicolonConfig) -> String {
         format_file_with(
             file_name,
@@ -3477,6 +4272,7 @@ mod tests {
                 rules: RulesConfig {
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                    object_property_spacing: false,
                     statement_spacing: StatementSpacingConfig {
                         control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Off,
@@ -3540,6 +4336,7 @@ mod tests {
                 rules: RulesConfig {
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                    object_property_spacing: false,
                     statement_spacing: StatementSpacingConfig {
                         control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Off,
@@ -3565,6 +4362,7 @@ mod tests {
                 rules: RulesConfig {
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                    object_property_spacing: false,
                     statement_spacing: StatementSpacingConfig {
                         control_flow_statements,
                         imports: StatementSpacingMode::Off,
@@ -3587,6 +4385,7 @@ mod tests {
                 rules: RulesConfig {
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                    object_property_spacing: false,
                     statement_spacing: StatementSpacingConfig {
                         control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Off,
@@ -3610,6 +4409,7 @@ mod tests {
                 rules: RulesConfig {
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                    object_property_spacing: false,
                     statement_spacing: StatementSpacingConfig {
                         control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Off,
@@ -3638,6 +4438,7 @@ mod tests {
                 rules: RulesConfig {
                     import_layout: false,
                     interface_layout,
+                    object_property_spacing: false,
                     statement_spacing: StatementSpacingConfig {
                         control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Off,
@@ -3707,6 +4508,7 @@ mod tests {
                     rules: RulesConfig {
                         import_layout: false,
                         interface_layout: InterfaceLayoutRule::Threshold(0),
+                        object_property_spacing: false,
                         statement_spacing: StatementSpacingConfig {
                             control_flow_statements: StatementSpacingMode::Off,
                             imports: StatementSpacingMode::Off,
@@ -3948,6 +4750,7 @@ mod tests {
             rules: RulesConfig {
                 import_layout: false,
                 interface_layout: InterfaceLayoutRule::Threshold(0),
+                object_property_spacing: false,
                 statement_spacing: StatementSpacingConfig {
                     control_flow_statements: StatementSpacingMode::Off,
                     imports: StatementSpacingMode::Off,
@@ -4554,6 +5357,7 @@ mod tests {
             rules: RulesConfig {
                 import_layout: false,
                 interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                object_property_spacing: false,
                 statement_spacing: StatementSpacingConfig {
                     control_flow_statements: StatementSpacingMode::Off,
                     imports: StatementSpacingMode::Off,
@@ -4710,6 +5514,7 @@ mod tests {
             rules: RulesConfig {
                 import_layout: true,
                 interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                object_property_spacing: false,
                 statement_spacing: StatementSpacingConfig {
                     control_flow_statements: StatementSpacingMode::Off,
                     imports: StatementSpacingMode::Off,
@@ -4930,7 +5735,9 @@ mod tests {
     #[test]
     fn preserves_every_non_import_byte_and_the_eof_shape() {
         let source = "import{a,b}from\"pkg\";\nconst odd={ untouched :true,nested:[1,  2] };\nexport{odd};\nconst quote=\"double\"";
-        let output = format(source);
+        let mut config = FormatConfig::default();
+        config.rules.object_property_spacing = false;
+        let output = format_with_semicolons_off(source, config);
         assert_eq!(
             output,
             "import { a, b } from \"pkg\";\n\nconst odd={ untouched :true,nested:[1,  2] };\n\nexport{odd};\n\nconst quote=\"double\""
@@ -4976,6 +5783,7 @@ mod tests {
             rules: RulesConfig {
                 import_layout: false,
                 interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                object_property_spacing: false,
                 statement_spacing: StatementSpacingConfig {
                     control_flow_statements: StatementSpacingMode::Off,
                     imports: StatementSpacingMode::Off,
@@ -5359,6 +6167,7 @@ mod tests {
                 rules: RulesConfig {
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                    object_property_spacing: false,
                     statement_spacing: StatementSpacingConfig {
                         control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Off,
@@ -5439,6 +6248,7 @@ mod tests {
                         rules: RulesConfig {
                             import_layout: false,
                             interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                            object_property_spacing: false,
                             statement_spacing: StatementSpacingConfig {
                                 control_flow_statements: StatementSpacingMode::Off,
                                 imports: StatementSpacingMode::Off,
@@ -5654,6 +6464,7 @@ mod tests {
                     rules: RulesConfig {
                         import_layout: false,
                         interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                        object_property_spacing: false,
                         statement_spacing: StatementSpacingConfig {
                             control_flow_statements: StatementSpacingMode::Separate,
                             imports: StatementSpacingMode::Off,
@@ -5699,6 +6510,7 @@ mod tests {
                     rules: RulesConfig {
                         import_layout: false,
                         interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                        object_property_spacing: false,
                         statement_spacing: StatementSpacingConfig {
                             control_flow_statements,
                             imports: StatementSpacingMode::Off,
@@ -5741,6 +6553,7 @@ mod tests {
                     rules: RulesConfig {
                         import_layout: false,
                         interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                        object_property_spacing: false,
                         statement_spacing: StatementSpacingConfig {
                             control_flow_statements,
                             imports,
@@ -5894,6 +6707,7 @@ mod tests {
                 rules: RulesConfig {
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                    object_property_spacing: false,
                     statement_spacing: StatementSpacingConfig {
                         control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Off,
@@ -5942,6 +6756,7 @@ mod tests {
                     rules: RulesConfig {
                         import_layout: false,
                         interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                        object_property_spacing: false,
                         statement_spacing: StatementSpacingConfig {
                             control_flow_statements: StatementSpacingMode::Off,
                             imports: StatementSpacingMode::Off,

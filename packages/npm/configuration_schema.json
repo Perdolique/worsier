@@ -27,6 +27,7 @@
       "default": {
         "importLayout": true,
         "interfaceLayout": 0,
+        "objectPropertySpacing": true,
         "semicolons": {
           "classMembers": "asNeeded",
           "statements": "asNeeded",
@@ -78,6 +79,10 @@
         "interfaceLayout": {
           "$ref": "#/$defs/InterfaceLayoutRule",
           "default": 0
+        },
+        "objectPropertySpacing": {
+          "type": "boolean",
+          "default": true
         },
         "semicolons": {
           "$ref": "#/$defs/SemicolonConfig",

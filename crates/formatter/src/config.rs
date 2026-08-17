@@ -35,6 +35,7 @@ impl Default for FormatConfig {
 pub struct RulesConfig {
     pub import_layout: bool,
     pub interface_layout: InterfaceLayoutRule,
+    pub object_property_spacing: bool,
     pub statement_spacing: StatementSpacingConfig,
     pub semicolons: SemicolonConfig,
     pub trailing_commas: TrailingCommaMode,
@@ -45,6 +46,7 @@ impl Default for RulesConfig {
         Self {
             import_layout: true,
             interface_layout: InterfaceLayoutRule::default(),
+            object_property_spacing: true,
             statement_spacing: StatementSpacingConfig::default(),
             semicolons: SemicolonConfig::default(),
             trailing_commas: TrailingCommaMode::Never,
@@ -225,6 +227,11 @@ impl ResolvedConfig {
     }
 
     #[must_use]
+    pub const fn object_property_spacing_enabled(&self) -> bool {
+        self.value.rules.object_property_spacing
+    }
+
+    #[must_use]
     pub const fn import_spacing(&self) -> StatementSpacingMode {
         self.value.rules.statement_spacing.imports
     }
@@ -304,6 +311,7 @@ mod tests {
         assert!(config.verify_ast());
         assert!(config.import_layout_enabled());
         assert_eq!(config.interface_layout_threshold(), Some(0));
+        assert!(config.object_property_spacing_enabled());
         assert_eq!(
             config.control_flow_statement_spacing(),
             StatementSpacingMode::Separate
@@ -373,6 +381,7 @@ mod tests {
 
         assert!(!config.import_layout_enabled());
         assert_eq!(config.interface_layout_threshold(), Some(0));
+        assert!(config.object_property_spacing_enabled());
         assert_eq!(
             config.control_flow_statement_spacing(),
             StatementSpacingMode::Separate
