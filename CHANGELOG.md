@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.10.0](https://github.com/Perdolique/worsier/compare/v2.9.0...v2.10.0) (2026-08-17)
+
+
+### Features
+
+* **formatter:** add control-flow spacing ([300143a](https://github.com/Perdolique/worsier/commit/300143a0802feebb96812cd794f11d580eab93d7))
+
 ## [2.9.0](https://github.com/Perdolique/worsier/compare/v2.8.1...v2.9.0) (2026-08-17)
 
 
