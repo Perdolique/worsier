@@ -1,6 +1,6 @@
 {
   "name": "worsier",
-  "version": "2.9.0",
+  "version": "2.10.0",
   "description": "A focused JavaScript, TypeScript, and Vue SFC script formatter powered by Rust",
   "license": "MIT",
   "repository": {
