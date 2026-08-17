@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.9.0](https://github.com/Perdolique/worsier/compare/v2.8.1...v2.9.0) (2026-08-17)
+
+
+### Features
+
+* **formatter:** add return statement spacing ([782e342](https://github.com/Perdolique/worsier/commit/782e342a8643ddab31626c001abe39ed0627ee91))
+
 ## [2.8.1](https://github.com/Perdolique/worsier/compare/v2.8.0...v2.8.1) (2026-08-16)
 
 
