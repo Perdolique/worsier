@@ -35,7 +35,7 @@ test('formats through the asynchronous native API', async () => {
     rules: {
       importLayout: false,
       interfaceLayout: 'off',
-      statementSpacing: { imports: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
+      statementSpacing: { controlFlowStatements: 'off', imports: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
       semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
       trailingCommas: 'off'
     }
@@ -71,7 +71,7 @@ test('formats interface layouts through the native API', async () => {
 
   const isolatedRules = {
     importLayout: false,
-    statementSpacing: { imports: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
+    statementSpacing: { controlFlowStatements: 'off', imports: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
     semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
     trailingCommas: 'off'
   }
@@ -125,7 +125,7 @@ test('formats type alias spacing through the native API', async () => {
     rules: {
       importLayout: false,
       interfaceLayout: 'off',
-      statementSpacing: { imports: 'off', returnStatements: 'off', typeAliases: 'compact', variableDeclarations: 'off' },
+      statementSpacing: { controlFlowStatements: 'off', imports: 'off', returnStatements: 'off', typeAliases: 'compact', variableDeclarations: 'off' },
       semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
       trailingCommas: 'off'
     }
@@ -139,12 +139,26 @@ test('formats return statement spacing through the native API', async () => {
     rules: {
       importLayout: false,
       interfaceLayout: 'off',
-      statementSpacing: { imports: 'off', returnStatements: 'separate', typeAliases: 'off', variableDeclarations: 'off' },
+      statementSpacing: { controlFlowStatements: 'off', imports: 'off', returnStatements: 'separate', typeAliases: 'off', variableDeclarations: 'off' },
       semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
       trailingCommas: 'off'
     }
   })
   assert.equal(output, 'function f(){\n  work();\n\n  return value;\n}')
+})
+
+test('formats control-flow statement spacing through the native API', async () => {
+  const source = 'function f(){prepare();if(ok)work();finish();}'
+  const output = await format('sample.ts', source, {
+    rules: {
+      importLayout: false,
+      interfaceLayout: 'off',
+      statementSpacing: { controlFlowStatements: 'separate', imports: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
+      semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
+      trailingCommas: 'off'
+    }
+  })
+  assert.equal(output, 'function f(){\n  prepare();\n\n  if(ok)work();\n\n  finish();\n}')
 })
 
 test('formats granular semicolon groups through the native API', async () => {
@@ -153,7 +167,7 @@ test('formats granular semicolon groups through the native API', async () => {
   const output = await format('sample.ts', source, {
     rules: {
       importLayout: false,
-      statementSpacing: { imports: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
+      statementSpacing: { controlFlowStatements: 'off', imports: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
       semicolons: { statements: 'off', classMembers: 'asNeeded', typeMembers: 'always' },
       trailingCommas: 'off'
     }
@@ -169,7 +183,7 @@ test('formats trailing commas through the native API', async () => {
   const withCommas = 'const value = {\n  items: [\n    1,\n  ],\n};'
   const disabledRules = {
     importLayout: false,
-    statementSpacing: { imports: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
+    statementSpacing: { controlFlowStatements: 'off', imports: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
     semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' }
   }
 
@@ -212,6 +226,7 @@ test('maps native failures to stable error codes', async () => {
     [{ semicolons: { statements: 'never' } }, 'rules.semicolons.statements'],
     [{ semicolons: { extra: 'off' } }, 'rules.semicolons.extra'],
     [{ trailingCommas: 'multiline' }, 'rules.trailingCommas'],
+    [{ statementSpacing: { controlFlowStatements: 'preserve' } }, 'rules.statementSpacing.controlFlowStatements'],
     [{ statementSpacing: { imports: 'preserve' } }, 'rules.statementSpacing.imports'],
     [{ statementSpacing: { returnStatements: 'preserve' } }, 'rules.statementSpacing.returnStatements'],
     [{ statementSpacing: { typeAliases: 'preserve' } }, 'rules.statementSpacing.typeAliases'],

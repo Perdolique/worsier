@@ -6,6 +6,7 @@
     "importLayout": true,
     "interfaceLayout": 0,
     "statementSpacing": {
+      "controlFlowStatements": "separate",
       "imports": "separate",
       "returnStatements": "separate",
       "typeAliases": "separate",
