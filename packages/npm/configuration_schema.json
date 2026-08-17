@@ -33,6 +33,7 @@
           "typeMembers": "asNeeded"
         },
         "statementSpacing": {
+          "controlFlowStatements": "separate",
           "imports": "separate",
           "returnStatements": "separate",
           "typeAliases": "separate",
@@ -89,6 +90,7 @@
         "statementSpacing": {
           "$ref": "#/$defs/StatementSpacingConfig",
           "default": {
+            "controlFlowStatements": "separate",
             "imports": "separate",
             "returnStatements": "separate",
             "typeAliases": "separate",
@@ -131,6 +133,10 @@
     "StatementSpacingConfig": {
       "type": "object",
       "properties": {
+        "controlFlowStatements": {
+          "$ref": "#/$defs/StatementSpacingMode",
+          "default": "separate"
+        },
         "imports": {
           "$ref": "#/$defs/StatementSpacingMode",
           "default": "separate"

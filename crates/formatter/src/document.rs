@@ -228,6 +228,7 @@ mod tests {
                 "importLayout": false,
                 "interfaceLayout": "off",
                 "statementSpacing": {
+                    "controlFlowStatements": "off",
                     "imports": "off",
                     "returnStatements": "off",
                     "typeAliases": "off",

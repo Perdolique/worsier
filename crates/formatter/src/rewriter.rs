@@ -138,6 +138,7 @@ pub(crate) fn format_script(
     }
     if !config.import_layout_enabled()
         && config.interface_layout_threshold().is_none()
+        && config.control_flow_statement_spacing() == StatementSpacingMode::Off
         && config.import_spacing() == StatementSpacingMode::Off
         && config.return_statement_spacing() == StatementSpacingMode::Off
         && config.type_alias_spacing() == StatementSpacingMode::Off
@@ -161,6 +162,7 @@ pub(crate) fn format_script(
         RewriteRules {
             import_layout: config.import_layout_enabled(),
             interface_layout_threshold: config.interface_layout_threshold(),
+            control_flow_spacing: config.control_flow_statement_spacing(),
             import_spacing: config.import_spacing(),
             return_spacing: config.return_statement_spacing(),
             type_alias_spacing: config.type_alias_spacing(),
@@ -1230,6 +1232,9 @@ struct StatementShape {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum StatementTarget {
     Other,
+    ControlFlow {
+        spacing: StatementSpacingMode,
+    },
     Import {
         multiline: bool,
         spacing: StatementSpacingMode,
@@ -1251,6 +1256,7 @@ enum StatementTarget {
 struct RewriteRules {
     import_layout: bool,
     interface_layout_threshold: Option<u32>,
+    control_flow_spacing: StatementSpacingMode,
     import_spacing: StatementSpacingMode,
     return_spacing: StatementSpacingMode,
     type_alias_spacing: StatementSpacingMode,
@@ -1275,8 +1281,8 @@ enum ExpandedLayout {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum LayoutExpansionCause {
-    ReturnSpacing,
-    NonReturn,
+    DirectStatementSpacing,
+    Cascading,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1533,6 +1539,7 @@ fn collect_layout_edits(
     formatted_imports: &HashMap<u32, bool>,
 ) -> Result<Vec<Edit>, FormatError> {
     if rules.import_spacing == StatementSpacingMode::Off
+        && rules.control_flow_spacing == StatementSpacingMode::Off
         && rules.return_spacing == StatementSpacingMode::Off
         && rules.type_alias_spacing == StatementSpacingMode::Off
         && rules.variable_spacing == StatementSpacingMode::Off
@@ -1546,6 +1553,7 @@ fn collect_layout_edits(
         tokens,
         formatted_imports,
         interface_layout_threshold: rules.interface_layout_threshold,
+        control_flow_spacing: rules.control_flow_spacing,
         import_spacing: rules.import_spacing,
         return_spacing: rules.return_spacing,
         type_alias_spacing: rules.type_alias_spacing,
@@ -1603,6 +1611,7 @@ struct StatementCollector<'s> {
     tokens: &'s [Token],
     formatted_imports: &'s HashMap<u32, bool>,
     interface_layout_threshold: Option<u32>,
+    control_flow_spacing: StatementSpacingMode,
     import_spacing: StatementSpacingMode,
     return_spacing: StatementSpacingMode,
     type_alias_spacing: StatementSpacingMode,
@@ -1677,6 +1686,12 @@ impl StatementCollector<'_> {
                     .unwrap_or_else(|| import_is_multiline(self.source, span)),
                 spacing: self.import_spacing,
             }
+        } else if self.control_flow_spacing != StatementSpacingMode::Off
+            && is_control_flow_statement(statement)
+        {
+            StatementTarget::ControlFlow {
+                spacing: self.control_flow_spacing,
+            }
         } else if self.return_spacing != StatementSpacingMode::Off
             && matches!(statement, Statement::ReturnStatement(_))
         {
@@ -1733,6 +1748,20 @@ impl StatementCollector<'_> {
             item_index,
         })
     }
+}
+
+fn is_control_flow_statement(statement: &Statement<'_>) -> bool {
+    matches!(
+        statement,
+        Statement::DoWhileStatement(_)
+            | Statement::ForInStatement(_)
+            | Statement::ForOfStatement(_)
+            | Statement::ForStatement(_)
+            | Statement::IfStatement(_)
+            | Statement::SwitchStatement(_)
+            | Statement::TryStatement(_)
+            | Statement::WhileStatement(_)
+    )
 }
 
 fn statement_syntax_span(source: &str, tokens: &[Token], span: Span) -> Span {
@@ -1982,7 +2011,7 @@ fn mark_expanded_layouts(
             &mut pending,
             &mut queued,
             ExpandedLayout::Interface(interface_index),
-            LayoutExpansionCause::NonReturn,
+            LayoutExpansionCause::Cascading,
         );
     }
 
@@ -2004,7 +2033,8 @@ fn mark_expanded_layouts(
         match parent {
             Some(ExpandedLayout::List(list_index)) => {
                 let parent_list = &mut lists[list_index];
-                if cause == LayoutExpansionCause::ReturnSpacing && is_lone_return_list(parent_list)
+                if cause == LayoutExpansionCause::DirectStatementSpacing
+                    && is_lone_direct_statement_spacing_list(parent_list)
                 {
                     continue;
                 }
@@ -2051,30 +2081,37 @@ fn initial_list_expansion_cause(list: &StatementList) -> Option<LayoutExpansionC
         return None;
     }
 
-    let mut contains_return = false;
+    let mut contains_direct_statement_spacing = false;
     for item in &list.items {
         match item.target {
-            StatementTarget::Return { spacing } if spacing != StatementSpacingMode::Off => {
-                contains_return = true;
+            StatementTarget::ControlFlow { spacing } | StatementTarget::Return { spacing }
+                if spacing != StatementSpacingMode::Off =>
+            {
+                contains_direct_statement_spacing = true;
             }
             StatementTarget::TypeAlias { spacing, .. }
             | StatementTarget::Variable { spacing, .. }
                 if spacing != StatementSpacingMode::Off =>
             {
-                return Some(LayoutExpansionCause::NonReturn);
+                return Some(LayoutExpansionCause::Cascading);
             }
-            StatementTarget::Other
+            StatementTarget::ControlFlow { .. }
+            | StatementTarget::Other
             | StatementTarget::Import { .. }
             | StatementTarget::Return { .. }
             | StatementTarget::TypeAlias { .. }
             | StatementTarget::Variable { .. } => {}
         }
     }
-    contains_return.then_some(LayoutExpansionCause::ReturnSpacing)
+    contains_direct_statement_spacing.then_some(LayoutExpansionCause::DirectStatementSpacing)
 }
 
-fn is_lone_return_list(list: &StatementList) -> bool {
-    list.items.len() == 1 && matches!(list.items[0].target, StatementTarget::Return { .. })
+fn is_lone_direct_statement_spacing_list(list: &StatementList) -> bool {
+    list.items.len() == 1
+        && matches!(
+            list.items[0].target,
+            StatementTarget::ControlFlow { .. } | StatementTarget::Return { .. }
+        )
 }
 
 fn enqueue_layout_expansion(
@@ -2098,10 +2135,12 @@ fn append_layout_edits(
     edits: &mut Vec<Edit>,
 ) -> Result<(), FormatError> {
     let mut indents = LayoutIndents::new(lists.len(), switches.len());
+    let directive_target_lines = typescript_directive_target_lines(source, comments)?;
     append_list_layout_edits(
         source,
         comments,
         newline,
+        &directive_target_lines,
         lists,
         switches,
         &mut indents,
@@ -2120,6 +2159,7 @@ fn append_layout_edits(
         source,
         comments,
         newline,
+        &directive_target_lines,
         lists,
         switches,
         interfaces,
@@ -2128,10 +2168,15 @@ fn append_layout_edits(
     )
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "statement boundaries share the collected layout and directive context"
+)]
 fn append_list_layout_edits(
     source: &str,
     comments: &[Comment],
     newline: &str,
+    directive_target_lines: &HashSet<u32>,
     lists: &[StatementList],
     switches: &[SwitchLayout],
     indents: &mut LayoutIndents,
@@ -2160,6 +2205,14 @@ fn append_list_layout_edits(
             let [previous, next] = pair else {
                 unreachable!("windows(2) always contains two statements")
             };
+            if spans_share_directive_target_line(
+                source,
+                previous.span,
+                next.span,
+                directive_target_lines,
+            ) {
+                continue;
+            }
             let previous_indent = line_indent_at(source, previous.span.start);
             if !previous_indent.is_empty() {
                 fallback_indent.clone_from(&previous_indent);
@@ -2288,6 +2341,7 @@ fn append_interface_layout_edits(
     source: &str,
     comments: &[Comment],
     newline: &str,
+    directive_target_lines: &HashSet<u32>,
     lists: &[StatementList],
     switches: &[SwitchLayout],
     interfaces: &[InterfaceBodyLayout],
@@ -2300,11 +2354,6 @@ fn append_interface_layout_edits(
         };
         let base_indent = indents.interface_base_indent(source, lists, switches, interface);
         let member_indent = format!("{base_indent}  ");
-        let directive_target_lines = typescript_directive_target_lines(
-            source,
-            comments,
-            Span::new(interface.open.end, interface.close.start),
-        )?;
         append_boundary_edit(
             source,
             comments,
@@ -2314,7 +2363,7 @@ fn append_interface_layout_edits(
             edits,
         )?;
         for pair in interface.members.windows(2) {
-            if members_share_directive_target_line(source, pair, &directive_target_lines) {
+            if spans_share_directive_target_line(source, pair[0], pair[1], directive_target_lines) {
                 continue;
             }
             append_boundary_edit(
@@ -2342,10 +2391,9 @@ fn append_interface_layout_edits(
 fn typescript_directive_target_lines(
     source: &str,
     comments: &[Comment],
-    span: Span,
 ) -> Result<HashSet<u32>, FormatError> {
     let mut target_lines = HashSet::new();
-    for comment in comments_in_span(comments, span) {
+    for comment in comments {
         if comment.kind != CommentKind::Line
             || !is_line_scoped_typescript_directive(source_slice(source, comment.span)?)
         {
@@ -2390,14 +2438,12 @@ fn line_start(source: &str, offset: u32) -> Option<u32> {
     u32::try_from(start).ok()
 }
 
-fn members_share_directive_target_line(
+fn spans_share_directive_target_line(
     source: &str,
-    members: &[Span],
+    previous: Span,
+    next: Span,
     directive_target_lines: &HashSet<u32>,
 ) -> bool {
-    let [previous, next] = members else {
-        return false;
-    };
     let Some(previous_line) = line_start(source, previous.start) else {
         return false;
     };
@@ -2431,7 +2477,8 @@ fn statement_boundary_requirement(
 ) -> Option<bool> {
     let mode = match statement {
         StatementTarget::Other => return None,
-        StatementTarget::Import { spacing, .. }
+        StatementTarget::ControlFlow { spacing }
+        | StatementTarget::Import { spacing, .. }
         | StatementTarget::Return { spacing }
         | StatementTarget::TypeAlias { spacing, .. }
         | StatementTarget::Variable { spacing, .. } => spacing,
@@ -2720,6 +2767,30 @@ fn line_indent_before_guard(source: &str, offset: u32) -> Option<String> {
         .then(|| before_guard.to_owned())
 }
 
+fn semicolon_after_trailing_comment_end(
+    source: &str,
+    trailing_end: u32,
+    leading_start: u32,
+) -> Result<Option<u32>, FormatError> {
+    let suffix = source_slice(source, Span::new(trailing_end, leading_start))?;
+    if !suffix
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .eq([';'])
+    {
+        return Ok(None);
+    }
+    let Some(relative_end) = suffix.find(';').and_then(|start| start.checked_add(1)) else {
+        return Ok(None);
+    };
+    let relative_end = u32::try_from(relative_end)
+        .map_err(|_| FormatError::internal("statement boundary exceeded source spans"))?;
+    trailing_end
+        .checked_add(relative_end)
+        .ok_or_else(|| FormatError::internal("statement boundary exceeded source spans"))
+        .map(Some)
+}
+
 fn format_boundary_separator(
     source: &str,
     span: Span,
@@ -2789,6 +2860,24 @@ fn format_boundary_separator(
             )?;
             return Ok(output);
         }
+    }
+
+    if let Some(semicolon_end) =
+        semicolon_after_trailing_comment_end(source, trailing_end, leading_start)?
+    {
+        let mut output = source_slice(source, Span::new(span.start, semicolon_end))?.to_owned();
+        output.push_str(statement_separator);
+        output.push_str(indent);
+        append_leading_comments_and_destination(
+            &mut output,
+            source,
+            boundary_comments,
+            leading_start,
+            span.end,
+            statement_separator,
+            indent,
+        )?;
+        return Ok(output);
     }
 
     let mut output = String::new();
@@ -3389,6 +3478,7 @@ mod tests {
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     statement_spacing: StatementSpacingConfig {
+                        control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Off,
                         return_statements: StatementSpacingMode::Off,
                         type_aliases: StatementSpacingMode::Off,
@@ -3430,6 +3520,7 @@ mod tests {
                 rules: RulesConfig {
                     import_layout,
                     statement_spacing: StatementSpacingConfig {
+                        control_flow_statements: StatementSpacingMode::Off,
                         imports,
                         return_statements: StatementSpacingMode::Off,
                         type_aliases,
@@ -3450,8 +3541,34 @@ mod tests {
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     statement_spacing: StatementSpacingConfig {
+                        control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Off,
                         return_statements,
+                        type_aliases: StatementSpacingMode::Off,
+                        variable_declarations: StatementSpacingMode::Off,
+                    },
+                    trailing_commas: TrailingCommaMode::Off,
+                    ..RulesConfig::default()
+                },
+                ..FormatConfig::default()
+            },
+        )
+    }
+
+    fn format_with_control_flow_spacing(
+        source: &str,
+        control_flow_statements: StatementSpacingMode,
+    ) -> String {
+        format_with_semicolons_off(
+            source,
+            FormatConfig {
+                rules: RulesConfig {
+                    import_layout: false,
+                    interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                    statement_spacing: StatementSpacingConfig {
+                        control_flow_statements,
+                        imports: StatementSpacingMode::Off,
+                        return_statements: StatementSpacingMode::Off,
                         type_aliases: StatementSpacingMode::Off,
                         variable_declarations: StatementSpacingMode::Off,
                     },
@@ -3471,6 +3588,7 @@ mod tests {
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     statement_spacing: StatementSpacingConfig {
+                        control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Off,
                         return_statements: StatementSpacingMode::Off,
                         type_aliases: StatementSpacingMode::Off,
@@ -3493,6 +3611,7 @@ mod tests {
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     statement_spacing: StatementSpacingConfig {
+                        control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Off,
                         return_statements: StatementSpacingMode::Off,
                         type_aliases: StatementSpacingMode::Off,
@@ -3520,6 +3639,7 @@ mod tests {
                     import_layout: false,
                     interface_layout,
                     statement_spacing: StatementSpacingConfig {
+                        control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Off,
                         return_statements: StatementSpacingMode::Off,
                         type_aliases: StatementSpacingMode::Off,
@@ -3588,6 +3708,7 @@ mod tests {
                         import_layout: false,
                         interface_layout: InterfaceLayoutRule::Threshold(0),
                         statement_spacing: StatementSpacingConfig {
+                            control_flow_statements: StatementSpacingMode::Off,
                             imports: StatementSpacingMode::Off,
                             return_statements: StatementSpacingMode::Off,
                             type_aliases: StatementSpacingMode::Off,
@@ -3828,6 +3949,7 @@ mod tests {
                 import_layout: false,
                 interface_layout: InterfaceLayoutRule::Threshold(0),
                 statement_spacing: StatementSpacingConfig {
+                    control_flow_statements: StatementSpacingMode::Off,
                     imports: StatementSpacingMode::Off,
                     return_statements: StatementSpacingMode::Off,
                     type_aliases: StatementSpacingMode::Off,
@@ -4433,6 +4555,7 @@ mod tests {
                 import_layout: false,
                 interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                 statement_spacing: StatementSpacingConfig {
+                    control_flow_statements: StatementSpacingMode::Off,
                     imports: StatementSpacingMode::Off,
                     return_statements: StatementSpacingMode::Off,
                     type_aliases: StatementSpacingMode::Off,
@@ -4588,6 +4711,7 @@ mod tests {
                 import_layout: true,
                 interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                 statement_spacing: StatementSpacingConfig {
+                    control_flow_statements: StatementSpacingMode::Off,
                     imports: StatementSpacingMode::Off,
                     return_statements: StatementSpacingMode::Off,
                     type_aliases: StatementSpacingMode::Off,
@@ -4735,6 +4859,7 @@ mod tests {
                 rules: RulesConfig {
                     import_layout: false,
                     statement_spacing: StatementSpacingConfig {
+                        control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Separate,
                         return_statements: StatementSpacingMode::Off,
                         type_aliases: StatementSpacingMode::Off,
@@ -4757,6 +4882,7 @@ mod tests {
                 rules: RulesConfig {
                     import_layout: true,
                     statement_spacing: StatementSpacingConfig {
+                        control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Separate,
                         return_statements: StatementSpacingMode::Off,
                         type_aliases: StatementSpacingMode::Off,
@@ -4851,6 +4977,7 @@ mod tests {
                 import_layout: false,
                 interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                 statement_spacing: StatementSpacingConfig {
+                    control_flow_statements: StatementSpacingMode::Off,
                     imports: StatementSpacingMode::Off,
                     return_statements: StatementSpacingMode::Off,
                     type_aliases: StatementSpacingMode::Off,
@@ -5039,6 +5166,7 @@ mod tests {
             verify_ast: false,
             rules: RulesConfig {
                 statement_spacing: StatementSpacingConfig {
+                    control_flow_statements: StatementSpacingMode::Off,
                     imports: StatementSpacingMode::Off,
                     return_statements: StatementSpacingMode::Off,
                     type_aliases: StatementSpacingMode::Off,
@@ -5232,6 +5360,7 @@ mod tests {
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     statement_spacing: StatementSpacingConfig {
+                        control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Off,
                         return_statements: StatementSpacingMode::Off,
                         type_aliases: StatementSpacingMode::Separate,
@@ -5311,6 +5440,7 @@ mod tests {
                             import_layout: false,
                             interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                             statement_spacing: StatementSpacingConfig {
+                                control_flow_statements: StatementSpacingMode::Off,
                                 imports: StatementSpacingMode::Off,
                                 return_statements: StatementSpacingMode::Off,
                                 type_aliases: StatementSpacingMode::Separate,
@@ -5448,6 +5578,257 @@ mod tests {
     }
 
     #[test]
+    fn separates_every_control_flow_statement_from_adjacent_siblings() {
+        for statement in [
+            "if(ok)work();",
+            "switch(kind){case 1:work();break;default:break;}",
+            "for(;;)work();",
+            "for(const key in object)work();",
+            "for(const value of values)work();",
+            "while(ok)work();",
+            "do work();while(ok);",
+            "try{work();}catch(error){recover(error);}finally{cleanup();}",
+        ] {
+            let source = format!("function f(){{before();{statement}after();}}");
+            let expected =
+                format!("function f(){{\n  before();\n\n  {statement}\n\n  after();\n}}");
+            let output = format_with_control_flow_spacing(&source, StatementSpacingMode::Separate);
+
+            assert_eq!(output, expected, "{statement}");
+            assert_eq!(
+                format_with_control_flow_spacing(&output, StatementSpacingMode::Separate),
+                output,
+                "{statement}"
+            );
+        }
+
+        let for_await =
+            "async function f(){before();for await(const item of items)use(item);after();}";
+        assert_eq!(
+            format_with_control_flow_spacing(for_await, StatementSpacingMode::Separate),
+            "async function f(){\n  before();\n\n  for await(const item of items)use(item);\n\n  after();\n}"
+        );
+    }
+
+    #[test]
+    fn applies_control_flow_modes_and_preserves_lone_and_labelled_statements() {
+        let source = "function f(){before();if(ok)work();after();}";
+
+        assert_eq!(
+            format_with_control_flow_spacing(source, StatementSpacingMode::Separate),
+            "function f(){\n  before();\n\n  if(ok)work();\n\n  after();\n}"
+        );
+        assert_eq!(
+            format_with_control_flow_spacing(source, StatementSpacingMode::Compact),
+            "function f(){\n  before();\n  if(ok)work();\n  after();\n}"
+        );
+        assert_eq!(
+            format_with_control_flow_spacing(source, StatementSpacingMode::Off),
+            source
+        );
+
+        for unchanged in [
+            "function f(){if(ok)work();}",
+            "function f(){before();label:for(;;)work();after();}",
+        ] {
+            assert_eq!(
+                format_with_control_flow_spacing(unchanged, StatementSpacingMode::Separate),
+                unchanged
+            );
+        }
+    }
+
+    #[test]
+    fn preserves_lone_control_flow_parents_only_for_direct_statement_spacing() {
+        let direct = "function f(){if(ok){before();while(ready)tick();after();}}";
+        assert_eq!(
+            format_with_control_flow_spacing(direct, StatementSpacingMode::Separate),
+            "function f(){if(ok){\n    before();\n\n    while(ready)tick();\n\n    after();\n  }}"
+        );
+
+        let cascading = "function f(){if(ok){const value=1;work();}}";
+        assert_eq!(
+            format_with_semicolons_off(
+                cascading,
+                FormatConfig {
+                    rules: RulesConfig {
+                        import_layout: false,
+                        interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                        statement_spacing: StatementSpacingConfig {
+                            control_flow_statements: StatementSpacingMode::Separate,
+                            imports: StatementSpacingMode::Off,
+                            return_statements: StatementSpacingMode::Off,
+                            type_aliases: StatementSpacingMode::Off,
+                            variable_declarations: StatementSpacingMode::Separate,
+                        },
+                        trailing_commas: TrailingCommaMode::Off,
+                        ..RulesConfig::default()
+                    },
+                    ..FormatConfig::default()
+                },
+            ),
+            "function f(){\n  if(ok){\n    const value=1;\n\n    work();\n  }\n}"
+        );
+    }
+
+    #[test]
+    fn keeps_control_flow_owner_clauses_together_and_formats_nested_lists() {
+        let owners = "function f(){before();if(ok){one();}else{two();}try{run();}catch(error){recover(error);}finally{cleanup();}after();}";
+        let expected_owners = "function f(){\n  before();\n\n  if(ok){one();}else{two();}\n\n  try{run();}catch(error){recover(error);}finally{cleanup();}\n\n  after();\n}";
+        assert_eq!(
+            format_with_control_flow_spacing(owners, StatementSpacingMode::Separate),
+            expected_owners
+        );
+
+        let nested = "function outer(){if(ok){prepare();while(ready)tick();finish();}switch(kind){case 1:work();for(;;)next();break;default:break;}}";
+        let expected_nested = "function outer(){\n  if(ok){\n    prepare();\n\n    while(ready)tick();\n\n    finish();\n  }\n\n  switch(kind){\n    case 1:\n      work();\n\n      for(;;)next();\n\n      break;\n    default:break;\n  }\n}";
+        let output = format_with_control_flow_spacing(nested, StatementSpacingMode::Separate);
+        assert_eq!(output, expected_nested);
+        assert_eq!(
+            format_with_control_flow_spacing(&output, StatementSpacingMode::Separate),
+            output
+        );
+    }
+
+    #[test]
+    fn combines_control_flow_with_other_spacing_by_priority() {
+        let format = |source, control_flow_statements, return_statements, variable_declarations| {
+            format_with_semicolons_off(
+                source,
+                FormatConfig {
+                    rules: RulesConfig {
+                        import_layout: false,
+                        interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                        statement_spacing: StatementSpacingConfig {
+                            control_flow_statements,
+                            imports: StatementSpacingMode::Off,
+                            return_statements,
+                            type_aliases: StatementSpacingMode::Off,
+                            variable_declarations,
+                        },
+                        trailing_commas: TrailingCommaMode::Off,
+                        ..RulesConfig::default()
+                    },
+                    ..FormatConfig::default()
+                },
+            )
+        };
+        let source = "function f(){const value=1;if(value)work();return value;}";
+
+        assert_eq!(
+            format(
+                source,
+                StatementSpacingMode::Separate,
+                StatementSpacingMode::Compact,
+                StatementSpacingMode::Compact
+            ),
+            "function f(){\n  const value=1;\n\n  if(value)work();\n\n  return value;\n}"
+        );
+        assert_eq!(
+            format(
+                source,
+                StatementSpacingMode::Compact,
+                StatementSpacingMode::Separate,
+                StatementSpacingMode::Compact
+            ),
+            "function f(){\n  const value=1;\n  if(value)work();\n\n  return value;\n}"
+        );
+
+        let format_module = |source, control_flow_statements, imports, type_aliases| {
+            format_with_semicolons_off(
+                source,
+                FormatConfig {
+                    rules: RulesConfig {
+                        import_layout: false,
+                        interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                        statement_spacing: StatementSpacingConfig {
+                            control_flow_statements,
+                            imports,
+                            return_statements: StatementSpacingMode::Off,
+                            type_aliases,
+                            variable_declarations: StatementSpacingMode::Off,
+                        },
+                        trailing_commas: TrailingCommaMode::Off,
+                        ..RulesConfig::default()
+                    },
+                    ..FormatConfig::default()
+                },
+            )
+        };
+        let module = "import'x';if(ok)work();type A=1;";
+
+        assert_eq!(
+            format_module(
+                module,
+                StatementSpacingMode::Compact,
+                StatementSpacingMode::Separate,
+                StatementSpacingMode::Compact
+            ),
+            "import'x';\n\nif(ok)work();\ntype A=1;"
+        );
+        assert_eq!(
+            format_module(
+                module,
+                StatementSpacingMode::Compact,
+                StatementSpacingMode::Compact,
+                StatementSpacingMode::Separate
+            ),
+            "import'x';\nif(ok)work();\n\ntype A=1;"
+        );
+    }
+
+    #[test]
+    fn preserves_control_flow_comments_line_endings_and_do_while_semicolon() {
+        let source = "\u{feff}function f(){\r\n  before(); // trailing\r\n  // leading\r\n  while(ok)work();\r\n}";
+        let output = format_with_control_flow_spacing(source, StatementSpacingMode::Separate);
+        assert_eq!(
+            output,
+            "\u{feff}function f(){\r\n  before(); // trailing\r\n\r\n  // leading\r\n  while(ok)work();\r\n}"
+        );
+        assert_eq!(output.matches("// trailing").count(), 1);
+        assert_eq!(output.matches("// leading").count(), 1);
+        assert!(!output.replace("\r\n", "").contains('\n'));
+        assert!(!output.ends_with('\n'));
+
+        let detached = "function f() {\n  do work()\n  while (ok)\n  ;\n  after()\n}";
+        let normalized = format_with_control_flow_spacing(detached, StatementSpacingMode::Separate);
+        assert_eq!(
+            normalized,
+            "function f() {\n  do work()\n  while (ok);\n\n  after()\n}"
+        );
+        assert_eq!(
+            format_with_control_flow_spacing(&normalized, StatementSpacingMode::Separate),
+            normalized
+        );
+
+        let commented_detached =
+            "function f() {\n  do work()\n  while (ok) // keep\n  ;\n  after()\n}";
+        let preserved =
+            format_with_control_flow_spacing(commented_detached, StatementSpacingMode::Separate);
+        assert_eq!(
+            preserved,
+            "function f() {\n  do work()\n  while (ok) // keep\n  ;\n\n  after()\n}"
+        );
+        assert_eq!(
+            format_with_control_flow_spacing(&preserved, StatementSpacingMode::Separate),
+            preserved
+        );
+    }
+
+    #[test]
+    fn preserves_control_flow_typescript_directive_scope() {
+        for directive in ["@ts-ignore", "@ts-expect-error"] {
+            let source =
+                format!("function f(){{\n  // {directive}\n  if(missingA)work();missingB();\n}}");
+            assert_eq!(
+                format_with_control_flow_spacing(&source, StatementSpacingMode::Separate),
+                source,
+                "{directive}"
+            );
+        }
+    }
+
+    #[test]
     fn separates_return_statements_from_every_adjacent_sibling() {
         let source = "function f(){before();return first;return second;after();}";
         let expected =
@@ -5514,6 +5895,7 @@ mod tests {
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     statement_spacing: StatementSpacingConfig {
+                        control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Off,
                         return_statements: StatementSpacingMode::Separate,
                         type_aliases: StatementSpacingMode::Off,
@@ -5561,6 +5943,7 @@ mod tests {
                         import_layout: false,
                         interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                         statement_spacing: StatementSpacingConfig {
+                            control_flow_statements: StatementSpacingMode::Off,
                             imports: StatementSpacingMode::Off,
                             return_statements,
                             type_aliases,
@@ -5794,6 +6177,7 @@ mod tests {
                 rules: RulesConfig {
                     import_layout: false,
                     statement_spacing: StatementSpacingConfig {
+                        control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Off,
                         return_statements: StatementSpacingMode::Off,
                         type_aliases: StatementSpacingMode::Off,
@@ -5815,6 +6199,7 @@ mod tests {
                 rules: RulesConfig {
                     import_layout: true,
                     statement_spacing: StatementSpacingConfig {
+                        control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Separate,
                         return_statements: StatementSpacingMode::Off,
                         type_aliases: StatementSpacingMode::Off,
@@ -5840,7 +6225,7 @@ mod tests {
     fn unfolds_inline_blocks_and_cascades_two_space_indentation() {
         let source = "function outer(){if(ok){const a=1;work();}finish();}";
         let expected =
-            "function outer(){\n  if(ok){\n    const a=1;\n\n    work();\n  }\n  finish();\n}";
+            "function outer(){\n  if(ok){\n    const a=1;\n\n    work();\n  }\n\n  finish();\n}";
         assert_eq!(format(source), expected);
         assert_eq!(format(expected), expected);
 
@@ -5867,7 +6252,7 @@ mod tests {
         assert_eq!(format(expected), expected);
 
         let nested = "function f(){switch(x){case 1: const a=1;run();}finish();}";
-        let nested_expected = "function f(){\n  switch(x){\n    case 1:\n      const a=1;\n\n      run();\n  }\n  finish();\n}";
+        let nested_expected = "function f(){\n  switch(x){\n    case 1:\n      const a=1;\n\n      run();\n  }\n\n  finish();\n}";
         assert_eq!(format(nested), nested_expected);
 
         let object_discriminant = "switch({x:1}){case 1: const a=1;run();}";
@@ -5949,7 +6334,7 @@ mod tests {
     #[test]
     fn preserves_existing_indent_when_splitting_inline_boundaries() {
         let source = "function f() {\n  const a=1;work();\n}\nswitch(x) {\n  case 1:\n    let b=2;done();\n}";
-        let expected = "function f() {\n  const a=1;\n\n  work();\n}\nswitch(x) {\n  case 1:\n    let b=2;\n\n    done();\n}";
+        let expected = "function f() {\n  const a=1;\n\n  work();\n}\n\nswitch(x) {\n  case 1:\n    let b=2;\n\n    done();\n}";
         assert_eq!(format(source), expected);
         assert_eq!(format(expected), expected);
     }
@@ -5979,14 +6364,30 @@ mod tests {
     #[test]
     fn excludes_non_runtime_and_ambient_variable_declarations() {
         let source = "export const exported=1;export let mutable=2;export var legacy=3;declare const ambient:number;using resource=get();await using asyncResource=getAsync();for(let i=0;i<1;i++)work();for(const item of items)use(item);";
-        assert_eq!(format(source), source);
+        assert_eq!(
+            format_with_rules(
+                source,
+                false,
+                StatementSpacingMode::Off,
+                StatementSpacingMode::Separate,
+            ),
+            source
+        );
 
         for ambient in [
             "declare namespace Ambient { const value:number; function work():void; }",
             "declare module 'pkg' { const value:number; function work():void; }",
             "declare global { const value:number; function work():void; }",
         ] {
-            assert_eq!(format(ambient), ambient);
+            assert_eq!(
+                format_with_rules(
+                    ambient,
+                    false,
+                    StatementSpacingMode::Off,
+                    StatementSpacingMode::Separate,
+                ),
+                ambient
+            );
         }
 
         let definition = "const first:number;const second:string;";

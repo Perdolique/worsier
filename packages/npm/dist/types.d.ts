@@ -19,6 +19,7 @@ export interface SemicolonConfig {
     typeMembers?: 'always' | 'asNeeded' | 'off';
 }
 export interface StatementSpacingConfig {
+    controlFlowStatements?: 'separate' | 'compact' | 'off';
     imports?: 'separate' | 'compact' | 'off';
     returnStatements?: 'separate' | 'compact' | 'off';
     typeAliases?: 'separate' | 'compact' | 'off';
