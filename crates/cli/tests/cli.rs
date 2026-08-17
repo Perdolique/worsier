@@ -67,6 +67,7 @@ fn updates_default_and_explicit_configs_and_is_idempotent() {
     assert!(updated_stdout.contains("Updated "));
     let first_output = fs::read_to_string(&default_config).unwrap();
     assert!(first_output.contains("\"lineWidth\":80"));
+    assert!(first_output.contains("\"returnStatements\": \"separate\""));
     assert!(first_output.contains("\"typeAliases\": \"separate\""));
     let first_metadata = fs::metadata(&default_config).unwrap();
 
@@ -265,7 +266,7 @@ fn supports_trailing_comma_modes_from_config() {
 
     write(
         &directory.path().join("worsier.jsonc"),
-        r#"{"rules":{"importLayout":false,"statementSpacing":{"imports":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"always"}}"#,
+        r#"{"rules":{"importLayout":false,"statementSpacing":{"imports":"off","returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"always"}}"#,
     );
     let always = command(directory.path()).arg("sample.ts").output().unwrap();
     assert!(always.status.success(), "{}", stderr(&always));
@@ -276,7 +277,7 @@ fn supports_trailing_comma_modes_from_config() {
 
     write(
         &directory.path().join("worsier.jsonc"),
-        r#"{"rules":{"importLayout":false,"statementSpacing":{"imports":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}"#,
+        r#"{"rules":{"importLayout":false,"statementSpacing":{"imports":"off","returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}"#,
     );
     let off = command(directory.path()).arg("sample.ts").output().unwrap();
     assert!(off.status.success(), "{}", stderr(&off));
@@ -289,7 +290,7 @@ fn supports_granular_semicolon_modes_from_config() {
     fs::create_dir(directory.path().join(".git")).unwrap();
     write(
         &directory.path().join("worsier.jsonc"),
-        r#"{"rules":{"importLayout":false,"statementSpacing":{"imports":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"asNeeded","typeMembers":"always"},"trailingCommas":"off"}}"#,
+        r#"{"rules":{"importLayout":false,"statementSpacing":{"imports":"off","returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"asNeeded","typeMembers":"always"},"trailingCommas":"off"}}"#,
     );
     write(
         &directory.path().join("sample.ts"),
@@ -309,7 +310,7 @@ fn supports_type_alias_spacing_from_config() {
     let directory = tempfile::tempdir().unwrap();
     write(
         &directory.path().join("worsier.jsonc"),
-        r#"{"rules":{"importLayout":false,"interfaceLayout":"off","statementSpacing":{"imports":"off","typeAliases":"compact","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}"#,
+        r#"{"rules":{"importLayout":false,"interfaceLayout":"off","statementSpacing":{"imports":"off","returnStatements":"off","typeAliases":"compact","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}"#,
     );
     write(
         &directory.path().join("sample.ts"),

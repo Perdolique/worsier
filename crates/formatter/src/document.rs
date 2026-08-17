@@ -222,13 +222,14 @@ mod tests {
 
     #[test]
     fn preserves_the_complete_vue_document_when_rules_are_off() {
-        let source = "<template> untouched </template>\n<script>const value={a:1,};</script>";
+        let source = "<template> untouched </template>\n<script>const value={a:1,};function f(){work();return value;}</script>";
         let raw = r#"{
             "rules": {
                 "importLayout": false,
                 "interfaceLayout": "off",
                 "statementSpacing": {
                     "imports": "off",
+                    "returnStatements": "off",
                     "typeAliases": "off",
                     "variableDeclarations": "off"
                 },
