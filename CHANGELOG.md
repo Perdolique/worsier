@@ -1,5 +1,16 @@
 # Changelog
 
+## [3.0.0](https://github.com/Perdolique/worsier/compare/v2.11.0...v3.0.0) (2026-08-18)
+
+
+### ⚠ BREAKING CHANGES
+
+* **formatter:** Configurations that omit rules.semicolons.typeMembers now add semicolons to interface and object-type members. Set it to asNeeded to preserve the previous output.
+
+### Features
+
+* **formatter:** default type member semicolons ([de3f6f6](https://github.com/Perdolique/worsier/commit/de3f6f69fa186b823343d037a40eb4a44d400337))
+
 ## [2.11.0](https://github.com/Perdolique/worsier/compare/v2.10.0...v2.11.0) (2026-08-17)
 
 
