@@ -183,7 +183,7 @@ mod tests {
 
         assert_eq!(
             output,
-            "<script setup lang=\"ts\">\n  import {\n    first,\n    second\n  } from 'pkg'\n\n  type Alias=string\n\n  interface Shape {\n    first: string\n    second: number\n  }\n  class Store { value=1 }\n\n  const value={items:[1,2]}\n\n  run()\n</script>"
+            "<script setup lang=\"ts\">\n  import {\n    first,\n    second\n  } from 'pkg'\n\n  type Alias=string\n\n  interface Shape {\n    first: string;\n    second: number;\n  }\n  class Store { value=1 }\n\n  const value={items:[1,2]}\n\n  run()\n</script>"
         );
         assert!(
             format_text(Path::new("component.vue"), &output, &config)

@@ -16,7 +16,7 @@
     "semicolons": {
       "statements": "asNeeded",
       "classMembers": "asNeeded",
-      "typeMembers": "asNeeded"
+      "typeMembers": "always"
     },
     "trailingCommas": "never"
   },
