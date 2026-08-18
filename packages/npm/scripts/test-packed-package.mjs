@@ -32,6 +32,9 @@ const installedPackage = join(project, 'node_modules/worsier')
 const installedSchema = JSON.parse(await readFile(join(installedPackage, 'configuration_schema.json'), 'utf8'))
 assert.equal(installedSchema.properties.rules.default.objectPropertySpacing, true)
 assert.equal(installedSchema.$defs.RulesConfig.properties.objectPropertySpacing.default, true)
+assert.equal(installedSchema.properties.rules.default.semicolons.typeMembers, 'always')
+assert.equal(installedSchema.$defs.RulesConfig.properties.semicolons.default.typeMembers, 'always')
+assert.equal(installedSchema.$defs.SemicolonConfig.properties.typeMembers.default, 'always')
 assert.match(await readFile(join(installedPackage, 'dist/types.d.ts'), 'utf8'), /objectPropertySpacing\?: boolean/)
 
 const executable = join(project, 'node_modules/worsier/bin/worsier.js')
@@ -40,7 +43,7 @@ assert.equal(version.stdout.trim(), `worsier ${rootVersion}`)
 run(process.execPath, [executable, '--init'], project)
 assert.equal(
   await readFile(join(project, 'worsier.jsonc'), 'utf8'),
-  '{\n  "$schema": "./node_modules/worsier/configuration_schema.json",\n  "lineWidth": 120,\n  "verifyAst": true,\n  "rules": {\n    "importLayout": true,\n    "interfaceLayout": 0,\n    "objectPropertySpacing": true,\n    "statementSpacing": {\n      "controlFlowStatements": "separate",\n      "imports": "separate",\n      "returnStatements": "separate",\n      "typeAliases": "separate",\n      "variableDeclarations": "separate"\n    },\n    "semicolons": {\n      "statements": "asNeeded",\n      "classMembers": "asNeeded",\n      "typeMembers": "asNeeded"\n    },\n    "trailingCommas": "never"\n  },\n  "ignorePatterns": []\n}\n'
+  '{\n  "$schema": "./node_modules/worsier/configuration_schema.json",\n  "lineWidth": 120,\n  "verifyAst": true,\n  "rules": {\n    "importLayout": true,\n    "interfaceLayout": 0,\n    "objectPropertySpacing": true,\n    "statementSpacing": {\n      "controlFlowStatements": "separate",\n      "imports": "separate",\n      "returnStatements": "separate",\n      "typeAliases": "separate",\n      "variableDeclarations": "separate"\n    },\n    "semicolons": {\n      "statements": "asNeeded",\n      "classMembers": "asNeeded",\n      "typeMembers": "always"\n    },\n    "trailingCommas": "never"\n  },\n  "ignorePatterns": []\n}\n'
 )
 await writeFile(
   join(project, 'worsier.jsonc'),
@@ -51,7 +54,7 @@ assert.match(updatedConfig.stdout, /Migrated rules\.imports/)
 assert.match(updatedConfig.stdout, /Migrated rules\.variables/)
 assert.equal(
   await readFile(join(project, 'worsier.jsonc'), 'utf8'),
-  '{\n  "$schema": "./node_modules/worsier/configuration_schema.json",\n  "lineWidth": 120,\n  "verifyAst": true,\n  "rules": {\n    // legacy layout\n    "importLayout": false,\n    "interfaceLayout": 0,\n    "objectPropertySpacing": true,\n    "statementSpacing": {\n      "controlFlowStatements": "separate",\n      "imports": "off",\n      "returnStatements": "separate",\n      "typeAliases": "separate",\n      "variableDeclarations": "off"\n    },\n    "semicolons": {\n      "statements": "asNeeded",\n      "classMembers": "asNeeded",\n      "typeMembers": "asNeeded"\n    },\n    "trailingCommas": "never"\n  },\n  "ignorePatterns": []\n}\n'
+  '{\n  "$schema": "./node_modules/worsier/configuration_schema.json",\n  "lineWidth": 120,\n  "verifyAst": true,\n  "rules": {\n    // legacy layout\n    "importLayout": false,\n    "interfaceLayout": 0,\n    "objectPropertySpacing": true,\n    "statementSpacing": {\n      "controlFlowStatements": "separate",\n      "imports": "off",\n      "returnStatements": "separate",\n      "typeAliases": "separate",\n      "variableDeclarations": "off"\n    },\n    "semicolons": {\n      "statements": "asNeeded",\n      "classMembers": "asNeeded",\n      "typeMembers": "always"\n    },\n    "trailingCommas": "never"\n  },\n  "ignorePatterns": []\n}\n'
 )
 await writeFile(join(project, 'sample.ts'), 'const first=1;let second=2;')
 run(process.execPath, [executable, '--write', 'sample.ts'], project)
@@ -91,7 +94,7 @@ const interfaceLayout = run(
   ],
   project
 )
-assert.equal(interfaceLayout.stdout, 'interface Shape {\n  value: string\n}\n')
+assert.equal(interfaceLayout.stdout, 'interface Shape {\n  value: string;\n}\n')
 
 const variablesDisabled = run(
   process.execPath,

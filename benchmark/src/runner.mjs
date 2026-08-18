@@ -72,9 +72,7 @@ export async function loadBenchmarkSettings() {
   if (new Set([worsier.lineWidth, prettier.printWidth, oxfmt.printWidth]).size !== 1) {
     throw new Error('Benchmark formatter configs must use the same line width')
   }
-  if (prettier.semi !== false || oxfmt.semi !== false || Object.values(worsier.rules.semicolons).some((mode) => mode !== 'asNeeded')) {
-    throw new Error('Benchmark formatter configs must disable optional semicolons')
-  }
+  assertBenchmarkSemicolonsDisabled(worsier, prettier, oxfmt)
   if (prettier.trailingComma !== 'none' || oxfmt.trailingComma !== 'none' || worsier.rules.trailingCommas !== 'never') {
     throw new Error('Benchmark formatter configs must disable optional trailing commas')
   }
@@ -94,6 +92,20 @@ export async function loadBenchmarkSettings() {
     worsierVerifyAst: worsier.verifyAst,
     cache: false,
     concurrency: 'CLI defaults'
+  }
+}
+
+export function assertBenchmarkSemicolonsDisabled(worsier, prettier, oxfmt) {
+  const semicolons = worsier.rules.semicolons
+  if (
+    prettier.semi !== false
+    || oxfmt.semi !== false
+    || Object.keys(semicolons).length !== 3
+    || semicolons.statements !== 'asNeeded'
+    || semicolons.classMembers !== 'asNeeded'
+    || semicolons.typeMembers !== 'asNeeded'
+  ) {
+    throw new Error('Benchmark formatter configs must disable optional semicolons')
   }
 }
 

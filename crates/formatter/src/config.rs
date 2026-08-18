@@ -140,12 +140,22 @@ pub enum InterfaceLayoutMode {
     Off,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, JsonSchema, Serialize)]
 #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
 pub struct SemicolonConfig {
     pub statements: SemicolonMode,
     pub class_members: SemicolonMode,
     pub type_members: SemicolonMode,
+}
+
+impl Default for SemicolonConfig {
+    fn default() -> Self {
+        Self {
+            statements: SemicolonMode::AsNeeded,
+            class_members: SemicolonMode::AsNeeded,
+            type_members: SemicolonMode::Always,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
@@ -328,7 +338,7 @@ mod tests {
         );
         assert_eq!(config.statement_semicolons(), SemicolonMode::AsNeeded);
         assert_eq!(config.class_member_semicolons(), SemicolonMode::AsNeeded);
-        assert_eq!(config.type_member_semicolons(), SemicolonMode::AsNeeded);
+        assert_eq!(config.type_member_semicolons(), SemicolonMode::Always);
         assert_eq!(config.trailing_commas(), TrailingCommaMode::Never);
     }
 
@@ -374,7 +384,7 @@ mod tests {
     #[test]
     fn partial_nested_configs_keep_their_own_defaults() {
         let config: FormatConfig = serde_json::from_str(
-            r#"{"rules":{"importLayout":false,"statementSpacing":{"imports":"compact","typeAliases":"off"},"semicolons":{"typeMembers":"always"}}}"#,
+            r#"{"rules":{"importLayout":false,"statementSpacing":{"imports":"compact","typeAliases":"off"},"semicolons":{"statements":"asNeeded"}}}"#,
         )
         .unwrap();
         let config = resolve_config(config).unwrap();

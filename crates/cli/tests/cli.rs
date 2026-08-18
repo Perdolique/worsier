@@ -357,7 +357,7 @@ fn supports_interface_layout_thresholds_and_off_from_config() {
     assert!(default.status.success(), "{}", stderr(&default));
     assert_eq!(
         String::from_utf8(default.stdout).unwrap(),
-        "interface Shape {\n  value: string\n}"
+        "interface Shape {\n  value: string;\n}"
     );
 
     write(

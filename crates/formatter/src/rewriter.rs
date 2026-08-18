@@ -4947,6 +4947,20 @@ mod tests {
     }
 
     #[test]
+    fn defaults_to_type_member_semicolons_only() {
+        let source = "const runtime=1;\nclass Example {\n  field=1;\n}\ninterface Shape {\n  value: string\n}\ntype Copy = {\n  value: string\n};";
+        let output = format_file_with("sample.ts", source, FormatConfig::default());
+        assert_eq!(
+            output,
+            "const runtime=1\n\nclass Example {\n  field=1\n}\ninterface Shape {\n  value: string;\n}\n\ntype Copy = {\n  value: string;\n}"
+        );
+        assert_eq!(
+            format_file_with("sample.ts", &output, FormatConfig::default()),
+            output
+        );
+    }
+
+    #[test]
     fn formats_static_export_semicolons_in_both_active_modes() {
         let without_semicolons = "export { value }\nexport { item } from 'pkg'\nexport * from 'other'\nexport default create()";
         let with_semicolons = "export { value };\nexport { item } from 'pkg';\nexport * from 'other';\nexport default create();";

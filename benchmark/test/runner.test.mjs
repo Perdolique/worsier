@@ -17,6 +17,7 @@ import {
   replaceGeneratedBlock
 } from '../src/lib.mjs'
 import {
+  assertBenchmarkSemicolonsDisabled,
   buildCommands,
   collectEnvironment,
   commandFailure,
@@ -181,6 +182,38 @@ test('loads report metadata from the executed configs and shared measurement cou
     cache: false,
     concurrency: 'CLI defaults'
   })
+})
+
+test('requires every Worsier semicolon group to be explicitly disabled for benchmarks', () => {
+  const prettier = { semi: false }
+  const oxfmt = { semi: false }
+  const worsier = {
+    rules: {
+      semicolons: {
+        statements: 'asNeeded',
+        classMembers: 'asNeeded',
+        typeMembers: 'asNeeded'
+      }
+    }
+  }
+
+  assert.doesNotThrow(() => assertBenchmarkSemicolonsDisabled(worsier, prettier, oxfmt))
+
+  for (const group of Object.keys(worsier.rules.semicolons)) {
+    const incomplete = structuredClone(worsier)
+    delete incomplete.rules.semicolons[group]
+    assert.throws(
+      () => assertBenchmarkSemicolonsDisabled(incomplete, prettier, oxfmt),
+      /must disable optional semicolons/
+    )
+  }
+
+  const unexpected = structuredClone(worsier)
+  unexpected.rules.semicolons.extra = 'asNeeded'
+  assert.throws(
+    () => assertBenchmarkSemicolonsDisabled(unexpected, prettier, oxfmt),
+    /must disable optional semicolons/
+  )
 })
 
 test('validates every derived sample statistic and the complete Criterion matrix', () => {

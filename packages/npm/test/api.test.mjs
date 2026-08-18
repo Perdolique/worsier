@@ -93,7 +93,7 @@ test('formats interface layouts through the native API', async () => {
   const source = 'interface Shape { value: string; run(): void; }'
   assert.equal(
     await format('sample.ts', source),
-    'interface Shape {\n  value: string\n  run(): void\n}'
+    'interface Shape {\n  value: string;\n  run(): void;\n}'
   )
 
   const isolatedRules = {
@@ -126,7 +126,7 @@ test('formats interface layouts through the native API', async () => {
     'interface Shape {\n  first: string; // @ts-ignore\n  second: MissingOne; third: MissingTwo;\n}'
   assert.equal(
     await format('sample.ts', directive),
-    'interface Shape {\n  first: string // @ts-ignore\n  second: MissingOne; third: MissingTwo\n}'
+    'interface Shape {\n  first: string; // @ts-ignore\n  second: MissingOne; third: MissingTwo;\n}'
   )
 
   const multilineContainer =
