@@ -250,9 +250,9 @@ Relative time normalizes each scenario to its fastest median (`1.00×`); higher 
 
 | Formatter | Small TS | TypeScript `parser.ts` | Outline project write | Project peak RSS |
 | --- | ---: | ---: | ---: | ---: |
-| Worsier 2.7.0 | 36.30 ms (1.00×) | 50.02 ms (1.00×) | 311.44 ms (1.33×) | 75.3 MiB |
-| Prettier 3.9.6 | 79.59 ms (2.19×) | 725.12 ms (14.50×) | 9.93 s (42.34×) | 478.1 MiB |
-| Oxfmt 0.63.0 | 103.97 ms (2.86×) | 114.66 ms (2.29×) | 234.46 ms (1.00×) | 143.7 MiB |
+| Worsier 3.0.0 | 35.86 ms (1.00×) | 49.37 ms (1.00×) | 286.39 ms (1.16×) | 76.3 MiB |
+| Prettier 3.9.6 | 77.01 ms (2.15×) | 718.00 ms (14.54×) | 9.75 s (39.51×) | 629.2 MiB |
+| Oxfmt 0.64.0 | 99.98 ms (2.79×) | 109.66 ms (2.22×) | 246.74 ms (1.00×) | 142.8 MiB |
 
 Environment: Mac14,6, Apple M2 Max, 12 cores, 32 GB RAM, macOS 26.5.2 arm64, Node 24.19.0.
 
