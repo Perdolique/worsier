@@ -3406,11 +3406,36 @@ fn append_leading_comments_and_destination(
 
 fn append_comment_gap(output: &mut String, gap: &str, separator: &str, indent: &str) {
     if contains_line_break(gap) && gap.chars().all(char::is_whitespace) {
-        output.push_str(detect_newline(separator, None));
+        let newline = detect_newline(separator, None);
+        output.push_str(newline);
+        if has_blank_line(gap) {
+            output.push_str(newline);
+        }
         output.push_str(indent);
     } else {
         output.push_str(gap);
     }
+}
+
+fn has_blank_line(text: &str) -> bool {
+    let mut line_breaks = 0;
+    let mut bytes = text.bytes().peekable();
+    while let Some(byte) = bytes.next() {
+        match byte {
+            b'\r' => {
+                line_breaks += 1;
+                if bytes.peek() == Some(&b'\n') {
+                    bytes.next();
+                }
+            }
+            b'\n' => line_breaks += 1,
+            _ => continue,
+        }
+        if line_breaks >= 2 {
+            return true;
+        }
+    }
+    false
 }
 
 struct FormattedImport {
@@ -4097,6 +4122,16 @@ mod tests {
     }
 
     #[test]
+    fn preserves_detached_comments_between_object_properties() {
+        let source = "const value={first:1,\n  /** section */\n\n\n  second:2}";
+        let expected = "const value={\n  first:1,\n  /** section */\n\n  second:2\n}";
+        let output = format_object(source);
+
+        assert_eq!(output, expected);
+        assert_eq!(format_object(&output), output);
+    }
+
+    #[test]
     fn preserves_object_indentation_after_multiline_boundary_comments() {
         let source = "const value = { first: 1, /* second\nlead */ second: 2 }";
         let expected = "const value = {\n  first: 1, /* second\nlead */\n  second: 2\n}";
@@ -4623,6 +4658,30 @@ mod tests {
                 output
             );
         }
+    }
+
+    #[test]
+    fn preserves_detached_comments_between_interface_members() {
+        let source = "interface Shape { first: string;\n/** section */\n\n\nsecond: number; }";
+        let expected =
+            "interface Shape {\n  first: string;\n  /** section */\n\n  second: number;\n}";
+        let output = format_interface_layout(
+            "sample.ts",
+            source,
+            InterfaceLayoutRule::Threshold(0),
+            SemicolonMode::Off,
+        );
+
+        assert_eq!(output, expected);
+        assert_eq!(
+            format_interface_layout(
+                "sample.ts",
+                &output,
+                InterfaceLayoutRule::Threshold(0),
+                SemicolonMode::Off,
+            ),
+            output
+        );
     }
 
     #[test]
@@ -6107,6 +6166,73 @@ mod tests {
         );
         assert_eq!(output.matches("// trailing").count(), 1);
         assert_eq!(output.matches("// leading").count(), 1);
+    }
+
+    #[test]
+    fn preserves_a_detached_glossary_after_formatting_an_import() {
+        let source = "import type {\n  FilterDefinition,\n  FilterOperator,\n  FilterRule\n} from '~/types/filter';\n\n/**\n * Glossary\n */\n\ntype FilterBuilderStep = 'field' | 'operator' | 'value';";
+        let expected = "import type { FilterDefinition, FilterOperator, FilterRule } from '~/types/filter';\n\n/**\n * Glossary\n */\n\ntype FilterBuilderStep = 'field' | 'operator' | 'value';";
+        let output = format(source);
+
+        assert_eq!(output, expected);
+        assert_eq!(format(&output), output);
+    }
+
+    #[test]
+    fn preserves_detached_comment_gaps_in_every_spacing_mode() {
+        for mode in [
+            StatementSpacingMode::Separate,
+            StatementSpacingMode::Compact,
+        ] {
+            for newline in ["\n", "\r\n"] {
+                let boundary = if mode == StatementSpacingMode::Separate {
+                    newline.repeat(2)
+                } else {
+                    newline.to_owned()
+                };
+                for comment in ["// section", "/* section */", "/** section */"] {
+                    let detached =
+                        format!("run();{newline}{comment}{newline}{newline}{newline}type Value=1;");
+                    let detached_expected =
+                        format!("run();{boundary}{comment}{newline}{newline}type Value=1;");
+                    let detached_output = format_with_statement_spacing(
+                        &detached,
+                        false,
+                        StatementSpacingMode::Off,
+                        mode,
+                        StatementSpacingMode::Off,
+                    );
+
+                    assert_eq!(detached_output, detached_expected, "{mode:?} {comment}");
+                    assert_eq!(
+                        format_with_statement_spacing(
+                            &detached_output,
+                            false,
+                            StatementSpacingMode::Off,
+                            mode,
+                            StatementSpacingMode::Off,
+                        ),
+                        detached_output,
+                        "{mode:?} {comment}"
+                    );
+
+                    let attached = format!("run();{newline}{comment}{newline}type Value=1;");
+                    let attached_expected =
+                        format!("run();{boundary}{comment}{newline}type Value=1;");
+                    assert_eq!(
+                        format_with_statement_spacing(
+                            &attached,
+                            false,
+                            StatementSpacingMode::Off,
+                            mode,
+                            StatementSpacingMode::Off,
+                        ),
+                        attached_expected,
+                        "{mode:?} {comment}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

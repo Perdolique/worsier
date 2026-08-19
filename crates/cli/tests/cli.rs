@@ -327,6 +327,27 @@ fn supports_type_alias_spacing_from_config() {
 }
 
 #[test]
+fn preserves_detached_comment_gaps_with_platform_line_endings() {
+    for newline in ["\n", "\r\n"] {
+        let directory = tempfile::tempdir().unwrap();
+        fs::create_dir(directory.path().join(".git")).unwrap();
+        let source = format!(
+            "import type {{{newline}  FilterDefinition,{newline}  FilterOperator,{newline}  FilterRule{newline}}} from '~/types/filter';{newline}{newline}/**{newline} * Glossary{newline} */{newline}{newline}type FilterBuilderStep = 'field' | 'operator' | 'value';"
+        );
+        write(&directory.path().join("sample.ts"), &source);
+
+        let output = command(directory.path()).arg("sample.ts").output().unwrap();
+        assert!(output.status.success(), "{}", stderr(&output));
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap(),
+            format!(
+                "import type {{ FilterDefinition, FilterOperator, FilterRule }} from '~/types/filter'{newline}{newline}/**{newline} * Glossary{newline} */{newline}{newline}type FilterBuilderStep = 'field' | 'operator' | 'value'"
+            )
+        );
+    }
+}
+
+#[test]
 fn supports_control_flow_spacing_from_config() {
     let directory = tempfile::tempdir().unwrap();
     write(
