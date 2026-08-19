@@ -1,5 +1,17 @@
 # Changelog
 
+## [3.0.1](https://github.com/Perdolique/worsier/compare/v3.0.0...v3.0.1) (2026-08-19)
+
+
+### Bug Fixes
+
+* **formatter:** preserve detached comment gaps ([45ec617](https://github.com/Perdolique/worsier/commit/45ec61756e65988d38f8b80d89230c5dc0bf86cc))
+
+
+### Performance Improvements
+
+* **benchmark:** refresh published results ([c34ced6](https://github.com/Perdolique/worsier/commit/c34ced6ab39a6a872e31cf69d3bb862d77a6a596))
+
 ## [3.0.0](https://github.com/Perdolique/worsier/compare/v2.11.0...v3.0.0) (2026-08-18)
 
 
