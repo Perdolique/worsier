@@ -2,13 +2,15 @@ import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 
+import type { NativeBinding } from '../src/binding.ts'
+
 const addonPath = process.argv[2]
 if (!addonPath) {
   throw new Error('Provide a native addon path')
 }
 
 const require = createRequire(import.meta.url)
-const binding = require(resolve(addonPath))
+const binding = require(resolve(addonPath)) as NativeBinding
 const output = await binding.format('smoke.ts', "import{value}from'pkg';const raw={items:[1,2]};", '{}')
 assert.equal(output, "import { value } from 'pkg'\n\nconst raw={items:[1,2]}")
 const objectSpacing = await binding.format(

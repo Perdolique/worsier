@@ -23,7 +23,7 @@ jobs:
   cli-platform:
     strategy:
       matrix:
-        runner: [macos-15, windows-2025]
+        runner: [macos-26, windows-2025]
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
@@ -41,6 +41,7 @@ jobs:
       - run: pnpm generate
       - run: git diff --exit-code -- packages/npm/configuration_schema.json packages/npm/src/types.ts
       - run: pnpm --filter worsier build
+      - run: pnpm check:types
       - run: pnpm --filter worsier build:native
       - run: pnpm --filter worsier test
       - run: pnpm --filter worsier test:packed

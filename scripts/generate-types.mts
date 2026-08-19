@@ -6,7 +6,7 @@ import { compileFromFile } from 'json-schema-to-typescript'
 const schemaUrl = new URL('../packages/npm/configuration_schema.json', import.meta.url)
 const outputUrl = new URL('../packages/npm/src/types.ts', import.meta.url)
 const bannerComment = '// Generated from the Rust FormatConfig JSON Schema. Do not edit.\n'
-const types = await compileFromFile(fileURLToPath(schemaUrl), {
+const generatedTypes = await compileFromFile(fileURLToPath(schemaUrl), {
   additionalProperties: false,
   bannerComment,
   style: {
@@ -17,4 +17,4 @@ const types = await compileFromFile(fileURLToPath(schemaUrl), {
   }
 })
 
-await writeFile(outputUrl, types)
+await writeFile(outputUrl, generatedTypes)

@@ -5,7 +5,8 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import test from 'node:test'
 
-import { format } from '../dist/index.js'
+import { format, type FormatConfig } from '../dist/index.js'
+import type { RulesConfig } from '../dist/types.js'
 
 test('formats through the asynchronous native API', async () => {
   const source = "import{one,type Two}from'pkg';const value={items:[1,2]};"
@@ -96,7 +97,7 @@ test('formats interface layouts through the native API', async () => {
     'interface Shape {\n  value: string;\n  run(): void;\n}'
   )
 
-  const isolatedRules = {
+  const isolatedRules: RulesConfig = {
     importLayout: false,
     objectPropertySpacing: false,
     statementSpacing: { controlFlowStatements: 'off', imports: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
@@ -213,7 +214,7 @@ test('formats granular semicolon groups through the native API', async () => {
 test('formats trailing commas through the native API', async () => {
   const withoutCommas = 'const value = {\n  items: [\n    1\n  ]\n};'
   const withCommas = 'const value = {\n  items: [\n    1,\n  ],\n};'
-  const disabledRules = {
+  const disabledRules: RulesConfig = {
     importLayout: false,
     objectPropertySpacing: false,
     statementSpacing: { controlFlowStatements: 'off', imports: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
@@ -246,10 +247,10 @@ test('maps native failures to stable error codes', async () => {
     code: 'UNSUPPORTED_SOURCE'
   })
   await assert.rejects(
-    format('sample.ts', 'const value = 1;', { quoteStyle: 'single' }),
-    (error) => error.code === 'CONFIG_ERROR' && error.message.includes('quoteStyle')
+    format('sample.ts', 'const value = 1;', { quoteStyle: 'single' } as unknown as FormatConfig),
+    (error) => isConfigError(error, 'quoteStyle')
   )
-  for (const [rules, path] of [
+  const invalidRules: Array<readonly [unknown, string]> = [
     [{ imports: true }, 'rules.imports'],
     [{ variables: true }, 'rules.variables'],
     [{ interfaceLayout: -1 }, 'rules.interfaceLayout'],
@@ -265,10 +266,12 @@ test('maps native failures to stable error codes', async () => {
     [{ statementSpacing: { returnStatements: 'preserve' } }, 'rules.statementSpacing.returnStatements'],
     [{ statementSpacing: { typeAliases: 'preserve' } }, 'rules.statementSpacing.typeAliases'],
     [{ statementSpacing: { extra: 'off' } }, 'rules.statementSpacing.extra']
-  ]) {
+  ]
+  for (const [rules, path] of invalidRules) {
+    const invalidConfig = { rules } as unknown as FormatConfig
     await assert.rejects(
-      format('sample.ts', 'const value = 1;', { rules }),
-      (error) => error.code === 'CONFIG_ERROR' && error.message.includes(path)
+      format('sample.ts', 'const value = 1;', invalidConfig),
+      (error) => isConfigError(error, path)
     )
   }
 })
@@ -281,3 +284,10 @@ test('binding import is lazy and missing packages have a targeted diagnostic', a
 
   assert.throws(loadBinding, /Failed to load the Worsier native package worsier-/)
 })
+
+function isConfigError(error: unknown, path: string): boolean {
+  return error instanceof Error
+    && 'code' in error
+    && error.code === 'CONFIG_ERROR'
+    && error.message.includes(path)
+}

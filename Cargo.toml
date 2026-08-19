@@ -20,11 +20,11 @@ memchr = "2.7.6"
 napi = { version = "3.12.1", default-features = false, features = ["napi8", "tokio_rt"] }
 napi-build = "2.3.1"
 napi-derive = "3.6.3"
-oxc_allocator = "=0.144.0"
-oxc_ast = "=0.144.0"
-oxc_ast_visit = "=0.144.0"
-oxc_parser = { version = "=0.144.0", default-features = false }
-oxc_span = "=0.144.0"
+oxc_allocator = "=0.146.0"
+oxc_ast = "=0.146.0"
+oxc_ast_visit = "=0.146.0"
+oxc_parser = { version = "=0.146.0", default-features = false }
+oxc_span = "=0.146.0"
 rayon = "1.11.0"
 schemars = "1.2.2"
 serde = { version = "1.0.228", features = ["derive"] }

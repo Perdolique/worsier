@@ -18,7 +18,43 @@ import {
   parsePeakRss,
   replaceGeneratedBlock,
   shellQuote
-} from './lib.mjs'
+} from './lib.mts'
+import {
+  scenarioNames,
+  toolNames,
+  type BenchmarkCommands,
+  type BenchmarkEnvironment,
+  type BenchmarkFixtures,
+  type BenchmarkPackage,
+  type BenchmarkReport,
+  type BenchmarkResult,
+  type BenchmarkScenario,
+  type BenchmarkScenarios,
+  type BenchmarkSettings,
+  type BenchmarkValidation,
+  type CaptureCommand,
+  type CollectEnvironmentOptions,
+  type CommandResult,
+  type CriterionBenchmark,
+  type CriterionEstimate,
+  type CriterionSample,
+  type FullSourceBenchmarkConfig,
+  type FullSourceSemicolonConfig,
+  type MeasurementSettings,
+  type MicrobenchmarkResult,
+  type RunOptions,
+  type ScenarioDefinition,
+  type ScenarioName,
+  type ToolInfo,
+  type ToolName,
+  type ToolRecord,
+  type WorsierBenchmarkConfig,
+  type WorsierSemicolonCheckConfig
+} from './types.mts'
+
+interface RunBenchmarkOptions {
+  publish?: boolean
+}
 
 const benchmarkDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const root = resolve(benchmarkDirectory, '..')
@@ -28,26 +64,25 @@ const resultDirectory = join(benchmarkDirectory, 'results')
 const cliPath = join(root, 'packages/npm/bin/worsier.js')
 const prettierPath = join(benchmarkDirectory, 'node_modules/prettier/bin/prettier.cjs')
 const oxfmtPath = join(benchmarkDirectory, 'node_modules/oxfmt/bin/oxfmt')
-const runnerPath = join(benchmarkDirectory, 'src/cli.mjs')
+const runnerPath = join(benchmarkDirectory, 'src/cli.mts')
 const configDirectory = join(benchmarkDirectory, 'config')
 const ignorePath = join(configDirectory, 'empty-ignore')
-const toolNames = ['worsier', 'prettier', 'oxfmt']
 const sourceExtensions = new Set(['.js', '.jsx', '.ts', '.tsx'])
-const benchmarkPackage = JSON.parse(readFileSync(join(benchmarkDirectory, 'package.json'), 'utf8'))
+const benchmarkPackage = JSON.parse(readFileSync(join(benchmarkDirectory, 'package.json'), 'utf8')) as BenchmarkPackage
 
 export const pinnedToolVersions = Object.freeze({
   prettier: exactDependencyVersion('prettier'),
   oxfmt: exactDependencyVersion('oxfmt')
 })
 
-const criterionMeasurements = ['single_parse', 'format_no_verify_default', 'format_no_verify_semicolons_off', 'format_no_verify_trailing_commas_off', 'parse_and_verify']
-const criterionInputs = new Map([['small', 512], ['50kb', 50 * 1024], ['1mb', 1024 * 1024]])
+const criterionMeasurements = ['single_parse', 'format_no_verify_default', 'format_no_verify_semicolons_off', 'format_no_verify_trailing_commas_off', 'parse_and_verify'] as const
+const criterionInputs = new Map<string, number>([['small', 512], ['50kb', 50 * 1024], ['1mb', 1024 * 1024]])
 
 export const measurementSettings = Object.freeze({
   warmups: 3,
   runs: 10,
   rssRuns: 5
-})
+}) satisfies MeasurementSettings
 
 export const fixturePins = {
   typescript: {
@@ -63,11 +98,11 @@ export const fixturePins = {
   }
 }
 
-export async function loadBenchmarkSettings() {
+export async function loadBenchmarkSettings(): Promise<BenchmarkSettings> {
   const [worsier, prettier, oxfmt] = await Promise.all([
-    readJsonConfig(join(configDirectory, 'worsier.jsonc')),
-    readJsonConfig(join(configDirectory, 'prettier.json')),
-    readJsonConfig(join(configDirectory, 'oxfmt.json'))
+    readJsonConfig<WorsierBenchmarkConfig>(join(configDirectory, 'worsier.jsonc')),
+    readJsonConfig<FullSourceBenchmarkConfig>(join(configDirectory, 'prettier.json')),
+    readJsonConfig<FullSourceBenchmarkConfig>(join(configDirectory, 'oxfmt.json'))
   ])
   if (new Set([worsier.lineWidth, prettier.printWidth, oxfmt.printWidth]).size !== 1) {
     throw new Error('Benchmark formatter configs must use the same line width')
@@ -95,7 +130,11 @@ export async function loadBenchmarkSettings() {
   }
 }
 
-export function assertBenchmarkSemicolonsDisabled(worsier, prettier, oxfmt) {
+export function assertBenchmarkSemicolonsDisabled(
+  worsier: WorsierSemicolonCheckConfig,
+  prettier: FullSourceSemicolonConfig,
+  oxfmt: FullSourceSemicolonConfig
+): void {
   const semicolons = worsier.rules.semicolons
   if (
     prettier.semi !== false
@@ -109,7 +148,7 @@ export function assertBenchmarkSemicolonsDisabled(worsier, prettier, oxfmt) {
   }
 }
 
-export async function runBenchmark({ publish = false } = {}) {
+export async function runBenchmark({ publish = false }: RunBenchmarkOptions = {}): Promise<BenchmarkReport> {
   if (publish) {
     requireCleanWorktree()
   }
@@ -120,7 +159,7 @@ export async function runBenchmark({ publish = false } = {}) {
   const commands = buildCommands()
   const settings = await loadBenchmarkSettings()
   const validation = await validateTools(commands, fixtures)
-  const scenarios = {}
+  const scenarios = {} as BenchmarkScenarios
 
   for (const definition of scenarioDefinitions(commands, fixtures, validation)) {
     console.log(`Measuring ${definition.displayName}`)
@@ -129,7 +168,7 @@ export async function runBenchmark({ publish = false } = {}) {
 
   console.log('Running Worsier internal Criterion benchmarks')
   const microbenchmarks = await runCriterionBenchmarks()
-  const report = {
+  const report: BenchmarkReport = {
     schemaVersion: 2,
     generatedAt: new Date().toISOString(),
     source: { worsierSha: capture('git', ['rev-parse', 'HEAD']) },
@@ -157,9 +196,9 @@ export async function runBenchmark({ publish = false } = {}) {
   return report
 }
 
-export async function verifyPublishedResults() {
+export async function verifyPublishedResults(): Promise<void> {
   const jsonPath = join(resultDirectory, 'latest.json')
-  const report = JSON.parse(await readFile(jsonPath, 'utf8'))
+  const report = JSON.parse(await readFile(jsonPath, 'utf8')) as BenchmarkReport
   validateReport(report)
   const expectedMarkdown = `${buildDetailedReport(report)}\n`
   const actualMarkdown = await readFile(join(resultDirectory, 'latest.md'), 'utf8')
@@ -175,7 +214,7 @@ export async function verifyPublishedResults() {
   }
 }
 
-export async function smokeTools() {
+export async function smokeTools(): Promise<void> {
   const fixture = join(benchmarkDirectory, 'fixtures/small.ts')
   const commands = buildCommands()
   for (const tool of toolNames) {
@@ -189,7 +228,7 @@ export async function smokeTools() {
   }
 }
 
-export async function restoreProjectCopies() {
+export async function restoreProjectCopies(): Promise<void> {
   const baseline = join(fixtureWorkDirectory, 'outline')
   for (const tool of toolNames) {
     const destination = join(workDirectory, 'project-write', tool)
@@ -199,7 +238,7 @@ export async function restoreProjectCopies() {
   await ensureOxfmtAlias(join(workDirectory, 'project-write', 'oxfmt'))
 }
 
-async function prepareFixtures() {
+async function prepareFixtures(): Promise<void> {
   const downloads = join(workDirectory, 'downloads')
   await mkdir(downloads, { recursive: true })
   await mkdir(fixtureWorkDirectory, { recursive: true })
@@ -226,7 +265,7 @@ async function prepareFixtures() {
   await copySourceTree(sourceRoot, outlineDirectory)
 }
 
-async function collectFixtureMetadata() {
+async function collectFixtureMetadata(): Promise<BenchmarkFixtures> {
   const small = await describeFixture(join(benchmarkDirectory, 'fixtures/small.ts'))
   const parser = await describeFixture(join(fixtureWorkDirectory, 'parser.ts'))
   const outline = await describeFixture(join(fixtureWorkDirectory, 'outline'))
@@ -237,7 +276,7 @@ async function collectFixtureMetadata() {
   }
 }
 
-export function buildCommands() {
+export function buildCommands(): BenchmarkCommands {
   const configs = {
     worsier: join(configDirectory, 'worsier.jsonc'),
     prettier: join(configDirectory, 'prettier.json'),
@@ -270,11 +309,11 @@ export function buildCommands() {
   }
 }
 
-async function validateTools(commands, fixtures) {
+async function validateTools(commands: BenchmarkCommands, fixtures: BenchmarkFixtures): Promise<BenchmarkValidation> {
   console.log('Validating tools and idempotency')
   const baselineManifest = await describeManifest(join(fixtureWorkDirectory, 'outline'))
-  const outputHashes = {}
-  const outputBytes = {}
+  const outputHashes = Object.fromEntries(toolNames.map((tool) => [tool, {}])) as ToolRecord<Record<string, string>>
+  const outputBytes = {} as ToolRecord<number>
   for (const tool of toolNames) {
     outputHashes[tool] = {}
     for (const name of ['small', 'parser']) {
@@ -321,11 +360,15 @@ async function validateTools(commands, fixtures) {
   }
 }
 
-function scenarioDefinitions(commands, fixtures, validation) {
+function scenarioDefinitions(
+  commands: BenchmarkCommands,
+  fixtures: BenchmarkFixtures,
+  validation: BenchmarkValidation
+): ScenarioDefinition[] {
   const smallPath = join(benchmarkDirectory, 'fixtures/small.ts')
   const parserPath = join(fixtureWorkDirectory, 'parser.ts')
-  const canonical = (tool) => join(workDirectory, 'validation', tool, 'outline')
-  const project = (tool) => join(workDirectory, 'project-write', tool)
+  const canonical = (tool: ToolName): string => join(workDirectory, 'validation', tool, 'outline')
+  const project = (tool: ToolName): string => join(workDirectory, 'project-write', tool)
   return [
     stdinScenario('small', 'Small TS stdin format', smallPath, fixtures.small.bytes, commands),
     stdinScenario('parser', 'TypeScript parser.ts stdin format', parserPath, fixtures.parser.bytes, commands),
@@ -334,7 +377,7 @@ function scenarioDefinitions(commands, fixtures, validation) {
       displayName: 'Outline project write',
       bytes: fixtures.outline.bytes,
       prepareCommand: `${shellQuote(process.execPath)} ${shellQuote(runnerPath)} restore-project`,
-      commands: Object.fromEntries(toolNames.map((tool) => [tool, commands.write(tool, project(tool))])),
+      commands: Object.fromEntries(toolNames.map((tool) => [tool, commands.write(tool, project(tool))])) as ToolRecord<string>,
       prepareRss: async (tool) => {
         const destination = project(tool)
         await rm(destination, { recursive: true, force: true })
@@ -345,23 +388,32 @@ function scenarioDefinitions(commands, fixtures, validation) {
       name: 'projectCheck',
       displayName: 'Outline project check on canonical output',
       bytesByTool: validation.outputBytes,
-      commands: Object.fromEntries(toolNames.map((tool) => [tool, commands.check(tool, canonical(tool))]))
+      commands: Object.fromEntries(toolNames.map((tool) => [tool, commands.check(tool, canonical(tool))])) as ToolRecord<string>
     }
   ]
 }
 
-function stdinScenario(name, displayName, input, bytes, commands) {
+function stdinScenario(
+  name: ScenarioName,
+  displayName: string,
+  input: string,
+  bytes: number,
+  commands: BenchmarkCommands
+): ScenarioDefinition {
   const outputDirectory = join(workDirectory, 'timed-output', name)
   return {
     name,
     displayName,
     bytes,
-    commands: Object.fromEntries(toolNames.map((tool) => [tool, commands.stdin(tool, input, join(outputDirectory, `${tool}.ts`))])),
+    commands: Object.fromEntries(toolNames.map((tool) => [tool, commands.stdin(tool, input, join(outputDirectory, `${tool}.ts`))])) as ToolRecord<string>,
     before: () => mkdir(outputDirectory, { recursive: true })
   }
 }
 
-async function measureScenario(definition, settings) {
+async function measureScenario(
+  definition: ScenarioDefinition,
+  settings: MeasurementSettings
+): Promise<BenchmarkScenario> {
   await definition.before?.()
   const hyperfinePath = join(workDirectory, 'hyperfine', `${definition.name}.json`)
   await mkdir(dirname(hyperfinePath), { recursive: true })
@@ -374,7 +426,7 @@ async function measureScenario(definition, settings) {
   }
   run('hyperfine', args, { label: `Hyperfine ${definition.name}`, inherit: true })
   const hyperfine = parseHyperfineJson(await readFile(hyperfinePath, 'utf8'))
-  const results = {}
+  const results = {} as ToolRecord<BenchmarkResult>
 
   for (const tool of toolNames) {
     const rssSamples = []
@@ -385,6 +437,9 @@ async function measureScenario(definition, settings) {
     const timing = hyperfine[tool]
     const rss = calculateStatistics(rssSamples)
     const inputBytes = definition.bytesByTool?.[tool] ?? definition.bytes
+    if (inputBytes === undefined) {
+      throw new Error(`${definition.name}/${tool} does not define input bytes`)
+    }
     results[tool] = {
       command: displayCommand(definition.commands[tool]),
       inputBytes,
@@ -408,14 +463,14 @@ async function measureScenario(definition, settings) {
   }
 }
 
-export function displayCommand(command) {
+export function displayCommand(command: string): string {
   return command
     .replaceAll(process.execPath, '<node>')
     .replaceAll(root, '<repo>')
     .replaceAll('/tmp/worsier-benchmark-', '<tmp>/worsier-benchmark-')
 }
 
-function measurePeakRss(command) {
+function measurePeakRss(command: string): number {
   const timeArgs = process.platform === 'darwin' ? ['-l', '/bin/sh', '-c', command] : ['-v', '/bin/sh', '-c', command]
   const result = spawnSync('/usr/bin/time', timeArgs, { cwd: root, encoding: 'utf8', maxBuffer: 100 * 1024 * 1024 })
   if (result.status !== 0) {
@@ -424,12 +479,12 @@ function measurePeakRss(command) {
   return parsePeakRss(result.stderr)
 }
 
-async function runCriterionBenchmarks() {
+async function runCriterionBenchmarks(): Promise<MicrobenchmarkResult[]> {
   const criterionDirectory = join(root, 'target/criterion/formatter')
   await rm(criterionDirectory, { recursive: true, force: true })
   run('cargo', ['bench', '-p', 'worsier-benchmark', '--bench', 'formatter', '--', '--noplot'], { label: 'Criterion benchmark', inherit: true })
   const estimates = await findNamedFiles(criterionDirectory, 'estimates.json')
-  const benchmarks = []
+  const benchmarks: MicrobenchmarkResult[] = []
   for (const estimatePath of estimates) {
     if (!estimatePath.endsWith(`${join('new', 'estimates.json')}`)) {
       continue
@@ -438,15 +493,19 @@ async function runCriterionBenchmarks() {
     if (pathParts.length < 4) {
       continue
     }
-    const [measurement, input] = pathParts
-    const estimate = JSON.parse(await readFile(estimatePath, 'utf8'))
+    const measurement = pathParts[0]
+    const input = pathParts[1]
+    if (!measurement || !input) {
+      continue
+    }
+    const estimate = JSON.parse(await readFile(estimatePath, 'utf8')) as CriterionEstimate
     const samplePath = join(dirname(estimatePath), 'sample.json')
-    const sample = JSON.parse(await readFile(samplePath, 'utf8'))
+    const sample = JSON.parse(await readFile(samplePath, 'utf8')) as CriterionSample
     const benchmarkPath = join(dirname(estimatePath), 'benchmark.json')
-    const benchmark = JSON.parse(await readFile(benchmarkPath, 'utf8'))
+    const benchmark = JSON.parse(await readFile(benchmarkPath, 'utf8')) as CriterionBenchmark
     const samplesSeconds = sample.times.map((time, index) => time / sample.iters[index] / 1e9)
     const inputBytes = benchmark.throughput?.Bytes
-    if (!Number.isSafeInteger(inputBytes) || inputBytes <= 0) {
+    if (typeof inputBytes !== 'number' || !Number.isSafeInteger(inputBytes) || inputBytes <= 0) {
       throw new Error(`Criterion benchmark ${measurement}/${input} does not record byte throughput`)
     }
     const medianSeconds = estimate.median.point_estimate / 1e9
@@ -462,7 +521,7 @@ async function runCriterionBenchmarks() {
   return benchmarks.sort((left, right) => `${left.measurement}/${left.input}`.localeCompare(`${right.measurement}/${right.input}`))
 }
 
-function collectToolVersions() {
+function collectToolVersions(): ToolRecord<ToolInfo> {
   return {
     worsier: { displayName: 'Worsier', version: capture(process.execPath, [cliPath, '--version']).replace(/^worsier\s+/, '') },
     prettier: { displayName: 'Prettier', version: capture(process.execPath, [prettierPath, '--version']) },
@@ -470,7 +529,9 @@ function collectToolVersions() {
   }
 }
 
-export function collectEnvironment({ platform = process.platform, captureCommand = capture, systemMemory = totalmem() } = {}) {
+export function collectEnvironment(
+  { platform = process.platform, captureCommand = capture, systemMemory = totalmem() }: CollectEnvironmentOptions = {}
+): BenchmarkEnvironment {
   const architecture = captureCommand('uname', ['-m'])
   if (platform !== 'darwin') {
     return {
@@ -491,7 +552,7 @@ export function collectEnvironment({ platform = process.platform, captureCommand
   const power = captureCommand('pmset', ['-g', 'batt'])
   const settings = captureCommand('pmset', ['-g', 'custom'])
   const powerModeValue = settings.match(/powermode\s+(\d+)/)?.[1]
-  const powerModes = { '0': 'normal power mode', '1': 'low power mode', '2': 'high power mode' }
+  const powerModes: Record<string, string> = { '0': 'normal power mode', '1': 'low power mode', '2': 'high power mode' }
   return {
     machineModel: captureCommand('sysctl', ['-n', 'hw.model']),
     cpu: captureCommand('sysctl', ['-n', 'machdep.cpu.brand_string']),
@@ -502,12 +563,12 @@ export function collectEnvironment({ platform = process.platform, captureCommand
     osBuild: captureCommand('sw_vers', ['-buildVersion']),
     architecture,
     powerSource: power.includes('AC Power') ? 'AC power' : 'battery power',
-    powerMode: powerModes[powerModeValue] ?? 'power mode not reported',
+    powerMode: powerModeValue ? powerModes[powerModeValue] ?? 'power mode not reported' : 'power mode not reported',
     ...collectToolchainVersions(captureCommand)
   }
 }
 
-function collectToolchainVersions(captureCommand = capture) {
+function collectToolchainVersions(captureCommand: CaptureCommand = capture) {
   return {
     node: process.version.replace(/^v/, ''),
     pnpm: captureCommand('pnpm', ['--version']),
@@ -517,14 +578,14 @@ function collectToolchainVersions(captureCommand = capture) {
   }
 }
 
-async function updateRootReadme(report) {
+async function updateRootReadme(report: BenchmarkReport): Promise<void> {
   const path = join(root, 'README.md')
   const readme = await readFile(path, 'utf8')
   const updated = replaceGeneratedBlock(readme, buildRootBenchmarkBlock(report))
   await writeFile(path, updated)
 }
 
-export function validateReport(report) {
+export function validateReport(report: BenchmarkReport): void {
   if (report.schemaVersion !== 2) {
     throw new Error(`Unsupported benchmark schema version: ${report.schemaVersion}`)
   }
@@ -534,7 +595,7 @@ export function validateReport(report) {
   if (report.fixtures?.parser?.lineEndings !== 'lf' && report.fixtures?.parser?.lineEndings !== 'crlf') {
     throw new Error('Published parser fixture does not record its line endings')
   }
-  for (const scenario of ['small', 'parser', 'projectWrite', 'projectCheck']) {
+  for (const scenario of scenarioNames) {
     for (const tool of toolNames) {
       const result = report.scenarios?.[scenario]?.results?.[tool]
       const samples = result?.samplesSeconds
@@ -589,13 +650,13 @@ export function validateReport(report) {
   }
 }
 
-function assertDerivedValue(actual, expected, label) {
+function assertDerivedValue(actual: number | null, expected: number, label: string): void {
   if (!Number.isFinite(actual) || actual !== expected) {
     throw new Error(`${label} does not match its raw samples: expected ${expected}, received ${actual}`)
   }
 }
 
-function exactDependencyVersion(name) {
+function exactDependencyVersion(name: string): string {
   const version = benchmarkPackage.devDependencies?.[name]
   if (typeof version !== 'string' || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
     throw new Error(`benchmark/package.json must pin ${name} to one exact version`)
@@ -603,20 +664,20 @@ function exactDependencyVersion(name) {
   return version
 }
 
-function requireCleanWorktree() {
+function requireCleanWorktree(): void {
   const status = capture('git', ['status', '--porcelain=v1', '--untracked-files=all'])
   if (status !== '') {
     throw new Error('benchmark:update requires a clean Git worktree so the report can identify one committed Worsier SHA')
   }
 }
 
-async function downloadVerified(url, destination, expectedSha256) {
+async function downloadVerified(url: string, destination: string, expectedSha256: string): Promise<void> {
   await mkdir(dirname(destination), { recursive: true })
   let existing = false
   try {
     existing = await hashFile(destination) === expectedSha256
   } catch (error) {
-    if (error.code !== 'ENOENT') {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) {
       throw error
     }
   }
@@ -633,7 +694,7 @@ async function downloadVerified(url, destination, expectedSha256) {
   }
 }
 
-async function copySourceTree(sourceRoot, destinationRoot) {
+async function copySourceTree(sourceRoot: string, destinationRoot: string): Promise<void> {
   const files = await findNamedFiles(sourceRoot)
   for (const source of files) {
     if (!sourceExtensions.has(extname(source)) || basename(source) === 'worker-configuration.d.ts') {
@@ -645,23 +706,23 @@ async function copySourceTree(sourceRoot, destinationRoot) {
   }
 }
 
-function projectTarget(tool, directory) {
+function projectTarget(tool: ToolName, directory: string): string {
   return tool === 'oxfmt' ? oxfmtProjectAlias(directory) : directory
 }
 
-function oxfmtProjectAlias(directory) {
+function oxfmtProjectAlias(directory: string): string {
   const name = relative(workDirectory, directory).replaceAll(/[^a-zA-Z0-9]+/g, '-').replaceAll(/^-|-$/g, '')
   return join('/tmp', `worsier-benchmark-${name}`)
 }
 
-async function ensureOxfmtAlias(directory) {
+async function ensureOxfmtAlias(directory: string): Promise<void> {
   const alias = oxfmtProjectAlias(directory)
   await rm(alias, { force: true })
   await symlink(directory, alias, 'dir')
 }
 
-async function findNamedFiles(directory, targetName) {
-  const found = []
+async function findNamedFiles(directory: string, targetName?: string): Promise<string[]> {
+  const found: string[] = []
   const entries = await readdir(directory, { withFileTypes: true })
   for (const entry of entries) {
     const path = join(directory, entry.name)
@@ -674,40 +735,56 @@ async function findNamedFiles(directory, targetName) {
   return found.sort()
 }
 
-async function readJsonConfig(path) {
-  return JSON.parse(await readFile(path, 'utf8'))
+async function readJsonConfig<Config>(path: string): Promise<Config> {
+  return JSON.parse(await readFile(path, 'utf8')) as Config
 }
 
-function runShell(command, label) {
+function runShell(command: string, label: string): CommandResult {
   const result = spawnSync('/bin/sh', ['-c', command], { cwd: root, encoding: 'utf8', maxBuffer: 100 * 1024 * 1024 })
-  if (result.status !== 0) {
-    throw commandFailure(label, '/bin/sh', ['-c', command], result)
+  const normalizedResult = normalizeCommandResult(result)
+  if (normalizedResult.status !== 0) {
+    throw commandFailure(label, '/bin/sh', ['-c', command], normalizedResult)
   }
-  return result
+  return normalizedResult
 }
 
-function capture(command, args) {
+function capture(command: string, args: string[]): string {
   const result = run(command, args, { label: command })
   return result.stdout.trim()
 }
 
-function run(command, args, { label, inherit = false } = {}) {
+function run(command: string, args: string[], { label, inherit = false }: RunOptions = {}): CommandResult {
   const result = spawnSync(command, args, {
     cwd: root,
     encoding: 'utf8',
     maxBuffer: 100 * 1024 * 1024,
     stdio: inherit ? 'inherit' : ['ignore', 'pipe', 'pipe']
   })
-  if (result.status !== 0) {
-    throw commandFailure(label ?? command, command, args, result)
+  const normalizedResult = normalizeCommandResult(result)
+  if (normalizedResult.status !== 0) {
+    throw commandFailure(label ?? command, command, args, normalizedResult)
   }
-  return result
+  return normalizedResult
 }
 
-export function commandFailure(label, command, args, result) {
+export function commandFailure(label: string, command: string, args: string[], result: CommandResult): Error {
   const invocation = [command, ...args].join(' ')
   const stdout = typeof result.stdout === 'string' ? result.stdout : ''
   const stderr = typeof result.stderr === 'string' ? result.stderr : ''
   const spawnError = result.error instanceof Error ? result.error.stack ?? result.error.message : String(result.error ?? '')
   return new Error(`${label} failed with exit code ${result.status ?? 'unknown'}\nCommand: ${invocation}\nspawn error:\n${spawnError}\nstdout:\n${stdout}\nstderr:\n${stderr}`, result.error instanceof Error ? { cause: result.error } : undefined)
+}
+
+function normalizeCommandResult(result: {
+  error?: Error
+  status: number | null
+  stderr: string | Uint8Array | null
+  stdout: string | Uint8Array | null
+}): CommandResult {
+  return {
+    error: result.error,
+    status: result.status,
+    stderr: typeof result.stderr === 'string' ? result.stderr : '',
+    stdout: typeof result.stdout === 'string' ? result.stdout : ''
+  }
 }
