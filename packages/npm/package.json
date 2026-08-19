@@ -31,9 +31,9 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "build:native": "node scripts/build-native.mjs",
-    "test": "node --test test/*.test.mjs",
-    "test:packed": "node scripts/test-packed-package.mjs"
+    "build:native": "node scripts/build-native.mts",
+    "test": "node --test test/*.test.mts",
+    "test:packed": "node scripts/test-packed-package.mts"
   },
   "napi": {
     "binaryName": "worsier",

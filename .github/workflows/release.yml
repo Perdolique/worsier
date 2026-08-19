@@ -26,9 +26,9 @@ jobs:
       issues: write
       pull-requests: write
     outputs:
-      release_created: ${{ github.event_name == 'workflow_dispatch' || steps.release.outputs['packages/npm--release_created'] }}
-      sha: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.sha || steps.release.outputs['packages/npm--sha'] }}
-      tag_name: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.tag_name || steps.release.outputs['packages/npm--tag_name'] }}
+      release_created: ${{ github.event_name == 'workflow_dispatch' || steps.release.outputs.release_created }}
+      sha: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.sha || steps.release.outputs.sha }}
+      tag_name: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.tag_name || steps.release.outputs.tag_name }}
     steps:
       - uses: googleapis/release-please-action@v5
         if: github.event_name == 'push'
@@ -109,10 +109,10 @@ jobs:
         include:
           - target: x86_64-apple-darwin
             platform: darwin-x64
-            runner: macos-15-intel
+            runner: macos-26-intel
           - target: aarch64-apple-darwin
             platform: darwin-arm64
-            runner: macos-15
+            runner: macos-26
           - target: x86_64-pc-windows-msvc
             platform: win32-x64-msvc
             runner: windows-2025
@@ -146,7 +146,7 @@ jobs:
       - uses: mlugg/setup-zig@v2
         if: matrix.musl
         with:
-          version: 0.15.2
+          version: 0.16.0
       - uses: taiki-e/install-action@v2
         if: matrix.musl
         with:
@@ -164,7 +164,7 @@ jobs:
           Copy-Item "target/${{ matrix.target }}/release/worsier_napi.dll" "artifacts/worsier.${{ matrix.platform }}.node"
       - name: Runtime smoke
         if: matrix.musl != true
-        run: node packages/npm/scripts/smoke-native.mjs artifacts/worsier.${{ matrix.platform }}.node
+        run: node packages/npm/scripts/smoke-native.mts artifacts/worsier.${{ matrix.platform }}.node
       - name: Runtime smoke on musl
         if: matrix.musl == true
         run: |
@@ -173,7 +173,7 @@ jobs:
             -v "$PWD:/work" \
             -w /work \
             "node:${node_version}-alpine" \
-            node packages/npm/scripts/smoke-native.mjs artifacts/worsier.${{ matrix.platform }}.node
+            node packages/npm/scripts/smoke-native.mts artifacts/worsier.${{ matrix.platform }}.node
       - name: Stage addon for package smoke
         if: matrix.musl != true && runner.os != 'Windows'
         run: cp artifacts/worsier.${{ matrix.platform }}.node npm/${{ matrix.platform }}/
@@ -196,7 +196,7 @@ jobs:
             -v "$PWD:/work" \
             -w /work \
             "node:${node_version}-alpine" \
-            sh -c 'corepack enable && corepack prepare pnpm@11.21.0 --activate && node packages/npm/scripts/test-packed-package.mjs'
+            sh -c 'corepack enable && corepack prepare pnpm@11.22.0 --activate && node packages/npm/scripts/test-packed-package.mts'
       - uses: actions/upload-artifact@v7
         with:
           name: binding-${{ matrix.platform }}
@@ -217,7 +217,7 @@ jobs:
           ref: ${{ needs.release-please.outputs.sha }}
           install-dependencies: true
       - run: rustup toolchain install
-      - run: npm install --global npm@11.19.0
+      - run: npm install --global npm@12.0.2
       - uses: actions/download-artifact@v8
         with:
           pattern: binding-*

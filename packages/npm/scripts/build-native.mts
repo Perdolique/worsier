@@ -1,9 +1,22 @@
 import { spawnSync } from 'node:child_process'
 
-function platformName() {
+interface PlatformCommand {
+  args: string[]
+  command: string
+}
+
+interface ProcessReportHeader {
+  glibcVersionRuntime?: string
+}
+
+interface ProcessReport {
+  header?: ProcessReportHeader
+}
+
+function platformName(): string {
   let suffix = ''
   if (process.platform === 'linux') {
-    const report = process.report?.getReport()
+    const report = process.report?.getReport() as ProcessReport | undefined
     suffix = report?.header?.glibcVersionRuntime ? '-gnu' : '-musl'
   } else if (process.platform === 'win32') {
     suffix = '-msvc'
@@ -39,7 +52,7 @@ if (result.status !== 0) {
   process.exitCode = result.status ?? 1
 }
 
-function platformCommand(command, args) {
+function platformCommand(command: string, args: string[]): PlatformCommand {
   if (process.platform === 'win32') {
     return {
       command: process.env.ComSpec ?? 'cmd.exe',

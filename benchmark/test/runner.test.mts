@@ -15,7 +15,7 @@ import {
   parseHyperfineJson,
   parsePeakRss,
   replaceGeneratedBlock
-} from '../src/lib.mjs'
+} from '../src/lib.mts'
 import {
   assertBenchmarkSemicolonsDisabled,
   buildCommands,
@@ -27,7 +27,16 @@ import {
   measurementSettings,
   pinnedToolVersions,
   validateReport
-} from '../src/runner.mjs'
+} from '../src/runner.mts'
+import type {
+  BenchmarkPackage,
+  BenchmarkReport,
+  BenchmarkResult,
+  BenchmarkScenario,
+  CaptureCommand,
+  MicrobenchmarkResult,
+  WorsierSemicolonCheckConfig
+} from '../src/types.mts'
 
 test('calculates statistics from raw samples', () => {
   assert.deepEqual(calculateStatistics([4, 1, 3, 2]), {
@@ -106,7 +115,7 @@ test('fixture sources are pinned by immutable revisions and checksums', () => {
 })
 
 test('reads competitor version pins from the benchmark package manifest', async () => {
-  const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
+  const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')) as BenchmarkPackage
   assert.deepEqual(pinnedToolVersions, { prettier: packageJson.devDependencies.prettier, oxfmt: packageJson.devDependencies.oxfmt })
 })
 
@@ -138,19 +147,30 @@ test('constructs direct CLI commands and aliases Oxfmt project targets outside i
 })
 
 test('normalizes machine-specific paths in published commands', () => {
-  const command = `'${process.execPath}' '${process.cwd()}/src/cli.mjs'`
+  const command = `'${process.execPath}' '${process.cwd()}/src/cli.mts'`
   const displayed = displayCommand(command)
-  assert.equal(displayed, `'<node>' '<repo>/benchmark/src/cli.mjs'`)
+  assert.equal(displayed, `'<node>' '<repo>/benchmark/src/cli.mts'`)
   assert.doesNotMatch(displayed, /Users|home|vite-plus/)
 })
 
 test('does not collect or publish a Linux hostname', () => {
   const hostname = 'alice-work-laptop'
-  const calls = []
-  const captureCommand = (command, args) => {
+  const calls: string[][] = []
+  const captureCommand: CaptureCommand = (command, args) => {
     calls.push([command, ...args])
     if (command === 'uname') {
-      return { '-m': 'x86_64', '-p': 'AMD Ryzen', '-s': 'Linux', '-r': '6.8.0', '-n': hostname }[args[0]]
+      const unameValues: Record<string, string> = {
+        '-m': 'x86_64',
+        '-n': hostname,
+        '-p': 'AMD Ryzen',
+        '-r': '6.8.0',
+        '-s': 'Linux'
+      }
+      const argument = args[0]
+      const value = argument ? unameValues[argument] : undefined
+      if (value) {
+        return value
+      }
     }
     if (command === 'getconf') return '8'
     if (command === 'pnpm') return '11.21.0'
@@ -199,8 +219,8 @@ test('requires every Worsier semicolon group to be explicitly disabled for bench
 
   assert.doesNotThrow(() => assertBenchmarkSemicolonsDisabled(worsier, prettier, oxfmt))
 
-  for (const group of Object.keys(worsier.rules.semicolons)) {
-    const incomplete = structuredClone(worsier)
+  for (const group of Object.keys(worsier.rules.semicolons) as Array<keyof typeof worsier.rules.semicolons>) {
+    const incomplete = structuredClone(worsier) as WorsierSemicolonCheckConfig
     delete incomplete.rules.semicolons[group]
     assert.throws(
       () => assertBenchmarkSemicolonsDisabled(incomplete, prettier, oxfmt),
@@ -208,8 +228,14 @@ test('requires every Worsier semicolon group to be explicitly disabled for bench
     )
   }
 
-  const unexpected = structuredClone(worsier)
-  unexpected.rules.semicolons.extra = 'asNeeded'
+  const unexpected = {
+    rules: {
+      semicolons: {
+        ...worsier.rules.semicolons,
+        extra: 'asNeeded'
+      }
+    }
+  }
   assert.throws(
     () => assertBenchmarkSemicolonsDisabled(unexpected, prettier, oxfmt),
     /must disable optional semicolons/
@@ -233,8 +259,8 @@ test('validates every derived sample statistic and the complete Criterion matrix
   assert.throws(() => validateReport(emptyMicrobenchmarks), /complete Criterion benchmark matrix/)
 })
 
-function sampleReport() {
-  const result = (seconds) => ({
+function sampleReport(): BenchmarkReport {
+  const result = (seconds: number): BenchmarkResult => ({
     command: "'<node>' '<repo>/formatter.js'",
     inputBytes: 1024,
     samplesSeconds: [seconds],
@@ -247,7 +273,7 @@ function sampleReport() {
     peakRssSamplesBytes: [1024],
     peakRssBytes: 1024
   })
-  const scenario = {
+  const scenario: BenchmarkScenario = {
     displayName: 'Scenario',
     inputBytes: 1024,
     inputBytesByTool: null,
@@ -283,18 +309,36 @@ function sampleReport() {
       prettier: { displayName: 'Prettier', version: pinnedToolVersions.prettier },
       oxfmt: { displayName: 'Oxfmt', version: pinnedToolVersions.oxfmt }
     },
-    settings: { warmups: 3, runs: 1, rssRuns: 1 },
-    fixtures: {
-      small: { files: 1, bytes: 1, sha256: 'a' },
-      parser: { files: 1, bytes: 1, sha256: 'b', lineEndings: 'lf' }
+    settings: {
+      warmups: 3,
+      runs: 1,
+      rssRuns: 1,
+      lineWidth: 120,
+      semicolons: false,
+      trailingCommas: false,
+      endOfLine: 'lf',
+      worsierVerifyAst: true,
+      cache: false,
+      concurrency: 'CLI defaults'
     },
-    validation: { fileCount: 1 },
+    fixtures: {
+      small: { files: 1, bytes: 1, sha256: 'a', source: 'small.ts' },
+      parser: { files: 1, bytes: 1, sha256: 'b', source: 'parser.ts', lineEndings: 'lf' },
+      outline: { files: 1, bytes: 1, sha256: 'c', source: 'outline' }
+    },
+    validation: {
+      baselineManifestHash: 'manifest',
+      fileCount: 1,
+      idempotent: true,
+      outputBytes: { worsier: 1, prettier: 1, oxfmt: 1 },
+      outputHashes: { worsier: {}, prettier: {}, oxfmt: {} }
+    },
     scenarios: { small: scenario, parser: scenario, projectWrite: scenario, projectCheck: scenario },
-    microbenchmarks: ['single_parse', 'format_no_verify_default', 'format_no_verify_semicolons_off', 'format_no_verify_trailing_commas_off', 'parse_and_verify'].flatMap((measurement) => [
+    microbenchmarks: ['single_parse', 'format_no_verify_default', 'format_no_verify_semicolons_off', 'format_no_verify_trailing_commas_off', 'parse_and_verify'].flatMap((measurement): MicrobenchmarkResult[] => ([
       ['small', 512],
       ['50kb', 50 * 1024],
       ['1mb', 1024 * 1024]
-    ].map(([input, inputBytes]) => {
+    ] as Array<[string, number]>).map(([input, inputBytes]) => {
       const medianSeconds = 0.001
       return {
         measurement,

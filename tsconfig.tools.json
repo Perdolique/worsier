@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": true,
+    "strict": true,
+    "target": "ES2024",
+    "types": ["node"],
+    "verbatimModuleSyntax": true
+  },
+  "include": [
+    "scripts/**/*.mts",
+    "packages/npm/scripts/**/*.mts",
+    "packages/npm/test/**/*.mts",
+    "benchmark/src/**/*.mts",
+    "benchmark/test/**/*.mts"
+  ]
+}

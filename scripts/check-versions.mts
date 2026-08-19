@@ -2,13 +2,57 @@ import assert from 'node:assert/strict'
 import { readFile, readdir } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 
+interface VersionedPackage {
+  version: string
+}
+
+interface NpmPackage extends VersionedPackage {
+  files: string[]
+  name: string
+  optionalDependencies: Record<string, string>
+}
+
+interface PlatformPackage extends VersionedPackage {
+  files: string[]
+  main: string
+  name: string
+}
+
+interface CargoPackage extends VersionedPackage {
+  id: string
+  name: string
+}
+
+interface CargoMetadata {
+  packages: CargoPackage[]
+  workspace_members: string[]
+}
+
+interface ReleaseExtraFile {
+  jsonpath: string
+  path: string
+  type: string
+}
+
+interface ReleaseComponent {
+  'extra-files': Array<string | ReleaseExtraFile>
+  'package-name': string
+  'release-type': string
+}
+
+interface ReleasePleaseConfig {
+  packages: Record<string, ReleaseComponent | undefined>
+}
+
 const root = new URL('..', import.meta.url)
 const cargo = await readFile(new URL('Cargo.toml', root), 'utf8')
 const license = await readFile(new URL('LICENSE', root), 'utf8')
 const cargoVersion = cargo.match(/^version = "([^"]+)"$/m)?.[1]
 assert.ok(cargoVersion, 'Cargo.toml must define workspace.package.version')
 
-const npmPackage = JSON.parse(await readFile(new URL('packages/npm/package.json', root), 'utf8'))
+const rootPackage = JSON.parse(await readFile(new URL('package.json', root), 'utf8')) as VersionedPackage
+const npmPackage = JSON.parse(await readFile(new URL('packages/npm/package.json', root), 'utf8')) as NpmPackage
+assert.equal(rootPackage.version, npmPackage.version, 'Workspace and npm versions must match')
 assert.equal(cargoVersion, npmPackage.version, 'Cargo and npm versions must match')
 assert.ok(npmPackage.files.includes('LICENSE'), 'worsier package must include LICENSE')
 assert.equal(
@@ -19,14 +63,14 @@ assert.equal(
 
 const platformRoot = new URL('npm/', root)
 const platformDirectories = await readdir(platformRoot, { withFileTypes: true })
-const platformPackageNames = new Set()
+const platformPackageNames = new Set<string>()
 for (const directory of platformDirectories) {
   if (!directory.isDirectory()) {
     continue
   }
 
   const manifestPath = new URL(`${directory.name}/package.json`, platformRoot)
-  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as PlatformPackage
   assert.equal(manifest.version, npmPackage.version, `${manifest.name} version must match worsier`)
   assert.ok(manifest.files.includes(manifest.main), `${manifest.name} must include its native binding`)
   assert.ok(manifest.files.includes('LICENSE'), `${manifest.name} must include LICENSE`)
@@ -52,15 +96,32 @@ const metadata = spawnSync('cargo', ['metadata', '--locked', '--format-version',
 if (metadata.status !== 0) {
   throw new Error(`cargo metadata --locked failed\n${metadata.stdout}${metadata.stderr}`)
 }
-const cargoMetadata = JSON.parse(metadata.stdout)
+const cargoMetadata = JSON.parse(metadata.stdout) as CargoMetadata
 const workspacePackageIds = new Set(cargoMetadata.workspace_members)
 const workspacePackages = cargoMetadata.packages.filter((entry) => workspacePackageIds.has(entry.id))
 for (const workspacePackage of workspacePackages) {
   assert.equal(workspacePackage.version, npmPackage.version, `${workspacePackage.name} version must match worsier`)
 }
 
-const releasePlease = JSON.parse(await readFile(new URL('release-please-config.json', root), 'utf8'))
-const cargoLockUpdate = releasePlease.packages['packages/npm']['extra-files'].find((entry) => typeof entry === 'object' && entry.path === '/Cargo.lock')
+const releasePlease = JSON.parse(await readFile(new URL('release-please-config.json', root), 'utf8')) as ReleasePleaseConfig
+const releaseComponent = releasePlease.packages['.']
+assert.ok(releaseComponent, 'Release Please must consider commits from the complete repository')
+assert.equal(releaseComponent['release-type'], 'node', 'Release Please must use the Node release strategy')
+assert.equal(releaseComponent['package-name'], npmPackage.name, 'Release Please package name must match worsier')
+assert.ok(releaseComponent['extra-files'].includes('/packages/npm/package.json'), 'Release Please must update the published npm package')
+
+const releaseManifest = JSON.parse(await readFile(new URL('.release-please-manifest.json', root), 'utf8'))
+assert.deepEqual(releaseManifest, { '.': npmPackage.version }, 'Release Please must track the root component version')
+
+const releaseWorkflow = await readFile(new URL('.github/workflows/release.yml', root), 'utf8')
+for (const output of ['release_created', 'sha', 'tag_name']) {
+  assert.ok(releaseWorkflow.includes(`steps.release.outputs.${output}`), `Release workflow must use the root ${output} output`)
+}
+assert.ok(!releaseWorkflow.includes("steps.release.outputs['packages/npm--"), 'Release workflow must not use path-prefixed outputs')
+
+const cargoLockUpdate = releaseComponent['extra-files'].find(
+  (entry): entry is ReleaseExtraFile => typeof entry === 'object' && entry.path === '/Cargo.lock'
+)
 assert.ok(cargoLockUpdate, 'Release Please must update Cargo.lock')
 for (const workspacePackage of workspacePackages) {
   assert.ok(cargoLockUpdate.jsonpath.includes(`@.name.value == '${workspacePackage.name}'`), `Release Please Cargo.lock update must include ${workspacePackage.name}`)

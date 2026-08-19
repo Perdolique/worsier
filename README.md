@@ -13,7 +13,9 @@ Node.js 24.0.0 or newer is required.
 - [Vue SFC support](#vue-sfc-support)
 - [Programmatic API](#programmatic-api)
 - [Guarantees and scope](#guarantees-and-scope)
+- [Development](#development)
 - [Performance benchmarks](#performance-benchmarks)
+- [Releases](#releases)
 - [Alternatives](#alternatives)
 
 ## Installation
@@ -233,6 +235,10 @@ const output = await format(
 - Formatting is idempotent: formatting an already formatted file produces no further changes.
 - Set every rule to `"off"` or `false` to make formatting return the source unchanged.
 
+## Development
+
+Repository scripts, npm package tests, and benchmark tooling use native ESM TypeScript (`.mts`) executed directly by Node.js without a loader or transpilation step. Run `vp run check:types` for strict no-emit type checking; the complete `vp run check` includes that check alongside the Rust, npm, native-package, and benchmark suites.
+
 ## Performance benchmarks
 
 Benchmarks are manual snapshots, not release gates. The comparative suite measures Worsier, Prettier, and Oxfmt on the same small TypeScript input, TypeScript's `parser.ts`, and a pinned Outline source corpus. Run `vp run benchmark` for an ignored draft or `vp run benchmark:update` from a clean committed worktree to replace the published snapshot. See the [benchmark guide](benchmark/README.md) for the complete methodology.
@@ -252,6 +258,10 @@ Environment: Mac14,6, Apple M2 Max, 12 cores, 32 GB RAM, macOS 26.5.2 arm64, Nod
 
 [Methodology, commands, raw samples, and diagnostic microbenchmarks](benchmark/results/latest.md).
 <!-- benchmark-results:end -->
+
+## Releases
+
+Release Please treats the complete repository as one releasable component, so conventional commits that change the Rust formatter, CLI, documentation, or npm package can all produce a release pull request. The private root `package.json` version is release metadata and must stay synchronized with the publishable package, Cargo workspace, lockfiles, and platform packages; `vp run check:versions` verifies that contract.
 
 ## Alternatives
 

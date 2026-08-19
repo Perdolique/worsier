@@ -2,9 +2,22 @@ import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
-import { spawnSync } from 'node:child_process'
+import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
 
-import { tarListingContains } from './tar-listing.mjs'
+import { tarListingContains } from './tar-listing.mts'
+
+interface PlatformCommand {
+  args: string[]
+  command: string
+}
+
+interface ProcessReportHeader {
+  glibcVersionRuntime?: string
+}
+
+interface ProcessReport {
+  header?: ProcessReportHeader
+}
 
 const root = resolve(import.meta.dirname, '../../..')
 const packageDirectory = join(root, 'packages/npm')
@@ -159,10 +172,10 @@ assert.equal(
 
 console.log(`Packed installation smoke passed in ${basename(project)}`)
 
-function platformName() {
+function platformName(): string {
   let suffix = ''
   if (process.platform === 'linux') {
-    const report = process.report?.getReport()
+    const report = process.report?.getReport() as ProcessReport | undefined
     suffix = report?.header?.glibcVersionRuntime ? '-gnu' : '-musl'
   } else if (process.platform === 'win32') {
     suffix = '-msvc'
@@ -171,7 +184,7 @@ function platformName() {
   return `${process.platform}-${process.arch}${suffix}`
 }
 
-function assertTarballIncludesLicense(tarball, packageName) {
+function assertTarballIncludesLicense(tarball: string, packageName: string): void {
   const listing = run('tar', ['-tzf', tarball])
   assert.ok(
     tarListingContains(listing.stdout, 'package/LICENSE'),
@@ -179,13 +192,13 @@ function assertTarballIncludesLicense(tarball, packageName) {
   )
 }
 
-function assertTarballIncludesPublicConfig(tarball) {
+function assertTarballIncludesPublicConfig(tarball: string): void {
   const listing = run('tar', ['-tzf', tarball])
   assert.ok(tarListingContains(listing.stdout, 'package/configuration_schema.json'))
   assert.ok(tarListingContains(listing.stdout, 'package/dist/types.d.ts'))
 }
 
-function run(command, args, cwd = root) {
+function run(command: string, args: string[], cwd = root): SpawnSyncReturns<string> {
   const executable = platformCommand(command, args)
   const result = spawnSync(executable.command, executable.args, {
     cwd,
@@ -203,7 +216,7 @@ function run(command, args, cwd = root) {
   return result
 }
 
-function platformCommand(command, args) {
+function platformCommand(command: string, args: string[]): PlatformCommand {
   if (process.platform === 'win32' && (command === 'npm' || command === 'pnpm')) {
     return {
       command: process.env.ComSpec ?? 'cmd.exe',

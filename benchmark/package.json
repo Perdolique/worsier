@@ -3,14 +3,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "benchmark": "node src/cli.mjs run",
-    "benchmark:update": "node src/cli.mjs update",
-    "benchmark:verify": "node src/cli.mjs verify",
-    "smoke": "node src/cli.mjs smoke",
-    "test": "node --test test/*.test.mjs"
+    "benchmark": "node src/cli.mts run",
+    "benchmark:update": "node src/cli.mts update",
+    "benchmark:verify": "node src/cli.mts verify",
+    "smoke": "node src/cli.mts smoke",
+    "test": "node --test test/*.test.mts"
   },
   "devDependencies": {
-    "oxfmt": "0.63.0",
+    "oxfmt": "0.64.0",
     "prettier": "3.9.6",
     "worsier": "workspace:*"
   }

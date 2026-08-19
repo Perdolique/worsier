@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { restoreProjectCopies, runBenchmark, smokeTools, verifyPublishedResults } from './runner.mjs'
+import { restoreProjectCopies, runBenchmark, smokeTools, verifyPublishedResults } from './runner.mts'
 
 const command = process.argv[2]
 
@@ -20,7 +20,7 @@ try {
   } else if (command === 'restore-project') {
     await restoreProjectCopies()
   } else {
-    throw new Error('Usage: node benchmark/src/cli.mjs <run|update|verify|smoke|restore-project>')
+    throw new Error('Usage: node benchmark/src/cli.mts <run|update|verify|smoke|restore-project>')
   }
 } catch (error) {
   console.error(error instanceof Error ? error.stack ?? error.message : error)
