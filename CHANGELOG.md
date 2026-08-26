@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.1.0](https://github.com/Perdolique/worsier/compare/v3.0.1...v3.1.0) (2026-08-26)
+
+
+### Features
+
+* **formatter:** space multiline call statements ([a3b48ea](https://github.com/Perdolique/worsier/commit/a3b48ea444444e8751e563ee8305d93bf9fe7b93))
+* **formatter:** space multiline call statements ([16275d4](https://github.com/Perdolique/worsier/commit/16275d44ca541aa7571014fb10d104ec3c05ecd3))
+
 ## [3.0.1](https://github.com/Perdolique/worsier/compare/v3.0.0...v3.0.1) (2026-08-19)
 
 
