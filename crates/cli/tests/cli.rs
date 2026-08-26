@@ -267,7 +267,7 @@ fn supports_trailing_comma_modes_from_config() {
 
     write(
         &directory.path().join("worsier.jsonc"),
-        r#"{"rules":{"importLayout":false,"objectPropertySpacing":false,"statementSpacing":{"controlFlowStatements":"off","imports":"off","returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"always"}}"#,
+        r#"{"rules":{"importLayout":false,"objectPropertySpacing":false,"statementSpacing":{"controlFlowStatements":"off","imports":"off","multilineCallStatements":"off","returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"always"}}"#,
     );
     let always = command(directory.path()).arg("sample.ts").output().unwrap();
     assert!(always.status.success(), "{}", stderr(&always));
@@ -278,7 +278,7 @@ fn supports_trailing_comma_modes_from_config() {
 
     write(
         &directory.path().join("worsier.jsonc"),
-        r#"{"rules":{"importLayout":false,"objectPropertySpacing":false,"statementSpacing":{"controlFlowStatements":"off","imports":"off","returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}"#,
+        r#"{"rules":{"importLayout":false,"objectPropertySpacing":false,"statementSpacing":{"controlFlowStatements":"off","imports":"off","multilineCallStatements":"off","returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}"#,
     );
     let off = command(directory.path()).arg("sample.ts").output().unwrap();
     assert!(off.status.success(), "{}", stderr(&off));
@@ -291,7 +291,7 @@ fn supports_granular_semicolon_modes_from_config() {
     fs::create_dir(directory.path().join(".git")).unwrap();
     write(
         &directory.path().join("worsier.jsonc"),
-        r#"{"rules":{"importLayout":false,"objectPropertySpacing":false,"statementSpacing":{"controlFlowStatements":"off","imports":"off","returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"asNeeded","typeMembers":"always"},"trailingCommas":"off"}}"#,
+        r#"{"rules":{"importLayout":false,"objectPropertySpacing":false,"statementSpacing":{"controlFlowStatements":"off","imports":"off","multilineCallStatements":"off","returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"asNeeded","typeMembers":"always"},"trailingCommas":"off"}}"#,
     );
     write(
         &directory.path().join("sample.ts"),
@@ -311,7 +311,7 @@ fn supports_type_alias_spacing_from_config() {
     let directory = tempfile::tempdir().unwrap();
     write(
         &directory.path().join("worsier.jsonc"),
-        r#"{"rules":{"importLayout":false,"objectPropertySpacing":false,"interfaceLayout":"off","statementSpacing":{"controlFlowStatements":"off","imports":"off","returnStatements":"off","typeAliases":"compact","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}"#,
+        r#"{"rules":{"importLayout":false,"objectPropertySpacing":false,"interfaceLayout":"off","statementSpacing":{"controlFlowStatements":"off","imports":"off","multilineCallStatements":"off","returnStatements":"off","typeAliases":"compact","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}"#,
     );
     write(
         &directory.path().join("sample.ts"),
@@ -348,11 +348,31 @@ fn preserves_detached_comment_gaps_with_platform_line_endings() {
 }
 
 #[test]
+fn supports_multiline_call_spacing_from_config() {
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        &directory.path().join("worsier.jsonc"),
+        r#"{"rules":{"importLayout":false,"objectPropertySpacing":false,"interfaceLayout":"off","statementSpacing":{"controlFlowStatements":"off","imports":"off","multilineCallStatements":"separate","returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}"#,
+    );
+    write(
+        &directory.path().join("sample.ts"),
+        "async function f() {\n  before()\n  await call(\n    value\n  )\n  after()\n}",
+    );
+
+    let output = command(directory.path()).arg("sample.ts").output().unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "async function f() {\n  before()\n\n  await call(\n    value\n  )\n\n  after()\n}"
+    );
+}
+
+#[test]
 fn supports_control_flow_spacing_from_config() {
     let directory = tempfile::tempdir().unwrap();
     write(
         &directory.path().join("worsier.jsonc"),
-        r#"{"rules":{"importLayout":false,"objectPropertySpacing":false,"interfaceLayout":"off","statementSpacing":{"controlFlowStatements":"separate","imports":"off","returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}"#,
+        r#"{"rules":{"importLayout":false,"objectPropertySpacing":false,"interfaceLayout":"off","statementSpacing":{"controlFlowStatements":"separate","imports":"off","multilineCallStatements":"off","returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}"#,
     );
     write(
         &directory.path().join("sample.ts"),
@@ -424,7 +444,7 @@ fn supports_object_property_spacing_from_config() {
 
     write(
         &directory.path().join("worsier.jsonc"),
-        r#"{"rules":{"importLayout":false,"interfaceLayout":"off","objectPropertySpacing":false,"statementSpacing":{"controlFlowStatements":"off","imports":"off","returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}"#,
+        r#"{"rules":{"importLayout":false,"interfaceLayout":"off","objectPropertySpacing":false,"statementSpacing":{"controlFlowStatements":"off","imports":"off","multilineCallStatements":"off","returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}"#,
     );
     let disabled = command(directory.path()).arg("sample.ts").output().unwrap();
     assert!(disabled.status.success(), "{}", stderr(&disabled));
@@ -624,6 +644,10 @@ fn configuration_errors_include_the_nested_json_path() {
         (
             r#"{"rules":{"statementSpacing":{"imports":"preserve"}}}"#,
             "rules.statementSpacing.imports",
+        ),
+        (
+            r#"{"rules":{"statementSpacing":{"multilineCallStatements":"preserve"}}}"#,
+            "rules.statementSpacing.multilineCallStatements",
         ),
         (
             r#"{"rules":{"statementSpacing":{"typeAliases":"preserve"}}}"#,

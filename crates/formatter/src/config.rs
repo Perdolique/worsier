@@ -172,6 +172,7 @@ pub enum SemicolonMode {
 pub struct StatementSpacingConfig {
     pub control_flow_statements: StatementSpacingMode,
     pub imports: StatementSpacingMode,
+    pub multiline_call_statements: StatementSpacingMode,
     pub return_statements: StatementSpacingMode,
     pub type_aliases: StatementSpacingMode,
     pub variable_declarations: StatementSpacingMode,
@@ -182,6 +183,7 @@ impl Default for StatementSpacingConfig {
         Self {
             control_flow_statements: StatementSpacingMode::Separate,
             imports: StatementSpacingMode::Separate,
+            multiline_call_statements: StatementSpacingMode::Separate,
             return_statements: StatementSpacingMode::Separate,
             type_aliases: StatementSpacingMode::Separate,
             variable_declarations: StatementSpacingMode::Separate,
@@ -244,6 +246,11 @@ impl ResolvedConfig {
     #[must_use]
     pub const fn import_spacing(&self) -> StatementSpacingMode {
         self.value.rules.statement_spacing.imports
+    }
+
+    #[must_use]
+    pub const fn multiline_call_statement_spacing(&self) -> StatementSpacingMode {
+        self.value.rules.statement_spacing.multiline_call_statements
     }
 
     #[must_use]
@@ -328,6 +335,10 @@ mod tests {
         );
         assert_eq!(config.import_spacing(), StatementSpacingMode::Separate);
         assert_eq!(
+            config.multiline_call_statement_spacing(),
+            StatementSpacingMode::Separate
+        );
+        assert_eq!(
             config.return_statement_spacing(),
             StatementSpacingMode::Separate
         );
@@ -368,6 +379,7 @@ mod tests {
             r#"{"rules":{"semicolons":{"extra":"off"}}}"#,
             r#"{"rules":{"statementSpacing":{"imports":"preserve"}}}"#,
             r#"{"rules":{"statementSpacing":{"controlFlowStatements":"preserve"}}}"#,
+            r#"{"rules":{"statementSpacing":{"multilineCallStatements":"preserve"}}}"#,
             r#"{"rules":{"statementSpacing":{"returnStatements":"preserve"}}}"#,
             r#"{"rules":{"statementSpacing":{"typeAliases":"preserve"}}}"#,
             r#"{"rules":{"statementSpacing":{"variables":"compact"}}}"#,
@@ -397,6 +409,10 @@ mod tests {
             StatementSpacingMode::Separate
         );
         assert_eq!(config.import_spacing(), StatementSpacingMode::Compact);
+        assert_eq!(
+            config.multiline_call_statement_spacing(),
+            StatementSpacingMode::Separate
+        );
         assert_eq!(
             config.return_statement_spacing(),
             StatementSpacingMode::Separate

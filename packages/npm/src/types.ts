@@ -25,6 +25,7 @@ export interface SemicolonConfig {
 export interface StatementSpacingConfig {
   controlFlowStatements?: 'separate' | 'compact' | 'off'
   imports?: 'separate' | 'compact' | 'off'
+  multilineCallStatements?: 'separate' | 'compact' | 'off'
   returnStatements?: 'separate' | 'compact' | 'off'
   typeAliases?: 'separate' | 'compact' | 'off'
   variableDeclarations?: 'separate' | 'compact' | 'off'

@@ -19,6 +19,15 @@ const objectSpacing = await binding.format(
   '{}'
 )
 assert.equal(objectSpacing, 'const value={\n  first:1,\n  second:2\n}')
+const multilineCallSpacing = await binding.format(
+  'smoke.ts',
+  "async function submit() {\n  prepare()\n  await requestFetch('/api', {\n    body: formData\n  })\n  finish()\n}",
+  '{}'
+)
+assert.equal(
+  multilineCallSpacing,
+  "async function submit() {\n  prepare()\n\n  await requestFetch('/api', {\n    body: formData\n  })\n\n  finish()\n}"
+)
 const variablesDisabled = await binding.format(
   'smoke.ts',
   'const first=1;let second=2;',
@@ -28,19 +37,19 @@ assert.equal(variablesDisabled, 'const first=1;let second=2')
 const compactTypeAliases = await binding.format(
   'smoke.ts',
   'type A=1;type B={\n value:string\n};\n\n\nrun();',
-  '{"rules":{"importLayout":false,"objectPropertySpacing":false,"interfaceLayout":"off","statementSpacing":{"controlFlowStatements":"off","imports":"off","returnStatements":"off","typeAliases":"compact","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}'
+  '{"rules":{"importLayout":false,"objectPropertySpacing":false,"interfaceLayout":"off","statementSpacing":{"controlFlowStatements":"off","imports":"off","multilineCallStatements":"off","returnStatements":"off","typeAliases":"compact","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}'
 )
 assert.equal(compactTypeAliases, 'type A=1;\ntype B={\n value:string\n};\nrun();')
 const trailingAlways = await binding.format(
   'smoke.ts',
   'const value={\n  item: true\n};',
-  '{"rules":{"importLayout":false,"objectPropertySpacing":false,"statementSpacing":{"controlFlowStatements":"off","imports":"off","returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"always"}}'
+  '{"rules":{"importLayout":false,"objectPropertySpacing":false,"statementSpacing":{"controlFlowStatements":"off","imports":"off","multilineCallStatements":"off","returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"always"}}'
 )
 assert.equal(trailingAlways, 'const value={\n  item: true,\n};')
 const controlFlowSpacing = await binding.format(
   'smoke.ts',
   'function f(){before();while(ok)work();after();}',
-  '{"rules":{"importLayout":false,"objectPropertySpacing":false,"interfaceLayout":"off","statementSpacing":{"controlFlowStatements":"separate","imports":"off","returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}'
+  '{"rules":{"importLayout":false,"objectPropertySpacing":false,"interfaceLayout":"off","statementSpacing":{"controlFlowStatements":"separate","imports":"off","multilineCallStatements":"off","returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}'
 )
 assert.equal(
   controlFlowSpacing,

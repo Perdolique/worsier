@@ -697,7 +697,7 @@ mod tests {
         let result = update_config_source("{}", Path::new("worsier.jsonc")).unwrap();
         assert_eq!(
             result.output,
-            "{\n  \"$schema\": \"./node_modules/worsier/configuration_schema.json\",\n  \"lineWidth\": 120,\n  \"verifyAst\": true,\n  \"rules\": {\n    \"importLayout\": true,\n    \"interfaceLayout\": 0,\n    \"objectPropertySpacing\": true,\n    \"statementSpacing\": {\n      \"controlFlowStatements\": \"separate\",\n      \"imports\": \"separate\",\n      \"returnStatements\": \"separate\",\n      \"typeAliases\": \"separate\",\n      \"variableDeclarations\": \"separate\"\n    },\n    \"semicolons\": {\n      \"statements\": \"asNeeded\",\n      \"classMembers\": \"asNeeded\",\n      \"typeMembers\": \"always\"\n    },\n    \"trailingCommas\": \"never\"\n  },\n  \"ignorePatterns\": []\n}"
+            "{\n  \"$schema\": \"./node_modules/worsier/configuration_schema.json\",\n  \"lineWidth\": 120,\n  \"verifyAst\": true,\n  \"rules\": {\n    \"importLayout\": true,\n    \"interfaceLayout\": 0,\n    \"objectPropertySpacing\": true,\n    \"statementSpacing\": {\n      \"controlFlowStatements\": \"separate\",\n      \"imports\": \"separate\",\n      \"multilineCallStatements\": \"separate\",\n      \"returnStatements\": \"separate\",\n      \"typeAliases\": \"separate\",\n      \"variableDeclarations\": \"separate\"\n    },\n    \"semicolons\": {\n      \"statements\": \"asNeeded\",\n      \"classMembers\": \"asNeeded\",\n      \"typeMembers\": \"always\"\n    },\n    \"trailingCommas\": \"never\"\n  },\n  \"ignorePatterns\": []\n}"
         );
         assert_eq!(result.changes.len(), 5);
     }
@@ -792,6 +792,10 @@ mod tests {
             );
             assert_eq!(
                 rules["statementSpacing"]["imports"], import_spacing,
+                "{source}"
+            );
+            assert_eq!(
+                rules["statementSpacing"]["multilineCallStatements"], "separate",
                 "{source}"
             );
             assert_eq!(
