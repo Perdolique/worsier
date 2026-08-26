@@ -38,7 +38,7 @@ test('formats through the asynchronous native API', async () => {
       importLayout: false,
       objectPropertySpacing: false,
       interfaceLayout: 'off',
-      statementSpacing: { controlFlowStatements: 'off', imports: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
+      statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
       semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
       trailingCommas: 'off'
     }
@@ -67,10 +67,30 @@ test('formats object property spacing through the native API', async () => {
         importLayout: false,
         interfaceLayout: 'off',
         objectPropertySpacing: false,
-        statementSpacing: { controlFlowStatements: 'off', imports: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
+        statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
         semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
         trailingCommas: 'off'
       }
+    }),
+    source
+  )
+})
+
+test('formats multiline call statement spacing through the native API', async () => {
+  const source = "async function submit() {\n  prepare()\n  await requestFetch('/api', {\n    body: formData\n  })\n  isSubmitted.value = true\n}"
+  const separated = "async function submit() {\n  prepare()\n\n  await requestFetch('/api', {\n    body: formData\n  })\n\n  isSubmitted.value = true\n}"
+  const compact = "async function submit() {\n  prepare()\n  await requestFetch('/api', {\n    body: formData\n  })\n  isSubmitted.value = true\n}"
+
+  assert.equal(await format('sample.ts', source), separated)
+  assert.equal(
+    await format('sample.ts', separated, {
+      rules: { statementSpacing: { multilineCallStatements: 'compact' } }
+    }),
+    compact
+  )
+  assert.equal(
+    await format('sample.ts', source, {
+      rules: { statementSpacing: { multilineCallStatements: 'off' } }
     }),
     source
   )
@@ -100,7 +120,7 @@ test('formats interface layouts through the native API', async () => {
   const isolatedRules: RulesConfig = {
     importLayout: false,
     objectPropertySpacing: false,
-    statementSpacing: { controlFlowStatements: 'off', imports: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
+    statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
     semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
     trailingCommas: 'off'
   }
@@ -155,7 +175,7 @@ test('formats type alias spacing through the native API', async () => {
       importLayout: false,
       objectPropertySpacing: false,
       interfaceLayout: 'off',
-      statementSpacing: { controlFlowStatements: 'off', imports: 'off', returnStatements: 'off', typeAliases: 'compact', variableDeclarations: 'off' },
+      statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', returnStatements: 'off', typeAliases: 'compact', variableDeclarations: 'off' },
       semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
       trailingCommas: 'off'
     }
@@ -170,7 +190,7 @@ test('formats return statement spacing through the native API', async () => {
       importLayout: false,
       objectPropertySpacing: false,
       interfaceLayout: 'off',
-      statementSpacing: { controlFlowStatements: 'off', imports: 'off', returnStatements: 'separate', typeAliases: 'off', variableDeclarations: 'off' },
+      statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', returnStatements: 'separate', typeAliases: 'off', variableDeclarations: 'off' },
       semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
       trailingCommas: 'off'
     }
@@ -185,7 +205,7 @@ test('formats control-flow statement spacing through the native API', async () =
       importLayout: false,
       objectPropertySpacing: false,
       interfaceLayout: 'off',
-      statementSpacing: { controlFlowStatements: 'separate', imports: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
+      statementSpacing: { controlFlowStatements: 'separate', imports: 'off', multilineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
       semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
       trailingCommas: 'off'
     }
@@ -200,7 +220,7 @@ test('formats granular semicolon groups through the native API', async () => {
     rules: {
       importLayout: false,
       objectPropertySpacing: false,
-      statementSpacing: { controlFlowStatements: 'off', imports: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
+      statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
       semicolons: { statements: 'off', classMembers: 'asNeeded', typeMembers: 'always' },
       trailingCommas: 'off'
     }
@@ -217,7 +237,7 @@ test('formats trailing commas through the native API', async () => {
   const disabledRules: RulesConfig = {
     importLayout: false,
     objectPropertySpacing: false,
-    statementSpacing: { controlFlowStatements: 'off', imports: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
+    statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
     semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' }
   }
 
@@ -263,6 +283,7 @@ test('maps native failures to stable error codes', async () => {
     [{ trailingCommas: 'multiline' }, 'rules.trailingCommas'],
     [{ statementSpacing: { controlFlowStatements: 'preserve' } }, 'rules.statementSpacing.controlFlowStatements'],
     [{ statementSpacing: { imports: 'preserve' } }, 'rules.statementSpacing.imports'],
+    [{ statementSpacing: { multilineCallStatements: 'preserve' } }, 'rules.statementSpacing.multilineCallStatements'],
     [{ statementSpacing: { returnStatements: 'preserve' } }, 'rules.statementSpacing.returnStatements'],
     [{ statementSpacing: { typeAliases: 'preserve' } }, 'rules.statementSpacing.typeAliases'],
     [{ statementSpacing: { extra: 'off' } }, 'rules.statementSpacing.extra']

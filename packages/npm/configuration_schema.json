@@ -36,6 +36,7 @@
         "statementSpacing": {
           "controlFlowStatements": "separate",
           "imports": "separate",
+          "multilineCallStatements": "separate",
           "returnStatements": "separate",
           "typeAliases": "separate",
           "variableDeclarations": "separate"
@@ -97,6 +98,7 @@
           "default": {
             "controlFlowStatements": "separate",
             "imports": "separate",
+            "multilineCallStatements": "separate",
             "returnStatements": "separate",
             "typeAliases": "separate",
             "variableDeclarations": "separate"
@@ -143,6 +145,10 @@
           "default": "separate"
         },
         "imports": {
+          "$ref": "#/$defs/StatementSpacingMode",
+          "default": "separate"
+        },
+        "multilineCallStatements": {
           "$ref": "#/$defs/StatementSpacingMode",
           "default": "separate"
         },

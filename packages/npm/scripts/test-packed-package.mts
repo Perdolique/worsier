@@ -45,10 +45,14 @@ const installedPackage = join(project, 'node_modules/worsier')
 const installedSchema = JSON.parse(await readFile(join(installedPackage, 'configuration_schema.json'), 'utf8'))
 assert.equal(installedSchema.properties.rules.default.objectPropertySpacing, true)
 assert.equal(installedSchema.$defs.RulesConfig.properties.objectPropertySpacing.default, true)
+assert.equal(installedSchema.properties.rules.default.statementSpacing.multilineCallStatements, 'separate')
+assert.equal(installedSchema.$defs.RulesConfig.properties.statementSpacing.default.multilineCallStatements, 'separate')
+assert.equal(installedSchema.$defs.StatementSpacingConfig.properties.multilineCallStatements.default, 'separate')
 assert.equal(installedSchema.properties.rules.default.semicolons.typeMembers, 'always')
 assert.equal(installedSchema.$defs.RulesConfig.properties.semicolons.default.typeMembers, 'always')
 assert.equal(installedSchema.$defs.SemicolonConfig.properties.typeMembers.default, 'always')
 assert.match(await readFile(join(installedPackage, 'dist/types.d.ts'), 'utf8'), /objectPropertySpacing\?: boolean/)
+assert.match(await readFile(join(installedPackage, 'dist/types.d.ts'), 'utf8'), /multilineCallStatements\?: 'separate' \| 'compact' \| 'off'/)
 
 const executable = join(project, 'node_modules/worsier/bin/worsier.js')
 const version = run(process.execPath, [executable, '--version'], project)
@@ -56,7 +60,7 @@ assert.equal(version.stdout.trim(), `worsier ${rootVersion}`)
 run(process.execPath, [executable, '--init'], project)
 assert.equal(
   await readFile(join(project, 'worsier.jsonc'), 'utf8'),
-  '{\n  "$schema": "./node_modules/worsier/configuration_schema.json",\n  "lineWidth": 120,\n  "verifyAst": true,\n  "rules": {\n    "importLayout": true,\n    "interfaceLayout": 0,\n    "objectPropertySpacing": true,\n    "statementSpacing": {\n      "controlFlowStatements": "separate",\n      "imports": "separate",\n      "returnStatements": "separate",\n      "typeAliases": "separate",\n      "variableDeclarations": "separate"\n    },\n    "semicolons": {\n      "statements": "asNeeded",\n      "classMembers": "asNeeded",\n      "typeMembers": "always"\n    },\n    "trailingCommas": "never"\n  },\n  "ignorePatterns": []\n}\n'
+  '{\n  "$schema": "./node_modules/worsier/configuration_schema.json",\n  "lineWidth": 120,\n  "verifyAst": true,\n  "rules": {\n    "importLayout": true,\n    "interfaceLayout": 0,\n    "objectPropertySpacing": true,\n    "statementSpacing": {\n      "controlFlowStatements": "separate",\n      "imports": "separate",\n      "multilineCallStatements": "separate",\n      "returnStatements": "separate",\n      "typeAliases": "separate",\n      "variableDeclarations": "separate"\n    },\n    "semicolons": {\n      "statements": "asNeeded",\n      "classMembers": "asNeeded",\n      "typeMembers": "always"\n    },\n    "trailingCommas": "never"\n  },\n  "ignorePatterns": []\n}\n'
 )
 await writeFile(
   join(project, 'worsier.jsonc'),
@@ -67,7 +71,7 @@ assert.match(updatedConfig.stdout, /Migrated rules\.imports/)
 assert.match(updatedConfig.stdout, /Migrated rules\.variables/)
 assert.equal(
   await readFile(join(project, 'worsier.jsonc'), 'utf8'),
-  '{\n  "$schema": "./node_modules/worsier/configuration_schema.json",\n  "lineWidth": 120,\n  "verifyAst": true,\n  "rules": {\n    // legacy layout\n    "importLayout": false,\n    "interfaceLayout": 0,\n    "objectPropertySpacing": true,\n    "statementSpacing": {\n      "controlFlowStatements": "separate",\n      "imports": "off",\n      "returnStatements": "separate",\n      "typeAliases": "separate",\n      "variableDeclarations": "off"\n    },\n    "semicolons": {\n      "statements": "asNeeded",\n      "classMembers": "asNeeded",\n      "typeMembers": "always"\n    },\n    "trailingCommas": "never"\n  },\n  "ignorePatterns": []\n}\n'
+  '{\n  "$schema": "./node_modules/worsier/configuration_schema.json",\n  "lineWidth": 120,\n  "verifyAst": true,\n  "rules": {\n    // legacy layout\n    "importLayout": false,\n    "interfaceLayout": 0,\n    "objectPropertySpacing": true,\n    "statementSpacing": {\n      "controlFlowStatements": "separate",\n      "imports": "off",\n      "multilineCallStatements": "separate",\n      "returnStatements": "separate",\n      "typeAliases": "separate",\n      "variableDeclarations": "off"\n    },\n    "semicolons": {\n      "statements": "asNeeded",\n      "classMembers": "asNeeded",\n      "typeMembers": "always"\n    },\n    "trailingCommas": "never"\n  },\n  "ignorePatterns": []\n}\n'
 )
 await writeFile(join(project, 'sample.ts'), 'const first=1;let second=2;')
 run(process.execPath, [executable, '--write', 'sample.ts'], project)
@@ -98,6 +102,20 @@ const objectSpacing = run(
 )
 assert.equal(objectSpacing.stdout, 'const value={\n  first:1,\n  second:2\n}\n')
 
+const multilineCallSpacing = run(
+  process.execPath,
+  [
+    '--input-type=module',
+    '--eval',
+    `import { format } from 'worsier'; console.log(await format('sample.ts', "async function submit() {\\n  prepare()\\n  await requestFetch('/api', {\\n    body: formData\\n  })\\n  finish()\\n}"))`
+  ],
+  project
+)
+assert.equal(
+  multilineCallSpacing.stdout,
+  "async function submit() {\n  prepare()\n\n  await requestFetch('/api', {\n    body: formData\n  })\n\n  finish()\n}\n"
+)
+
 const interfaceLayout = run(
   process.execPath,
   [
@@ -125,7 +143,7 @@ const controlFlowSpacing = run(
   [
     '--input-type=module',
     '--eval',
-    `import { format } from 'worsier'; console.log(await format('sample.ts', 'function f(){before();if(ok)work();after();}', { rules: { importLayout: false, interfaceLayout: 'off', objectPropertySpacing: false, statementSpacing: { controlFlowStatements: 'separate', imports: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' }, semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' }, trailingCommas: 'off' } }))`
+    `import { format } from 'worsier'; console.log(await format('sample.ts', 'function f(){before();if(ok)work();after();}', { rules: { importLayout: false, interfaceLayout: 'off', objectPropertySpacing: false, statementSpacing: { controlFlowStatements: 'separate', imports: 'off', multilineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' }, semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' }, trailingCommas: 'off' } }))`
   ],
   project
 )
@@ -139,7 +157,7 @@ const compactTypeAliases = run(
   [
     '--input-type=module',
     '--eval',
-    `import { format } from 'worsier'; console.log(await format('sample.ts', 'type A=1;type B={\\n value:string\\n};\\n\\n\\nrun();', { rules: { importLayout: false, interfaceLayout: 'off', objectPropertySpacing: false, statementSpacing: { controlFlowStatements: 'off', imports: 'off', returnStatements: 'off', typeAliases: 'compact', variableDeclarations: 'off' }, semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' }, trailingCommas: 'off' } }))`
+    `import { format } from 'worsier'; console.log(await format('sample.ts', 'type A=1;type B={\\n value:string\\n};\\n\\n\\nrun();', { rules: { importLayout: false, interfaceLayout: 'off', objectPropertySpacing: false, statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', returnStatements: 'off', typeAliases: 'compact', variableDeclarations: 'off' }, semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' }, trailingCommas: 'off' } }))`
   ],
   project
 )
@@ -150,7 +168,7 @@ const trailingAlways = run(
   [
     '--input-type=module',
     '--eval',
-    `import { format } from 'worsier'; console.log(await format('sample.ts', 'const value={\\n  item: true\\n};', { rules: { importLayout: false, interfaceLayout: 'off', objectPropertySpacing: false, statementSpacing: { controlFlowStatements: 'off', imports: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' }, semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' }, trailingCommas: 'always' } }))`
+    `import { format } from 'worsier'; console.log(await format('sample.ts', 'const value={\\n  item: true\\n};', { rules: { importLayout: false, interfaceLayout: 'off', objectPropertySpacing: false, statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' }, semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' }, trailingCommas: 'always' } }))`
   ],
   project
 )
@@ -161,7 +179,7 @@ const granularSemicolons = run(
   [
     '--input-type=module',
     '--eval',
-    `import { format } from 'worsier'; console.log(await format('sample.ts', 'const runtime=1;\\nclass Example { field=1; }\\ninterface Shape { value: string; }', { rules: { importLayout: false, interfaceLayout: 'off', objectPropertySpacing: false, statementSpacing: { controlFlowStatements: 'off', imports: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' }, semicolons: { statements: 'off', classMembers: 'asNeeded', typeMembers: 'always' }, trailingCommas: 'off' } }))`
+    `import { format } from 'worsier'; console.log(await format('sample.ts', 'const runtime=1;\\nclass Example { field=1; }\\ninterface Shape { value: string; }', { rules: { importLayout: false, interfaceLayout: 'off', objectPropertySpacing: false, statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' }, semicolons: { statements: 'off', classMembers: 'asNeeded', typeMembers: 'always' }, trailingCommas: 'off' } }))`
   ],
   project
 )
