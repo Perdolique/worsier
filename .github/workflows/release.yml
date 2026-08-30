@@ -196,7 +196,7 @@ jobs:
             -v "$PWD:/work" \
             -w /work \
             "node:${node_version}-alpine" \
-            sh -c 'corepack enable && corepack prepare pnpm@11.22.0 --activate && node packages/npm/scripts/test-packed-package.mts'
+            sh -c 'corepack enable && node packages/npm/scripts/test-packed-package.mts'
       - uses: actions/upload-artifact@v7
         with:
           name: binding-${{ matrix.platform }}
