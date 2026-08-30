@@ -10,7 +10,7 @@ use oxc_ast::ast::{
     NewExpression, ObjectAssignmentTarget, ObjectExpression, ObjectPattern, Program, Statement,
     StaticBlock, SwitchCase, SwitchStatement, TSEnumBody, TSExternalModuleDeclaration,
     TSGlobalDeclaration, TSInterfaceBody, TSModuleBlock, TSNamespaceDeclaration, TSTupleElement,
-    TSTupleType, TSTypeParameterDeclaration, VariableDeclarationKind, WithClause,
+    TSTupleType, TSTypeLiteral, TSTypeParameterDeclaration, VariableDeclarationKind, WithClause,
 };
 use oxc_ast_visit::{
     Visit,
@@ -27,13 +27,17 @@ use oxc_ast_visit::{
         walk_ts_external_module_declaration, walk_ts_global_declaration, walk_ts_index_signature,
         walk_ts_interface_body, walk_ts_mapped_type, walk_ts_method_signature,
         walk_ts_module_block, walk_ts_namespace_declaration, walk_ts_property_signature,
-        walk_ts_tuple_type, walk_ts_type_parameter_declaration, walk_with_clause,
+        walk_ts_tuple_type, walk_ts_type_literal, walk_ts_type_parameter_declaration,
+        walk_with_clause,
     },
 };
 use oxc_parser::{Kind, ParseOptions, Parser, Token, config::TokensParserConfig};
 use oxc_span::{ContentEq, FileExtension, GetSpan, SourceType, Span};
 
-use crate::{FormatError, ResolvedConfig, SemicolonMode, StatementSpacingMode, TrailingCommaMode};
+use crate::{
+    FormatError, ResolvedConfig, SemicolonMode, StatementSpacingMode, TrailingCommaMode,
+    TypeMemberSemicolonConfig,
+};
 
 const BOM: char = '\u{feff}';
 
@@ -138,6 +142,11 @@ pub(crate) fn format_script(
             message: "Flow is not supported".to_owned(),
         });
     }
+    let type_member_semicolons = if source_type.is_typescript() {
+        config.type_member_semicolons()
+    } else {
+        TypeMemberSemicolonConfig::off()
+    };
     if !config.import_layout_enabled()
         && config.interface_layout_threshold().is_none()
         && !config.object_property_spacing_enabled()
@@ -150,7 +159,7 @@ pub(crate) fn format_script(
         && config.trailing_commas() == TrailingCommaMode::Off
         && config.statement_semicolons() == SemicolonMode::Off
         && config.class_member_semicolons() == SemicolonMode::Off
-        && config.type_member_semicolons() == SemicolonMode::Off
+        && type_member_semicolons.is_off()
     {
         return Ok(None);
     }
@@ -203,7 +212,7 @@ pub(crate) fn format_script(
         source_type,
         config.statement_semicolons(),
         config.class_member_semicolons(),
-        config.type_member_semicolons(),
+        type_member_semicolons,
     )?;
 
     let Some(mut rewritten) = rewritten else {
@@ -274,11 +283,11 @@ fn apply_semicolons(
     source_type: SourceType,
     statements: SemicolonMode,
     class_members: SemicolonMode,
-    type_members: SemicolonMode,
+    type_members: TypeMemberSemicolonConfig,
 ) -> Result<Option<String>, FormatError> {
     if statements == SemicolonMode::Off
         && class_members == SemicolonMode::Off
-        && type_members == SemicolonMode::Off
+        && type_members.is_off()
     {
         return Ok(rewritten);
     }
@@ -430,7 +439,7 @@ fn semicolon_edits(
     tokens: &[Token],
     statements: SemicolonMode,
     class_members: SemicolonMode,
-    type_members: SemicolonMode,
+    type_members: TypeMemberSemicolonConfig,
 ) -> Vec<Edit> {
     let mut collector = SemicolonCollector {
         source,
@@ -438,6 +447,8 @@ fn semicolon_edits(
         statements,
         class_members,
         type_members,
+        type_member_line_breaks: None,
+        current_type_member_mode: None,
         class_index_signatures: HashSet::new(),
         preserved_semicolons: HashSet::new(),
         edits: Vec::new(),
@@ -452,7 +463,9 @@ struct SemicolonCollector<'s> {
     tokens: &'s [Token],
     statements: SemicolonMode,
     class_members: SemicolonMode,
-    type_members: SemicolonMode,
+    type_members: TypeMemberSemicolonConfig,
+    type_member_line_breaks: Option<LineBreakIndex>,
+    current_type_member_mode: Option<SemicolonMode>,
     class_index_signatures: HashSet<u32>,
     preserved_semicolons: HashSet<u32>,
     edits: Vec<Edit>,
@@ -487,8 +500,8 @@ impl SemicolonCollector<'_> {
         }
     }
 
-    fn record_mapped_type_member(&mut self, span: Span) {
-        if self.type_members == SemicolonMode::Off {
+    fn record_mapped_type_member(&mut self, span: Span, mode: SemicolonMode) {
+        if mode == SemicolonMode::Off {
             return;
         }
         let tokens = tokens_in_span(self.tokens, span);
@@ -504,7 +517,27 @@ impl SemicolonCollector<'_> {
         else {
             return;
         };
-        self.record(Span::new(span.start, last.end()), self.type_members);
+        self.record(Span::new(span.start, last.end()), mode);
+    }
+
+    fn type_member_mode(&mut self, span: Span) -> SemicolonMode {
+        if self.type_members.single_line == self.type_members.multiline {
+            return self.type_members.single_line;
+        }
+        let source = self.source;
+        let line_breaks = self
+            .type_member_line_breaks
+            .get_or_insert_with(|| LineBreakIndex::new(source));
+        if line_breaks.contains(span) {
+            self.type_members.multiline
+        } else {
+            self.type_members.single_line
+        }
+    }
+
+    fn effective_type_member_mode(&mut self, span: Span) -> SemicolonMode {
+        self.current_type_member_mode
+            .unwrap_or_else(|| self.type_member_mode(span))
     }
 
     fn append_statement_guards(&mut self, directives: &[Directive<'_>], body: &[Statement<'_>]) {
@@ -637,6 +670,20 @@ impl<'a> Visit<'a> for SemicolonCollector<'_> {
         walk_class_body(self, body);
     }
 
+    fn visit_ts_interface_body(&mut self, body: &TSInterfaceBody<'a>) {
+        let mode = self.type_member_mode(body.span);
+        let previous = self.current_type_member_mode.replace(mode);
+        walk_ts_interface_body(self, body);
+        self.current_type_member_mode = previous;
+    }
+
+    fn visit_ts_type_literal(&mut self, literal: &TSTypeLiteral<'a>) {
+        let mode = self.type_member_mode(literal.span);
+        let previous = self.current_type_member_mode.replace(mode);
+        walk_ts_type_literal(self, literal);
+        self.current_type_member_mode = previous;
+    }
+
     fn visit_property_definition(&mut self, property: &oxc_ast::ast::PropertyDefinition<'a>) {
         self.record(property.span, self.class_members);
         walk_property_definition(self, property);
@@ -655,7 +702,8 @@ impl<'a> Visit<'a> for SemicolonCollector<'_> {
     }
 
     fn visit_ts_property_signature(&mut self, signature: &oxc_ast::ast::TSPropertySignature<'a>) {
-        self.record(signature.span, self.type_members);
+        let mode = self.effective_type_member_mode(signature.span);
+        self.record(signature.span, mode);
         walk_ts_property_signature(self, signature);
     }
 
@@ -663,7 +711,7 @@ impl<'a> Visit<'a> for SemicolonCollector<'_> {
         let mode = if self.class_index_signatures.contains(&signature.span.start) {
             self.class_members
         } else {
-            self.type_members
+            self.effective_type_member_mode(signature.span)
         };
         self.record(signature.span, mode);
         walk_ts_index_signature(self, signature);
@@ -673,7 +721,8 @@ impl<'a> Visit<'a> for SemicolonCollector<'_> {
         &mut self,
         signature: &oxc_ast::ast::TSCallSignatureDeclaration<'a>,
     ) {
-        self.record(signature.span, self.type_members);
+        let mode = self.effective_type_member_mode(signature.span);
+        self.record(signature.span, mode);
         walk_ts_call_signature_declaration(self, signature);
     }
 
@@ -681,17 +730,20 @@ impl<'a> Visit<'a> for SemicolonCollector<'_> {
         &mut self,
         signature: &oxc_ast::ast::TSConstructSignatureDeclaration<'a>,
     ) {
-        self.record(signature.span, self.type_members);
+        let mode = self.effective_type_member_mode(signature.span);
+        self.record(signature.span, mode);
         walk_ts_construct_signature_declaration(self, signature);
     }
 
     fn visit_ts_method_signature(&mut self, signature: &oxc_ast::ast::TSMethodSignature<'a>) {
-        self.record(signature.span, self.type_members);
+        let mode = self.effective_type_member_mode(signature.span);
+        self.record(signature.span, mode);
         walk_ts_method_signature(self, signature);
     }
 
     fn visit_ts_mapped_type(&mut self, mapped: &oxc_ast::ast::TSMappedType<'a>) {
-        self.record_mapped_type_member(mapped.span);
+        let mode = self.type_member_mode(mapped.span);
+        self.record_mapped_type_member(mapped.span, mode);
         walk_ts_mapped_type(self, mapped);
     }
 }
@@ -3996,7 +4048,7 @@ mod tests {
     use crate::{
         FormatConfig, InterfaceLayoutMode, InterfaceLayoutRule, RulesConfig, SemicolonConfig,
         SemicolonMode, StatementSpacingConfig, StatementSpacingMode, TrailingCommaMode,
-        format_text, resolve_config,
+        TypeMemberSemicolonConfig, TypeMemberSemicolonRule, format_text, resolve_config,
     };
 
     fn format(source: &str) -> String {
@@ -4019,7 +4071,7 @@ mod tests {
         SemicolonConfig {
             statements: SemicolonMode::Off,
             class_members: SemicolonMode::Off,
-            type_members: SemicolonMode::Off,
+            type_members: SemicolonMode::Off.into(),
         }
     }
 
@@ -4558,7 +4610,7 @@ mod tests {
                     semicolons: SemicolonConfig {
                         statements: SemicolonMode::Off,
                         class_members: SemicolonMode::Off,
-                        type_members,
+                        type_members: type_members.into(),
                     },
                     trailing_commas: TrailingCommaMode::Off,
                 },
@@ -4939,7 +4991,7 @@ mod tests {
         let as_needed = SemicolonConfig {
             statements: SemicolonMode::AsNeeded,
             class_members: SemicolonMode::Off,
-            type_members: SemicolonMode::Off,
+            type_members: SemicolonMode::Off.into(),
         };
         let source = "const value=1;\n[one,two].forEach(work);\n(foo)();\n+value;\n-value;\n/regex/.test(text);\n`template`;";
         let expected = "const value=1\n;[one,two].forEach(work)\n;(foo)()\n;+value\n;-value\n;/regex/.test(text)\n;`template`";
@@ -4960,7 +5012,7 @@ mod tests {
                 SemicolonConfig {
                     statements: SemicolonMode::Always,
                     class_members: SemicolonMode::Off,
-                    type_members: SemicolonMode::Off,
+                    type_members: SemicolonMode::Off.into(),
                 },
             ),
             "const value=1;\nwork();\ndebugger;"
@@ -4990,7 +5042,7 @@ mod tests {
         let as_needed = SemicolonConfig {
             statements: SemicolonMode::AsNeeded,
             class_members: SemicolonMode::AsNeeded,
-            type_members: SemicolonMode::Off,
+            type_members: SemicolonMode::Off.into(),
         };
         let cases = [
             (
@@ -5031,7 +5083,7 @@ mod tests {
             SemicolonConfig {
                 statements: SemicolonMode::Off,
                 class_members: SemicolonMode::AsNeeded,
-                type_members: SemicolonMode::Always,
+                type_members: SemicolonMode::Always.into(),
             },
         );
         assert_eq!(
@@ -5045,7 +5097,7 @@ mod tests {
             SemicolonConfig {
                 statements: SemicolonMode::AsNeeded,
                 class_members: SemicolonMode::Off,
-                type_members: SemicolonMode::AsNeeded,
+                type_members: SemicolonMode::AsNeeded.into(),
             },
         );
         assert_eq!(
@@ -5060,7 +5112,7 @@ mod tests {
             SemicolonConfig {
                 statements: SemicolonMode::Off,
                 class_members: SemicolonMode::Always,
-                type_members: SemicolonMode::Off,
+                type_members: SemicolonMode::Off.into(),
             },
         );
         assert_eq!(
@@ -5074,11 +5126,110 @@ mod tests {
                 SemicolonConfig {
                     statements: SemicolonMode::Off,
                     class_members: SemicolonMode::Always,
-                    type_members: SemicolonMode::Off,
+                    type_members: SemicolonMode::Off.into(),
                 },
             ),
             always
         );
+    }
+
+    #[test]
+    fn configures_type_member_semicolons_by_final_container_layout() {
+        let semicolons = SemicolonConfig {
+            statements: SemicolonMode::Off,
+            class_members: SemicolonMode::Off,
+            type_members: TypeMemberSemicolonRule::default(),
+        };
+        let source = "function test(): { a: number; b: string; } { throw new Error(); }\ninterface Inline { first: number; second(): void; }\ntype Nested = {\n  inline: { value: string; run(): void; };\n  block: {\n    item: number\n  }\n};\ntype Copy<T> = { [K in keyof T]: T[K]; };\ntype Expanded<T> = {\n  [K in keyof T]: T[K]\n};";
+        let expected = "function test(): { a: number; b: string } { throw new Error(); }\ninterface Inline { first: number; second(): void }\ntype Nested = {\n  inline: { value: string; run(): void };\n  block: {\n    item: number;\n  };\n};\ntype Copy<T> = { [K in keyof T]: T[K] };\ntype Expanded<T> = {\n  [K in keyof T]: T[K];\n};";
+
+        LINE_BREAK_INDEX_BUILDS.set(0);
+        let output = format_semicolons("sample.ts", source, semicolons);
+        assert_eq!(output, expected);
+        assert_eq!(format_semicolons("sample.ts", &output, semicolons), output);
+        assert_eq!(LINE_BREAK_INDEX_BUILDS.get(), 2);
+
+        let inverted = SemicolonConfig {
+            statements: SemicolonMode::Off,
+            class_members: SemicolonMode::Off,
+            type_members: TypeMemberSemicolonRule::Layout(TypeMemberSemicolonConfig {
+                single_line: SemicolonMode::Always,
+                multiline: SemicolonMode::AsNeeded,
+            }),
+        };
+        assert_eq!(
+            format_semicolons(
+                "sample.ts",
+                "type Inline = { value: string };\ntype Block = {\n  value: string;\n};",
+                inverted,
+            ),
+            "type Inline = { value: string; };\ntype Block = {\n  value: string\n};"
+        );
+
+        LINE_BREAK_INDEX_BUILDS.set(0);
+        let javascript = "const value=1;";
+        assert_eq!(
+            format_semicolons("sample.js", javascript, semicolons),
+            javascript
+        );
+        assert_eq!(LINE_BREAK_INDEX_BUILDS.get(), 0);
+
+        assert_eq!(
+            format_semicolons("sample.ts", javascript, semicolons),
+            javascript
+        );
+        assert_eq!(LINE_BREAK_INDEX_BUILDS.get(), 0);
+    }
+
+    #[test]
+    fn skips_type_member_line_index_for_equal_modes() {
+        let semicolons = SemicolonConfig {
+            statements: SemicolonMode::Off,
+            class_members: SemicolonMode::Off,
+            type_members: SemicolonMode::Always.into(),
+        };
+        let source = "interface Shape {\n  value: string\n}";
+
+        LINE_BREAK_INDEX_BUILDS.set(0);
+        assert_eq!(
+            format_semicolons("sample.ts", source, semicolons),
+            "interface Shape {\n  value: string;\n}"
+        );
+        assert_eq!(LINE_BREAK_INDEX_BUILDS.get(), 0);
+    }
+
+    #[test]
+    fn applies_type_member_semicolons_after_interface_layout() {
+        let source = "interface Shape { first: number; second(): void; }";
+        let output = format_file_with("sample.ts", source, FormatConfig::default());
+        assert_eq!(
+            output,
+            "interface Shape {\n  first: number;\n  second(): void;\n}"
+        );
+        assert_eq!(
+            format_file_with("sample.ts", &output, FormatConfig::default()),
+            output
+        );
+    }
+
+    #[test]
+    fn preserves_type_member_comments_and_line_endings_by_layout() {
+        let semicolons = SemicolonConfig {
+            statements: SemicolonMode::Off,
+            class_members: SemicolonMode::Off,
+            type_members: TypeMemberSemicolonRule::default(),
+        };
+        for newline in ["\n", "\r\n"] {
+            let source = format!(
+                "type Inline = {{ value: string; /* note */ }};{newline}type Block = {{{newline}  value: string // note{newline}}};"
+            );
+            let expected = format!(
+                "type Inline = {{ value: string /* note */ }};{newline}type Block = {{{newline}  value: string; // note{newline}}};"
+            );
+            let output = format_semicolons("sample.ts", &source, semicolons);
+            assert_eq!(output, expected);
+            assert_eq!(format_semicolons("sample.ts", &output, semicolons), output);
+        }
     }
 
     #[test]
@@ -5102,12 +5253,12 @@ mod tests {
         let as_needed = SemicolonConfig {
             statements: SemicolonMode::AsNeeded,
             class_members: SemicolonMode::Off,
-            type_members: SemicolonMode::Off,
+            type_members: SemicolonMode::Off.into(),
         };
         let always = SemicolonConfig {
             statements: SemicolonMode::Always,
             class_members: SemicolonMode::Off,
-            type_members: SemicolonMode::Off,
+            type_members: SemicolonMode::Off.into(),
         };
 
         assert_eq!(
@@ -5152,7 +5303,7 @@ mod tests {
         let semicolons = SemicolonConfig {
             statements: SemicolonMode::AsNeeded,
             class_members: SemicolonMode::AsNeeded,
-            type_members: SemicolonMode::AsNeeded,
+            type_members: SemicolonMode::AsNeeded.into(),
         };
         assert_eq!(format_semicolons("sample.ts", source, semicolons), expected);
         assert_eq!(
@@ -5518,7 +5669,7 @@ mod tests {
                 semicolons: SemicolonConfig {
                     statements: SemicolonMode::Off,
                     class_members: SemicolonMode::Off,
-                    type_members: SemicolonMode::Off,
+                    type_members: SemicolonMode::Off.into(),
                 },
                 trailing_commas: TrailingCommaMode::Off,
             },
@@ -5732,7 +5883,7 @@ mod tests {
                 semicolons: SemicolonConfig {
                     statements: SemicolonMode::Always,
                     class_members: SemicolonMode::Off,
-                    type_members: SemicolonMode::Off,
+                    type_members: SemicolonMode::Off.into(),
                 },
                 ..RulesConfig::default()
             },
@@ -5948,7 +6099,7 @@ mod tests {
                 semicolons: SemicolonConfig {
                     statements: SemicolonMode::Off,
                     class_members: SemicolonMode::Off,
-                    type_members: SemicolonMode::Off,
+                    type_members: SemicolonMode::Off.into(),
                 },
                 trailing_commas: TrailingCommaMode::Off,
             },

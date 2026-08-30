@@ -634,6 +634,14 @@ fn configuration_errors_include_the_nested_json_path() {
             "rules.semicolons.statements",
         ),
         (
+            r#"{"rules":{"semicolons":{"typeMembers":{"singleLine":"never"}}}}"#,
+            "rules.semicolons.typeMembers.singleLine",
+        ),
+        (
+            r#"{"rules":{"semicolons":{"typeMembers":{"unknown":"off"}}}}"#,
+            "rules.semicolons.typeMembers.unknown",
+        ),
+        (
             r#"{"rules":{"semicolons":{"unknown":"off"}}}"#,
             "rules.semicolons.unknown",
         ),

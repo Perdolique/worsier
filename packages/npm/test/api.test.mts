@@ -231,6 +231,30 @@ test('formats granular semicolon groups through the native API', async () => {
   )
 })
 
+test('formats type member semicolons by container layout through the native API', async () => {
+  assert.equal(
+    await format('sample.ts', 'function test(): { a: number; b: string; } {}'),
+    'function test(): { a: number; b: string } {}'
+  )
+
+  const source = 'type Inline = { value: string };\ntype Block = {\n  value: string;\n};'
+  const output = await format('sample.ts', source, {
+    rules: {
+      importLayout: false,
+      interfaceLayout: 'off',
+      objectPropertySpacing: false,
+      statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
+      semicolons: {
+        statements: 'off',
+        classMembers: 'off',
+        typeMembers: { singleLine: 'always', multiline: 'asNeeded' }
+      },
+      trailingCommas: 'off'
+    }
+  })
+  assert.equal(output, 'type Inline = { value: string; };\ntype Block = {\n  value: string\n};')
+})
+
 test('formats trailing commas through the native API', async () => {
   const withoutCommas = 'const value = {\n  items: [\n    1\n  ]\n};'
   const withCommas = 'const value = {\n  items: [\n    1,\n  ],\n};'
@@ -279,6 +303,8 @@ test('maps native failures to stable error codes', async () => {
     [{ objectPropertySpacing: 'always' }, 'rules.objectPropertySpacing'],
     [{ semicolons: 'always' }, 'rules.semicolons'],
     [{ semicolons: { statements: 'never' } }, 'rules.semicolons.statements'],
+    [{ semicolons: { typeMembers: { singleLine: 'never' } } }, 'rules.semicolons.typeMembers.singleLine'],
+    [{ semicolons: { typeMembers: { extra: 'off' } } }, 'rules.semicolons.typeMembers.extra'],
     [{ semicolons: { extra: 'off' } }, 'rules.semicolons.extra'],
     [{ trailingCommas: 'multiline' }, 'rules.trailingCommas'],
     [{ statementSpacing: { controlFlowStatements: 'preserve' } }, 'rules.statementSpacing.controlFlowStatements'],
