@@ -7223,6 +7223,20 @@ mod tests {
     }
 
     #[test]
+    fn places_html_close_comments_after_unicode_line_separators() {
+        for separator in ['\u{2028}', '\u{2029}'] {
+            let source = format!("if (ok) work();{separator}--> note\nnext();");
+
+            assert_eq!(
+                format_with_control_flow_spacing(&source, StatementSpacingMode::Separate),
+                "if (ok) work();\n\n--> note\nnext();",
+                "U+{:04X}",
+                u32::from(separator)
+            );
+        }
+    }
+
+    #[test]
     fn preserves_control_flow_typescript_directive_scope() {
         for directive in ["@ts-ignore", "@ts-expect-error"] {
             let source =
