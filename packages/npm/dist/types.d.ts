@@ -1,4 +1,5 @@
 export type InterfaceLayoutMode = 'off';
+export type SemicolonMode = 'always' | 'asNeeded' | 'off';
 export interface FormatConfig {
     $schema?: string | null;
     ignorePatterns?: string[];
@@ -17,7 +18,11 @@ export interface RulesConfig {
 export interface SemicolonConfig {
     classMembers?: 'always' | 'asNeeded' | 'off';
     statements?: 'always' | 'asNeeded' | 'off';
-    typeMembers?: 'always' | 'asNeeded' | 'off';
+    typeMembers?: SemicolonMode | TypeMemberSemicolonConfig;
+}
+export interface TypeMemberSemicolonConfig {
+    multiline?: 'always' | 'asNeeded' | 'off';
+    singleLine?: 'always' | 'asNeeded' | 'off';
 }
 export interface StatementSpacingConfig {
     controlFlowStatements?: 'separate' | 'compact' | 'off';

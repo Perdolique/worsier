@@ -1,7 +1,7 @@
 use schemars::JsonSchema;
 use serde::{
     Deserialize, Deserializer, Serialize,
-    de::{self, Unexpected, Visitor},
+    de::{self, MapAccess, Unexpected, Visitor, value::MapAccessDeserializer},
 };
 
 use crate::FormatError;
@@ -145,7 +145,7 @@ pub enum InterfaceLayoutMode {
 pub struct SemicolonConfig {
     pub statements: SemicolonMode,
     pub class_members: SemicolonMode,
-    pub type_members: SemicolonMode,
+    pub type_members: TypeMemberSemicolonRule,
 }
 
 impl Default for SemicolonConfig {
@@ -153,7 +153,7 @@ impl Default for SemicolonConfig {
         Self {
             statements: SemicolonMode::AsNeeded,
             class_members: SemicolonMode::AsNeeded,
-            type_members: SemicolonMode::Always,
+            type_members: TypeMemberSemicolonRule::default(),
         }
     }
 }
@@ -165,6 +165,118 @@ pub enum SemicolonMode {
     #[default]
     AsNeeded,
     Off,
+}
+
+#[derive(Clone, Copy, Debug, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum TypeMemberSemicolonRule {
+    Mode(SemicolonMode),
+    Layout(TypeMemberSemicolonConfig),
+}
+
+impl TypeMemberSemicolonRule {
+    #[must_use]
+    pub const fn resolve(self) -> TypeMemberSemicolonConfig {
+        match self {
+            Self::Mode(mode) => TypeMemberSemicolonConfig {
+                single_line: mode,
+                multiline: mode,
+            },
+            Self::Layout(config) => config,
+        }
+    }
+}
+
+impl Default for TypeMemberSemicolonRule {
+    fn default() -> Self {
+        Self::Layout(TypeMemberSemicolonConfig::default())
+    }
+}
+
+impl From<SemicolonMode> for TypeMemberSemicolonRule {
+    fn from(mode: SemicolonMode) -> Self {
+        Self::Mode(mode)
+    }
+}
+
+impl<'de> Deserialize<'de> for TypeMemberSemicolonRule {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct TypeMemberSemicolonRuleVisitor;
+
+        impl<'de> Visitor<'de> for TypeMemberSemicolonRuleVisitor {
+            type Value = TypeMemberSemicolonRule;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter
+                    .write_str(r#""always", "asNeeded", "off", or a singleLine/multiline object"#)
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                let mode = match value {
+                    "always" => SemicolonMode::Always,
+                    "asNeeded" => SemicolonMode::AsNeeded,
+                    "off" => SemicolonMode::Off,
+                    _ => {
+                        return Err(E::unknown_variant(value, &["always", "asNeeded", "off"]));
+                    }
+                };
+                Ok(TypeMemberSemicolonRule::Mode(mode))
+            }
+
+            fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                TypeMemberSemicolonConfig::deserialize(MapAccessDeserializer::new(map))
+                    .map(TypeMemberSemicolonRule::Layout)
+            }
+        }
+
+        deserializer.deserialize_any(TypeMemberSemicolonRuleVisitor)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields, rename_all = "camelCase")]
+pub struct TypeMemberSemicolonConfig {
+    pub single_line: SemicolonMode,
+    pub multiline: SemicolonMode,
+}
+
+impl TypeMemberSemicolonConfig {
+    #[must_use]
+    pub const fn off() -> Self {
+        Self {
+            single_line: SemicolonMode::Off,
+            multiline: SemicolonMode::Off,
+        }
+    }
+
+    #[must_use]
+    pub const fn is_off(self) -> bool {
+        matches!(
+            self,
+            Self {
+                single_line: SemicolonMode::Off,
+                multiline: SemicolonMode::Off
+            }
+        )
+    }
+}
+
+impl Default for TypeMemberSemicolonConfig {
+    fn default() -> Self {
+        Self {
+            single_line: SemicolonMode::AsNeeded,
+            multiline: SemicolonMode::Always,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, JsonSchema, Serialize)]
@@ -284,8 +396,8 @@ impl ResolvedConfig {
     }
 
     #[must_use]
-    pub const fn type_member_semicolons(&self) -> SemicolonMode {
-        self.value.rules.semicolons.type_members
+    pub const fn type_member_semicolons(&self) -> TypeMemberSemicolonConfig {
+        self.value.rules.semicolons.type_members.resolve()
     }
 
     #[must_use]
@@ -318,7 +430,7 @@ pub fn resolve_config(config: FormatConfig) -> Result<ResolvedConfig, FormatErro
 mod tests {
     use super::{
         FormatConfig, InterfaceLayoutMode, InterfaceLayoutRule, SemicolonMode,
-        StatementSpacingMode, TrailingCommaMode, resolve_config,
+        StatementSpacingMode, TrailingCommaMode, TypeMemberSemicolonConfig, resolve_config,
     };
 
     #[test]
@@ -349,7 +461,10 @@ mod tests {
         );
         assert_eq!(config.statement_semicolons(), SemicolonMode::AsNeeded);
         assert_eq!(config.class_member_semicolons(), SemicolonMode::AsNeeded);
-        assert_eq!(config.type_member_semicolons(), SemicolonMode::Always);
+        assert_eq!(
+            config.type_member_semicolons(),
+            TypeMemberSemicolonConfig::default()
+        );
         assert_eq!(config.trailing_commas(), TrailingCommaMode::Never);
     }
 
@@ -376,6 +491,8 @@ mod tests {
             r#"{"rules":{"trailingCommas":"multiline"}}"#,
             r#"{"rules":{"semicolons":"always"}}"#,
             r#"{"rules":{"semicolons":{"statements":"never"}}}"#,
+            r#"{"rules":{"semicolons":{"typeMembers":{"singleLine":"never"}}}}"#,
+            r#"{"rules":{"semicolons":{"typeMembers":{"extra":"off"}}}}"#,
             r#"{"rules":{"semicolons":{"extra":"off"}}}"#,
             r#"{"rules":{"statementSpacing":{"imports":"preserve"}}}"#,
             r#"{"rules":{"statementSpacing":{"controlFlowStatements":"preserve"}}}"#,
@@ -424,7 +541,10 @@ mod tests {
         );
         assert_eq!(config.statement_semicolons(), SemicolonMode::AsNeeded);
         assert_eq!(config.class_member_semicolons(), SemicolonMode::AsNeeded);
-        assert_eq!(config.type_member_semicolons(), SemicolonMode::Always);
+        assert_eq!(
+            config.type_member_semicolons(),
+            TypeMemberSemicolonConfig::default()
+        );
         assert_eq!(config.trailing_commas(), TrailingCommaMode::Never);
     }
 
@@ -442,7 +562,43 @@ mod tests {
             let config = resolve_config(config).unwrap();
             assert_eq!(config.statement_semicolons(), expected);
             assert_eq!(config.class_member_semicolons(), expected);
-            assert_eq!(config.type_member_semicolons(), expected);
+            assert_eq!(
+                config.type_member_semicolons(),
+                TypeMemberSemicolonConfig {
+                    single_line: expected,
+                    multiline: expected,
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn resolves_layout_aware_type_member_semicolons() {
+        for (source, expected) in [
+            (
+                r#"{"rules":{"semicolons":{"typeMembers":{}}}}"#,
+                TypeMemberSemicolonConfig::default(),
+            ),
+            (
+                r#"{"rules":{"semicolons":{"typeMembers":{"singleLine":"always"}}}}"#,
+                TypeMemberSemicolonConfig {
+                    single_line: SemicolonMode::Always,
+                    multiline: SemicolonMode::Always,
+                },
+            ),
+            (
+                r#"{"rules":{"semicolons":{"typeMembers":{"multiline":"off"}}}}"#,
+                TypeMemberSemicolonConfig {
+                    single_line: SemicolonMode::AsNeeded,
+                    multiline: SemicolonMode::Off,
+                },
+            ),
+        ] {
+            let config: FormatConfig = serde_json::from_str(source).unwrap();
+            assert_eq!(
+                resolve_config(config).unwrap().type_member_semicolons(),
+                expected
+            );
         }
     }
 

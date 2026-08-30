@@ -31,7 +31,10 @@
         "semicolons": {
           "classMembers": "asNeeded",
           "statements": "asNeeded",
-          "typeMembers": "always"
+          "typeMembers": {
+            "multiline": "always",
+            "singleLine": "asNeeded"
+          }
         },
         "statementSpacing": {
           "controlFlowStatements": "separate",
@@ -90,7 +93,10 @@
           "default": {
             "classMembers": "asNeeded",
             "statements": "asNeeded",
-            "typeMembers": "always"
+            "typeMembers": {
+              "multiline": "always",
+              "singleLine": "asNeeded"
+            }
           }
         },
         "statementSpacing": {
@@ -123,8 +129,11 @@
           "default": "asNeeded"
         },
         "typeMembers": {
-          "$ref": "#/$defs/SemicolonMode",
-          "default": "always"
+          "$ref": "#/$defs/TypeMemberSemicolonRule",
+          "default": {
+            "multiline": "always",
+            "singleLine": "asNeeded"
+          }
         }
       },
       "additionalProperties": false
@@ -181,6 +190,30 @@
         "always",
         "never",
         "off"
+      ]
+    },
+    "TypeMemberSemicolonConfig": {
+      "type": "object",
+      "properties": {
+        "multiline": {
+          "$ref": "#/$defs/SemicolonMode",
+          "default": "always"
+        },
+        "singleLine": {
+          "$ref": "#/$defs/SemicolonMode",
+          "default": "asNeeded"
+        }
+      },
+      "additionalProperties": false
+    },
+    "TypeMemberSemicolonRule": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SemicolonMode"
+        },
+        {
+          "$ref": "#/$defs/TypeMemberSemicolonConfig"
+        }
       ]
     }
   }

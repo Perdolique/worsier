@@ -22,7 +22,7 @@ fn formatter_benchmarks(criterion: &mut Criterion) {
             semicolons: SemicolonConfig {
                 statements: SemicolonMode::Off,
                 class_members: SemicolonMode::Off,
-                type_members: SemicolonMode::Off,
+                type_members: SemicolonMode::Off.into(),
             },
             ..RulesConfig::default()
         },
