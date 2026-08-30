@@ -1,6 +1,6 @@
 {
   "name": "worsier-workspace",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "private": true,
   "packageManager": "pnpm@11.24.0",
   "scripts": {

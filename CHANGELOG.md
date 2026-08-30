@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.2.0](https://github.com/Perdolique/worsier/compare/v3.1.0...v3.2.0) (2026-08-30)
+
+
+### Features
+
+* **formatter:** format type member semicolons ([198ad4a](https://github.com/Perdolique/worsier/commit/198ad4a0974c167d6d32061099c4f3af33b309ba))
+
 ## [3.1.0](https://github.com/Perdolique/worsier/compare/v3.0.1...v3.1.0) (2026-08-26)
 
 
