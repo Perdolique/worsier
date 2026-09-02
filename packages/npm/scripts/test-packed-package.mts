@@ -43,6 +43,8 @@ await writeFile(join(project, 'package.json'), '{"type":"module","private":true}
 run('npm', ['install', '--ignore-scripts', rootTarball, platformTarball], project)
 const installedPackage = join(project, 'node_modules/worsier')
 const installedSchema = JSON.parse(await readFile(join(installedPackage, 'configuration_schema.json'), 'utf8'))
+assert.equal(installedSchema.properties.rules.default.commentSpacing, true)
+assert.equal(installedSchema.$defs.RulesConfig.properties.commentSpacing.default, true)
 assert.equal(installedSchema.properties.rules.default.objectPropertySpacing, true)
 assert.equal(installedSchema.$defs.RulesConfig.properties.objectPropertySpacing.default, true)
 assert.equal(installedSchema.properties.rules.default.statementSpacing.multilineCallStatements, 'separate')
@@ -66,6 +68,7 @@ assert.deepEqual(installedSchema.$defs.RulesConfig.properties.semicolons.default
 assert.deepEqual(installedSchema.$defs.SemicolonConfig.properties.typeMembers.default, defaultTypeMembers)
 const installedTypes = await readFile(join(installedPackage, 'dist/types.d.ts'), 'utf8')
 assert.match(installedTypes, /objectPropertySpacing\?: boolean/)
+assert.match(installedTypes, /commentSpacing\?: boolean/)
 assert.match(installedTypes, /multilineCallStatements\?: 'separate' \| 'compact' \| 'off'/)
 assert.match(installedTypes, /singleLineCallStatements\?: StatementSpacingMode \| SingleLineCallStatementSpacingConfig/)
 assert.match(
@@ -80,7 +83,7 @@ assert.equal(version.stdout.trim(), `worsier ${rootVersion}`)
 run(process.execPath, [executable, '--init'], project)
 assert.equal(
   await readFile(join(project, 'worsier.jsonc'), 'utf8'),
-  '{\n  "$schema": "./node_modules/worsier/configuration_schema.json",\n  "lineWidth": 120,\n  "verifyAst": true,\n  "rules": {\n    "importLayout": true,\n    "interfaceLayout": 0,\n    "objectPropertySpacing": true,\n    "statementSpacing": {\n      "controlFlowStatements": "separate",\n      "imports": "separate",\n      "multilineCallStatements": "separate",\n      "returnStatements": "separate",\n      "singleLineCallStatements": {\n        "betweenCalls": "compact",\n        "withOtherStatements": "separate"\n      },\n      "typeAliases": "separate",\n      "variableDeclarations": "separate"\n    },\n    "semicolons": {\n      "statements": "asNeeded",\n      "classMembers": "asNeeded",\n      "typeMembers": {\n        "singleLine": "asNeeded",\n        "multiline": "always"\n      }\n    },\n    "trailingCommas": "never"\n  },\n  "ignorePatterns": []\n}\n'
+  '{\n  "$schema": "./node_modules/worsier/configuration_schema.json",\n  "lineWidth": 120,\n  "verifyAst": true,\n  "rules": {\n    "commentSpacing": true,\n    "importLayout": true,\n    "interfaceLayout": 0,\n    "objectPropertySpacing": true,\n    "statementSpacing": {\n      "controlFlowStatements": "separate",\n      "imports": "separate",\n      "multilineCallStatements": "separate",\n      "returnStatements": "separate",\n      "singleLineCallStatements": {\n        "betweenCalls": "compact",\n        "withOtherStatements": "separate"\n      },\n      "typeAliases": "separate",\n      "variableDeclarations": "separate"\n    },\n    "semicolons": {\n      "statements": "asNeeded",\n      "classMembers": "asNeeded",\n      "typeMembers": {\n        "singleLine": "asNeeded",\n        "multiline": "always"\n      }\n    },\n    "trailingCommas": "never"\n  },\n  "ignorePatterns": []\n}\n'
 )
 await writeFile(
   join(project, 'worsier.jsonc'),
@@ -91,7 +94,7 @@ assert.match(updatedConfig.stdout, /Migrated rules\.imports/)
 assert.match(updatedConfig.stdout, /Migrated rules\.variables/)
 assert.equal(
   await readFile(join(project, 'worsier.jsonc'), 'utf8'),
-  '{\n  "$schema": "./node_modules/worsier/configuration_schema.json",\n  "lineWidth": 120,\n  "verifyAst": true,\n  "rules": {\n    // legacy layout\n    "importLayout": false,\n    "interfaceLayout": 0,\n    "objectPropertySpacing": true,\n    "statementSpacing": {\n      "controlFlowStatements": "separate",\n      "imports": "off",\n      "multilineCallStatements": "separate",\n      "returnStatements": "separate",\n      "singleLineCallStatements": {\n        "betweenCalls": "compact",\n        "withOtherStatements": "separate"\n      },\n      "typeAliases": "separate",\n      "variableDeclarations": "off"\n    },\n    "semicolons": {\n      "statements": "asNeeded",\n      "classMembers": "asNeeded",\n      "typeMembers": {\n        "singleLine": "asNeeded",\n        "multiline": "always"\n      }\n    },\n    "trailingCommas": "never"\n  },\n  "ignorePatterns": []\n}\n'
+  '{\n  "$schema": "./node_modules/worsier/configuration_schema.json",\n  "lineWidth": 120,\n  "verifyAst": true,\n  "rules": {\n    "commentSpacing": true,\n    // legacy layout\n    "importLayout": false,\n    "interfaceLayout": 0,\n    "objectPropertySpacing": true,\n    "statementSpacing": {\n      "controlFlowStatements": "separate",\n      "imports": "off",\n      "multilineCallStatements": "separate",\n      "returnStatements": "separate",\n      "singleLineCallStatements": {\n        "betweenCalls": "compact",\n        "withOtherStatements": "separate"\n      },\n      "typeAliases": "separate",\n      "variableDeclarations": "off"\n    },\n    "semicolons": {\n      "statements": "asNeeded",\n      "classMembers": "asNeeded",\n      "typeMembers": {\n        "singleLine": "asNeeded",\n        "multiline": "always"\n      }\n    },\n    "trailingCommas": "never"\n  },\n  "ignorePatterns": []\n}\n'
 )
 await writeFile(join(project, 'sample.ts'), 'const first=1;let second=2;')
 run(process.execPath, [executable, '--write', 'sample.ts'], project)
@@ -174,6 +177,28 @@ const interfaceLayout = run(
   project
 )
 assert.equal(interfaceLayout.stdout, 'interface Shape {\n  value: string;\n}\n')
+
+const commentSource = 'first()\n// second\nsecond()\n\n\n// detached\n\n\nthird()'
+const serializedCommentSource = JSON.stringify(commentSource)
+const commentOutput = run(
+  process.execPath,
+  ['--input-type=module', '--eval', `import { format } from 'worsier'; process.stdout.write(await format('sample.ts', ${serializedCommentSource}))`],
+  project
+)
+assert.equal(commentOutput.stdout, 'first()\n\n// second\nsecond()\n\n\n// detached\n\n\nthird()')
+await writeFile(join(project, 'comments.ts'), commentSource)
+const commentCliOutput = run(process.execPath, [executable, 'comments.ts'], project)
+assert.equal(commentCliOutput.stdout, commentOutput.stdout)
+await writeFile(join(project, 'unchanged.ts'), 'alreadyFormatted()')
+const unchangedCliOutput = run(process.execPath, [executable, 'unchanged.ts'], project)
+assert.equal(unchangedCliOutput.stdout, 'alreadyFormatted()')
+const commentStdinOutput = spawnSync(process.execPath, [executable, '--stdin-filepath', 'comments.ts'], {
+  cwd: project,
+  encoding: 'utf8',
+  input: commentSource
+})
+assert.equal(commentStdinOutput.status, 0, commentStdinOutput.stderr)
+assert.equal(commentStdinOutput.stdout, commentOutput.stdout)
 
 const variablesDisabled = run(
   process.execPath,

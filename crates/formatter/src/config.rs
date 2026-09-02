@@ -33,6 +33,7 @@ impl Default for FormatConfig {
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
 #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
 pub struct RulesConfig {
+    pub comment_spacing: bool,
     pub import_layout: bool,
     pub interface_layout: InterfaceLayoutRule,
     pub object_property_spacing: bool,
@@ -44,6 +45,7 @@ pub struct RulesConfig {
 impl Default for RulesConfig {
     fn default() -> Self {
         Self {
+            comment_spacing: true,
             import_layout: true,
             interface_layout: InterfaceLayoutRule::default(),
             object_property_spacing: true,
@@ -435,6 +437,11 @@ pub struct ResolvedConfig {
 
 impl ResolvedConfig {
     #[must_use]
+    pub const fn comment_spacing_enabled(&self) -> bool {
+        self.value.rules.comment_spacing
+    }
+
+    #[must_use]
     pub const fn line_width(&self) -> u32 {
         self.value.line_width
     }
@@ -555,6 +562,7 @@ mod tests {
         let config = resolve_config(FormatConfig::default()).unwrap();
         assert_eq!(config.line_width(), 120);
         assert!(config.verify_ast());
+        assert!(config.comment_spacing_enabled());
         assert!(config.import_layout_enabled());
         assert_eq!(config.interface_layout_threshold(), Some(0));
         assert!(config.object_property_spacing_enabled());
@@ -605,6 +613,9 @@ mod tests {
             r#"{"imports":{"specifierLayout":"auto"}}"#,
             r#"{"statementSpacing":[]}"#,
             r#"{"rules":{"objects":true}}"#,
+            r#"{"rules":{"commentSpacing":"off"}}"#,
+            r#"{"rules":{"commentSpacing":1}}"#,
+            r#"{"rules":{"commentSpacing":null}}"#,
             r#"{"rules":{"imports":true}}"#,
             r#"{"rules":{"variables":true}}"#,
             r#"{"trailingCommas":"always"}"#,

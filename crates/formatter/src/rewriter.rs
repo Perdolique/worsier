@@ -1,3 +1,7 @@
+mod comment_spacing;
+
+use comment_spacing::CommentSpacing;
+
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
 
@@ -156,25 +160,16 @@ pub(crate) fn format_script(
     } else {
         TypeMemberSemicolonConfig::off()
     };
-    if !config.import_layout_enabled()
-        && config.interface_layout_threshold().is_none()
-        && !config.object_property_spacing_enabled()
-        && config.control_flow_statement_spacing() == StatementSpacingMode::Off
-        && config.import_spacing() == StatementSpacingMode::Off
-        && config.multiline_call_statement_spacing() == StatementSpacingMode::Off
-        && config.single_line_call_statement_spacing().is_off()
-        && config.return_statement_spacing() == StatementSpacingMode::Off
-        && config.type_alias_spacing() == StatementSpacingMode::Off
-        && config.variable_declaration_spacing() == StatementSpacingMode::Off
-        && config.trailing_commas() == TrailingCommaMode::Off
-        && config.statement_semicolons() == SemicolonMode::Off
-        && config.class_member_semicolons() == SemicolonMode::Off
-        && type_member_semicolons.is_off()
-    {
+    if script_rules_disabled(config, type_member_semicolons) {
         return Ok(None);
     }
 
     let newline = detect_newline(source, newline_hint);
+    let comment_spacing = if config.comment_spacing_enabled() {
+        CommentSpacing::new(source, &parsed.program, &parsed.tokens)?
+    } else {
+        CommentSpacing::default()
+    };
     let single_arrow_comma = single_arrow_comma_rule(source_type);
     let edits = rewrite_edits(
         source,
@@ -183,6 +178,7 @@ pub(crate) fn format_script(
         config.line_width(),
         newline,
         RewriteRules {
+            comment_spacing: &comment_spacing,
             import_layout: config.import_layout_enabled(),
             interface_layout_threshold: config.interface_layout_threshold(),
             object_property_spacing: config.object_property_spacing_enabled(),
@@ -245,6 +241,27 @@ pub(crate) fn format_script(
     output.push_str(bom);
     output.push_str(&rewritten);
     Ok(Some(output))
+}
+
+fn script_rules_disabled(
+    config: &ResolvedConfig,
+    type_member_semicolons: TypeMemberSemicolonConfig,
+) -> bool {
+    !config.comment_spacing_enabled()
+        && !config.import_layout_enabled()
+        && config.interface_layout_threshold().is_none()
+        && !config.object_property_spacing_enabled()
+        && config.control_flow_statement_spacing() == StatementSpacingMode::Off
+        && config.import_spacing() == StatementSpacingMode::Off
+        && config.multiline_call_statement_spacing() == StatementSpacingMode::Off
+        && config.single_line_call_statement_spacing().is_off()
+        && config.return_statement_spacing() == StatementSpacingMode::Off
+        && config.type_alias_spacing() == StatementSpacingMode::Off
+        && config.variable_declaration_spacing() == StatementSpacingMode::Off
+        && config.trailing_commas() == TrailingCommaMode::Off
+        && config.statement_semicolons() == SemicolonMode::Off
+        && config.class_member_semicolons() == SemicolonMode::Off
+        && type_member_semicolons.is_off()
 }
 
 fn apply_always_trailing_commas(
@@ -1351,7 +1368,8 @@ enum StatementTarget {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct RewriteRules {
+struct RewriteRules<'a> {
+    comment_spacing: &'a CommentSpacing,
     import_layout: bool,
     interface_layout_threshold: Option<u32>,
     object_property_spacing: bool,
@@ -1548,6 +1566,9 @@ fn rewrite_edits(
     edits.extend(layout_edits);
     append_never_comma_edits(source, program, tokens, rules, &mut edits);
     edits.sort_by_key(|edit| (edit.start, edit.end));
+    rules
+        .comment_spacing
+        .append_uncovered(source, newline, &mut edits)?;
     Ok(edits)
 }
 
@@ -1639,6 +1660,7 @@ fn format_import_edits(
             &base_indent,
             declaration_tokens,
             declaration_comments,
+            rules.comment_spacing,
             line_width,
             newline,
             rules.trailing_commas,
@@ -1720,6 +1742,7 @@ fn collect_layout_edits(
     append_layout_edits(
         source,
         &program.comments,
+        rules.comment_spacing,
         newline,
         &collector.lists,
         &collector.switches,
@@ -2485,6 +2508,7 @@ fn enqueue_layout_expansion(
 fn append_layout_edits(
     source: &str,
     comments: &[Comment],
+    comment_spacing: &CommentSpacing,
     newline: &str,
     lists: &[StatementList],
     switches: &[SwitchLayout],
@@ -2498,6 +2522,7 @@ fn append_layout_edits(
     append_list_layout_edits(
         source,
         comments,
+        comment_spacing,
         newline,
         &directive_target_lines,
         lists,
@@ -2509,6 +2534,7 @@ fn append_layout_edits(
     append_switch_layout_edits(
         source,
         comments,
+        comment_spacing,
         newline,
         lists,
         switches,
@@ -2519,6 +2545,7 @@ fn append_layout_edits(
     append_interface_layout_edits(
         source,
         comments,
+        comment_spacing,
         newline,
         &directive_target_lines,
         lists,
@@ -2531,6 +2558,7 @@ fn append_layout_edits(
     append_object_layout_edits(
         source,
         comments,
+        comment_spacing,
         newline,
         lists,
         switches,
@@ -2543,11 +2571,13 @@ fn append_layout_edits(
 
 #[allow(
     clippy::too_many_arguments,
+    clippy::too_many_lines,
     reason = "statement boundaries share the collected layout and directive context"
 )]
 fn append_list_layout_edits(
     source: &str,
     comments: &[Comment],
+    comment_spacing: &CommentSpacing,
     newline: &str,
     directive_target_lines: &HashSet<u32>,
     lists: &[StatementList],
@@ -2571,7 +2601,15 @@ fn append_list_layout_edits(
             let item_indent = expanded_item_indent.clone().unwrap_or_else(|| {
                 indents.existing_item_indent(source, lists, switches, objects, list_index, 0)
             });
-            append_boundary_edit(source, comments, span, newline, &item_indent, edits)?;
+            append_boundary_edit(
+                source,
+                comments,
+                comment_spacing,
+                span,
+                newline,
+                &item_indent,
+                edits,
+            )?;
         }
 
         let mut fallback_indent = String::new();
@@ -2633,7 +2671,15 @@ fn append_list_layout_edits(
                     &fallback_indent,
                 )
             };
-            append_boundary_edit(source, comments, span, &separator, &indent, edits)?;
+            append_boundary_edit(
+                source,
+                comments,
+                comment_spacing,
+                span,
+                &separator,
+                &indent,
+                edits,
+            )?;
         }
 
         let last_index = list.items.len() - 1;
@@ -2646,7 +2692,15 @@ fn append_list_layout_edits(
         {
             let base_indent =
                 indents.list_base_indent(source, lists, switches, objects, list_index);
-            append_boundary_edit(source, comments, span, newline, &base_indent, edits)?;
+            append_boundary_edit(
+                source,
+                comments,
+                comment_spacing,
+                span,
+                newline,
+                &base_indent,
+                edits,
+            )?;
         }
     }
 
@@ -2676,6 +2730,7 @@ fn list_closing_boundary(list: &StatementList) -> Option<Span> {
 fn append_switch_layout_edits(
     source: &str,
     comments: &[Comment],
+    comment_spacing: &CommentSpacing,
     newline: &str,
     lists: &[StatementList],
     switches: &[SwitchLayout],
@@ -2696,6 +2751,7 @@ fn append_switch_layout_edits(
         append_boundary_edit(
             source,
             comments,
+            comment_spacing,
             Span::new(switch.open.end, switch.cases[0].start),
             newline,
             &case_indent,
@@ -2705,6 +2761,7 @@ fn append_switch_layout_edits(
             append_boundary_edit(
                 source,
                 comments,
+                comment_spacing,
                 Span::new(pair[0].end, pair[1].start),
                 newline,
                 &case_indent,
@@ -2714,6 +2771,7 @@ fn append_switch_layout_edits(
         append_boundary_edit(
             source,
             comments,
+            comment_spacing,
             Span::new(switch.cases.last().unwrap().end, switch.close.start),
             newline,
             &switch_indent,
@@ -2731,6 +2789,7 @@ fn append_switch_layout_edits(
 fn append_interface_layout_edits(
     source: &str,
     comments: &[Comment],
+    comment_spacing: &CommentSpacing,
     newline: &str,
     directive_target_lines: &HashSet<u32>,
     lists: &[StatementList],
@@ -2750,6 +2809,7 @@ fn append_interface_layout_edits(
         append_boundary_edit(
             source,
             comments,
+            comment_spacing,
             Span::new(interface.open.end, first.start),
             newline,
             &member_indent,
@@ -2762,6 +2822,7 @@ fn append_interface_layout_edits(
             append_boundary_edit(
                 source,
                 comments,
+                comment_spacing,
                 Span::new(pair[0].end, pair[1].start),
                 newline,
                 &member_indent,
@@ -2771,6 +2832,7 @@ fn append_interface_layout_edits(
         append_boundary_edit(
             source,
             comments,
+            comment_spacing,
             Span::new(interface.members.last().unwrap().end, interface.close.start),
             newline,
             &base_indent,
@@ -2788,6 +2850,7 @@ fn append_interface_layout_edits(
 fn append_object_layout_edits(
     source: &str,
     comments: &[Comment],
+    comment_spacing: &CommentSpacing,
     newline: &str,
     lists: &[StatementList],
     switches: &[SwitchLayout],
@@ -2824,6 +2887,7 @@ fn append_object_layout_edits(
         append_object_boundary_edit(
             source,
             comments,
+            comment_spacing,
             opening,
             newline,
             &opening_indent,
@@ -2862,6 +2926,7 @@ fn append_object_layout_edits(
             append_object_boundary_edit(
                 source,
                 comments,
+                comment_spacing,
                 span,
                 &separator,
                 &next_indent,
@@ -2876,6 +2941,7 @@ fn append_object_layout_edits(
         append_object_boundary_edit(
             source,
             comments,
+            comment_spacing,
             closing,
             newline,
             &base_indent,
@@ -2895,6 +2961,7 @@ fn append_object_layout_edits(
 fn append_object_boundary_edit(
     source: &str,
     comments: &[Comment],
+    comment_spacing: &CommentSpacing,
     span: Span,
     separator: &str,
     indent: &str,
@@ -2916,7 +2983,14 @@ fn append_object_boundary_edit(
         }
     }
     let original = source_slice(source, span)?;
-    let formatted = format_boundary_separator(source, span, &boundary_comments, separator, indent)?;
+    let formatted = format_boundary_separator(
+        source,
+        span,
+        &boundary_comments,
+        comment_spacing,
+        separator,
+        indent,
+    )?;
     if original != formatted {
         edits.push(Edit {
             start: span.start,
@@ -3115,13 +3189,15 @@ const fn same_single_line_category(statement: StatementTarget, sibling: Statemen
 fn append_boundary_edit(
     source: &str,
     comments: &[Comment],
+    comment_spacing: &CommentSpacing,
     span: Span,
     separator: &str,
     indent: &str,
     edits: &mut Vec<Edit>,
 ) -> Result<(), FormatError> {
     let original = source_slice(source, span)?;
-    let formatted = format_boundary_separator(source, span, comments, separator, indent)?;
+    let formatted =
+        format_boundary_separator(source, span, comments, comment_spacing, separator, indent)?;
     if original != formatted {
         edits.push(Edit {
             start: span.start,
@@ -3511,6 +3587,26 @@ fn format_boundary_separator(
     source: &str,
     span: Span,
     comments: &[Comment],
+    comment_spacing: &CommentSpacing,
+    separator: &str,
+    indent: &str,
+) -> Result<String, FormatError> {
+    let formatted = format_boundary_separator_without_comment_spacing(
+        source, span, comments, separator, indent,
+    )?;
+    comment_spacing.boundary(
+        source,
+        span,
+        comments,
+        formatted,
+        detect_newline(separator, None),
+    )
+}
+
+fn format_boundary_separator_without_comment_spacing(
+    source: &str,
+    span: Span,
+    comments: &[Comment],
     statement_separator: &str,
     indent: &str,
 ) -> Result<String, FormatError> {
@@ -3714,6 +3810,7 @@ fn format_import(
     base_indent: &str,
     tokens: &[Token],
     comments: &[Comment],
+    comment_spacing: &CommentSpacing,
     line_width: u32,
     newline: &str,
     trailing_commas: TrailingCommaMode,
@@ -3731,6 +3828,7 @@ fn format_import(
             source,
             tokens,
             comments,
+            comment_spacing,
             newline,
             false,
             base_indent,
@@ -3748,6 +3846,7 @@ fn format_import(
                 source,
                 tokens,
                 comments,
+                comment_spacing,
                 newline,
                 true,
                 base_indent,
@@ -3763,6 +3862,7 @@ fn format_import(
             source,
             tokens,
             comments,
+            comment_spacing,
             newline,
             false,
             omitted_attribute_comma,
@@ -3831,6 +3931,7 @@ fn format_named_import(
     source: &str,
     tokens: &[Token],
     comments: &[Comment],
+    comment_spacing: &CommentSpacing,
     newline: &str,
     multiline: bool,
     base_indent: &str,
@@ -3842,6 +3943,7 @@ fn format_named_import(
         source,
         tokens,
         comments,
+        comment_spacing,
         newline,
         false,
         None,
@@ -3851,86 +3953,173 @@ fn format_named_import(
         source,
         tokens,
         comments,
+        comment_spacing,
         newline,
         false,
         omitted_attribute_comma,
     )?;
-    let ranges = named_segments(left_brace.end, right_brace.start, tokens);
+    let ranges = named_segments(
+        left_brace.end,
+        right_brace.start,
+        tokens,
+        source,
+        comments,
+        comment_spacing.enabled(),
+    )?;
     let preserve_trailing_comma = trailing_commas != TrailingCommaMode::Never
         && tokens_in_span(tokens, Span::new(left_brace.end, right_brace.start))
             .last()
             .is_some_and(|token| token.kind() == Kind::Comma);
     let last_token_segment = ranges
         .iter()
-        .rposition(|range| range_has_token(*range, tokens));
+        .rposition(|segment| range_has_token(segment.span, tokens));
     let mut segments = Vec::new();
-    for (index, range) in ranges.into_iter().enumerate() {
-        let has_token = range_has_token(range, tokens);
+    for (index, segment) in ranges.into_iter().enumerate() {
+        let has_token = range_has_token(segment.span, tokens);
         let add_comma = has_token
             && last_token_segment
                 .is_some_and(|last| index < last || (index == last && preserve_trailing_comma));
-        let segment =
-            canonicalize_range(range, source, tokens, comments, newline, add_comma, None)?;
+        let segment = canonicalize_range(
+            segment.span,
+            source,
+            tokens,
+            comments,
+            comment_spacing,
+            newline,
+            add_comma,
+            segment.omitted_comma,
+        )?;
         if !segment.text.is_empty() {
             segments.push(segment);
         }
     }
 
+    Ok(assemble_named_import(
+        prefix,
+        &suffix,
+        &segments,
+        newline,
+        multiline,
+        base_indent,
+        comment_spacing.enabled(),
+    ))
+}
+
+fn assemble_named_import(
+    prefix: CanonicalText,
+    suffix: &CanonicalText,
+    segments: &[CanonicalText],
+    newline: &str,
+    multiline: bool,
+    base_indent: &str,
+    preserve_comment_layout: bool,
+) -> String {
     let mut output = prefix.text;
-    push_separator_after(&mut output, prefix.ends_line_comment, newline);
+    push_import_separator(
+        &mut output,
+        prefix.trailing_lines,
+        prefix.ends_line_comment,
+        newline,
+    );
     output.push('{');
 
     if segments.is_empty() {
         output.push('}');
     } else if multiline {
         let item_indent = format!("{base_indent}  ");
-        output.push_str(newline);
-        for segment in &segments {
-            output.push_str(&indent_lines(&segment.text, &item_indent));
-            output.push_str(newline);
+        for (index, segment) in segments.iter().enumerate() {
+            let previous = index.checked_sub(1).and_then(|index| segments.get(index));
+            let lines = segment
+                .leading_lines
+                .or_else(|| previous.and_then(|segment| segment.trailing_lines))
+                .unwrap_or(1);
+            output.push_str(&newline.repeat(lines));
+            output.push_str(&indent_lines(
+                &segment.text,
+                &item_indent,
+                &segment.verbatim_comments,
+                preserve_comment_layout,
+            ));
         }
+        let lines = segments
+            .last()
+            .and_then(|segment| segment.trailing_lines)
+            .unwrap_or(1);
+        output.push_str(&newline.repeat(lines));
         output.push_str(base_indent);
         output.push('}');
     } else {
-        output.push(' ');
         for (index, segment) in segments.iter().enumerate() {
-            if index > 0 {
-                push_separator_after(&mut output, segments[index - 1].ends_line_comment, newline);
-            }
+            let previous = index.checked_sub(1).and_then(|index| segments.get(index));
+            let lines = segment
+                .leading_lines
+                .or_else(|| previous.and_then(|segment| segment.trailing_lines));
+            let line_comment = previous.is_some_and(|segment| segment.ends_line_comment);
+            push_import_separator(&mut output, lines, line_comment, newline);
             output.push_str(&segment.text);
         }
-        if segments
-            .last()
-            .is_some_and(|segment| segment.ends_line_comment)
-        {
-            output.push_str(newline);
-            output.push('}');
-        } else {
-            output.push_str(" }");
-        }
+        let last = segments.last().unwrap();
+        push_import_separator(
+            &mut output,
+            last.trailing_lines,
+            last.ends_line_comment,
+            newline,
+        );
+        output.push('}');
     }
 
     if !suffix.text.is_empty() {
-        push_separator_after(&mut output, false, newline);
+        push_import_separator(&mut output, suffix.leading_lines, false, newline);
         output.push_str(&suffix.text);
     }
-    Ok(output)
+    output
 }
 
-fn named_segments(start: u32, end: u32, tokens: &[Token]) -> Vec<Span> {
+struct NamedSegment {
+    span: Span,
+    omitted_comma: Option<Span>,
+}
+
+fn named_segments(
+    start: u32,
+    end: u32,
+    tokens: &[Token],
+    source: &str,
+    comments: &[Comment],
+    preserve_trailing: bool,
+) -> Result<Vec<NamedSegment>, FormatError> {
     let mut ranges = Vec::new();
     let mut segment_start = start;
-    for token in tokens
-        .iter()
-        .filter(|token| token.start() >= start && token.end() <= end)
-    {
-        if token.kind() == Kind::Comma {
-            ranges.push(Span::new(segment_start, token.start()));
-            segment_start = token.end();
+    for token in tokens_in_span(tokens, Span::new(start, end)) {
+        if token.kind() != Kind::Comma {
+            continue;
         }
+        let mut segment_end = token.start();
+        let mut next_start = token.end();
+        if preserve_trailing {
+            for comment in comments_in_span(comments, Span::new(token.end(), end)) {
+                let gap = source_slice(source, Span::new(next_start, comment.span.start))?;
+                if !gap.chars().all(|character| {
+                    character.is_whitespace()
+                        && !matches!(character, '\n' | '\r' | '\u{2028}' | '\u{2029}')
+                }) {
+                    break;
+                }
+                segment_end = comment.span.end;
+                next_start = comment.span.end;
+            }
+        }
+        ranges.push(NamedSegment {
+            span: Span::new(segment_start, segment_end),
+            omitted_comma: (segment_end > token.start()).then(|| token.span()),
+        });
+        segment_start = next_start;
     }
-    ranges.push(Span::new(segment_start, end));
-    ranges
+    ranges.push(NamedSegment {
+        span: Span::new(segment_start, end),
+        omitted_comma: None,
+    });
+    Ok(ranges)
 }
 
 fn range_has_token(range: Span, tokens: &[Token]) -> bool {
@@ -3972,13 +4161,21 @@ struct LexicalItem<'a> {
 struct CanonicalText {
     text: String,
     ends_line_comment: bool,
+    leading_lines: Option<usize>,
+    trailing_lines: Option<usize>,
+    verbatim_comments: Vec<Span>,
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "import canonicalization shares source comment policy and punctuation edits"
+)]
 fn canonicalize_range(
     range: Span,
     source: &str,
     tokens: &[Token],
     comments: &[Comment],
+    comment_spacing: &CommentSpacing,
     newline: &str,
     comma_after_last_token: bool,
     omitted_token: Option<Span>,
@@ -4014,17 +4211,47 @@ fn canonicalize_range(
         .iter()
         .rposition(|item| matches!(item.kind, LexicalKind::Token(_)));
     let mut output = String::new();
+    let mut verbatim_comments = Vec::new();
     for (index, item) in items.iter().enumerate() {
         if let Some(previous) = index.checked_sub(1).and_then(|index| items.get(index)) {
-            output.push_str(item_separator(previous, item, newline));
+            if let Some(lines) = comment_spacing
+                .before(item.span.start)
+                .filter(|lines| *lines > 0)
+            {
+                output.push_str(&newline.repeat(lines));
+            } else {
+                let preserve_inline_comment = comment_spacing.enabled()
+                    && matches!(previous.kind, LexicalKind::BlockComment)
+                    && !contains_line_break(source_slice(
+                        source,
+                        Span::new(previous.span.end, item.span.start),
+                    )?);
+                output.push_str(item_separator(
+                    previous,
+                    item,
+                    newline,
+                    preserve_inline_comment,
+                ));
+            }
         }
+        let start = u32::try_from(output.len()).unwrap();
         output.push_str(item.text);
+        if matches!(item.kind, LexicalKind::BlockComment) && comment_spacing.enabled() {
+            verbatim_comments.push(Span::new(start, u32::try_from(output.len()).unwrap()));
+        }
         if comma_after_last_token && last_token == Some(index) {
             output.push(',');
         }
     }
 
     Ok(CanonicalText {
+        leading_lines: items
+            .first()
+            .and_then(|item| comment_spacing.before(item.span.start)),
+        trailing_lines: items
+            .last()
+            .and_then(|item| comment_spacing.after(item.span.end)),
+        verbatim_comments,
         ends_line_comment: items
             .last()
             .is_some_and(|item| matches!(item.kind, LexicalKind::LineComment)),
@@ -4036,10 +4263,12 @@ fn item_separator<'a>(
     previous: &LexicalItem<'_>,
     current: &LexicalItem<'_>,
     newline: &'a str,
+    preserve_inline_comment: bool,
 ) -> &'a str {
     if matches!(previous.kind, LexicalKind::LineComment)
         || (matches!(previous.kind, LexicalKind::BlockComment)
-            && contains_line_break(previous.text))
+            && contains_line_break(previous.text)
+            && !preserve_inline_comment)
     {
         return newline;
     }
@@ -4066,12 +4295,47 @@ fn push_separator_after(output: &mut String, line_comment: bool, newline: &str) 
     }
 }
 
-fn indent_lines(text: &str, indent: &str) -> String {
+fn push_import_separator(
+    output: &mut String,
+    lines: Option<usize>,
+    line_comment: bool,
+    newline: &str,
+) {
+    if let Some(lines) = lines.filter(|lines| *lines > 0) {
+        output.push_str(&newline.repeat(lines));
+    } else {
+        push_separator_after(output, line_comment, newline);
+    }
+}
+
+fn indent_lines(
+    text: &str,
+    indent: &str,
+    verbatim_comments: &[Span],
+    preserve_comment_layout: bool,
+) -> String {
     let mut output = String::with_capacity(text.len() + indent.len());
     output.push_str(indent);
-    for character in text.chars() {
+    let mut comment_index = 0;
+    let mut characters = text.char_indices().peekable();
+    while let Some((offset, character)) = characters.next() {
         output.push(character);
-        if character == '\n' {
+        while verbatim_comments
+            .get(comment_index)
+            .is_some_and(|span| span.end as usize <= offset)
+        {
+            comment_index += 1;
+        }
+        let verbatim = verbatim_comments
+            .get(comment_index)
+            .is_some_and(|span| (span.start as usize) <= offset && offset < span.end as usize);
+        if character == '\n'
+            && !verbatim
+            && (!preserve_comment_layout
+                || characters
+                    .peek()
+                    .is_some_and(|(_, next)| !matches!(next, '\n' | '\r')))
+        {
             output.push_str(indent);
         }
     }
@@ -4195,6 +4459,7 @@ mod tests {
 
     fn format_with_semicolons_off(source: &str, mut config: FormatConfig) -> String {
         config.rules.semicolons = semicolons_off();
+        config.rules.comment_spacing = false;
         format_file_with("sample.ts", source, config)
     }
 
@@ -4216,6 +4481,7 @@ mod tests {
     fn object_spacing_config(enabled: bool) -> FormatConfig {
         FormatConfig {
             rules: RulesConfig {
+                comment_spacing: false,
                 import_layout: false,
                 interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                 object_property_spacing: enabled,
@@ -4553,6 +4819,7 @@ mod tests {
             source,
             FormatConfig {
                 rules: RulesConfig {
+                    comment_spacing: false,
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     object_property_spacing: false,
@@ -4599,6 +4866,7 @@ mod tests {
             source,
             FormatConfig {
                 rules: RulesConfig {
+                    comment_spacing: false,
                     import_layout,
                     statement_spacing: StatementSpacingConfig {
                         control_flow_statements: StatementSpacingMode::Off,
@@ -4621,6 +4889,7 @@ mod tests {
             source,
             FormatConfig {
                 rules: RulesConfig {
+                    comment_spacing: false,
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     object_property_spacing: false,
@@ -4649,6 +4918,7 @@ mod tests {
             source,
             FormatConfig {
                 rules: RulesConfig {
+                    comment_spacing: false,
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     object_property_spacing: false,
@@ -4693,6 +4963,7 @@ mod tests {
             source,
             FormatConfig {
                 rules: RulesConfig {
+                    comment_spacing: false,
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     object_property_spacing: false,
@@ -4719,6 +4990,7 @@ mod tests {
             source,
             FormatConfig {
                 rules: RulesConfig {
+                    comment_spacing: false,
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     object_property_spacing: false,
@@ -4750,6 +5022,7 @@ mod tests {
             source,
             FormatConfig {
                 rules: RulesConfig {
+                    comment_spacing: false,
                     import_layout: false,
                     interface_layout,
                     object_property_spacing: false,
@@ -4822,6 +5095,7 @@ mod tests {
                 FormatConfig {
                     line_width,
                     rules: RulesConfig {
+                        comment_spacing: false,
                         import_layout: false,
                         interface_layout: InterfaceLayoutRule::Threshold(0),
                         object_property_spacing: false,
@@ -5090,6 +5364,7 @@ mod tests {
         let source = "\u{feff}interface Shape { /** value */ value: [\r\n    string,\r\n  ]; // run\r\nrun(): void; }";
         let raw_config = FormatConfig {
             rules: RulesConfig {
+                comment_spacing: false,
                 import_layout: false,
                 interface_layout: InterfaceLayoutRule::Threshold(0),
                 object_property_spacing: false,
@@ -5628,6 +5903,7 @@ mod tests {
         ] {
             let config = FormatConfig {
                 rules: RulesConfig {
+                    comment_spacing: false,
                     trailing_commas: mode,
                     ..RulesConfig::default()
                 },
@@ -5799,6 +6075,7 @@ mod tests {
             FormatConfig {
                 line_width: 20,
                 rules: RulesConfig {
+                    comment_spacing: false,
                     trailing_commas: TrailingCommaMode::Off,
                     ..RulesConfig::default()
                 },
@@ -5812,6 +6089,7 @@ mod tests {
 
         let config = resolve_config(FormatConfig {
             rules: RulesConfig {
+                comment_spacing: false,
                 import_layout: false,
                 interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                 object_property_spacing: false,
@@ -5848,6 +6126,7 @@ mod tests {
             FormatConfig {
                 line_width: 20,
                 rules: RulesConfig {
+                    comment_spacing: false,
                     trailing_commas: TrailingCommaMode::Always,
                     ..RulesConfig::default()
                 },
@@ -5863,6 +6142,7 @@ mod tests {
             "import {\n  one,\n  two,\n} from 'pkg';",
             FormatConfig {
                 rules: RulesConfig {
+                    comment_spacing: false,
                     trailing_commas: TrailingCommaMode::Always,
                     ..RulesConfig::default()
                 },
@@ -5971,6 +6251,7 @@ mod tests {
         let config = resolve_config(FormatConfig {
             line_width: u32::try_from(expected.chars().count()).unwrap(),
             rules: RulesConfig {
+                comment_spacing: false,
                 import_layout: true,
                 interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                 object_property_spacing: false,
@@ -6039,6 +6320,7 @@ mod tests {
         let config = || FormatConfig {
             line_width: 120,
             rules: RulesConfig {
+                comment_spacing: false,
                 semicolons: SemicolonConfig {
                     statements: SemicolonMode::Always,
                     class_members: SemicolonMode::Off,
@@ -6123,6 +6405,7 @@ mod tests {
             FormatConfig {
                 line_width: 20,
                 rules: RulesConfig {
+                    comment_spacing: false,
                     import_layout: false,
                     statement_spacing: StatementSpacingConfig {
                         control_flow_statements: StatementSpacingMode::Off,
@@ -6148,6 +6431,7 @@ mod tests {
             FormatConfig {
                 line_width: 20,
                 rules: RulesConfig {
+                    comment_spacing: false,
                     import_layout: true,
                     statement_spacing: StatementSpacingConfig {
                         control_flow_statements: StatementSpacingMode::Off,
@@ -6246,6 +6530,7 @@ mod tests {
         let source = "import{a,b}from'x';interface Shape { value: string; }type Value={raw:true};const value={raw:true};function f(){work();return value;}";
         let config = resolve_config(FormatConfig {
             rules: RulesConfig {
+                comment_spacing: false,
                 import_layout: false,
                 interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                 object_property_spacing: false,
@@ -6281,6 +6566,7 @@ mod tests {
         let output = format(source);
         let config = resolve_config(FormatConfig {
             rules: RulesConfig {
+                comment_spacing: false,
                 semicolons: semicolons_off(),
                 ..RulesConfig::default()
             },
@@ -6299,6 +6585,7 @@ mod tests {
         let config = resolve_config(FormatConfig {
             verify_ast: false,
             rules: RulesConfig {
+                comment_spacing: false,
                 semicolons: semicolons_off(),
                 trailing_commas: TrailingCommaMode::Never,
                 ..RulesConfig::default()
@@ -6325,6 +6612,7 @@ mod tests {
         let config = resolve_config(FormatConfig {
             verify_ast: false,
             rules: RulesConfig {
+                comment_spacing: false,
                 semicolons: semicolons_off(),
                 trailing_commas: TrailingCommaMode::Always,
                 ..RulesConfig::default()
@@ -6440,6 +6728,7 @@ mod tests {
         let config = resolve_config(FormatConfig {
             verify_ast: false,
             rules: RulesConfig {
+                comment_spacing: false,
                 statement_spacing: StatementSpacingConfig {
                     control_flow_statements: StatementSpacingMode::Off,
                     imports: StatementSpacingMode::Off,
@@ -6701,6 +6990,7 @@ mod tests {
             FormatConfig {
                 line_width: 1,
                 rules: RulesConfig {
+                    comment_spacing: false,
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     object_property_spacing: false,
@@ -6784,6 +7074,7 @@ mod tests {
                     definition,
                     FormatConfig {
                         rules: RulesConfig {
+                            comment_spacing: false,
                             import_layout: false,
                             interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                             object_property_spacing: false,
@@ -7555,6 +7846,7 @@ mod tests {
                 cascading,
                 FormatConfig {
                     rules: RulesConfig {
+                        comment_spacing: false,
                         import_layout: false,
                         interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                         object_property_spacing: false,
@@ -7603,6 +7895,7 @@ mod tests {
                 source,
                 FormatConfig {
                     rules: RulesConfig {
+                        comment_spacing: false,
                         import_layout: false,
                         interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                         object_property_spacing: false,
@@ -7648,6 +7941,7 @@ mod tests {
                 source,
                 FormatConfig {
                     rules: RulesConfig {
+                        comment_spacing: false,
                         import_layout: false,
                         interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                         object_property_spacing: false,
@@ -7818,6 +8112,7 @@ mod tests {
             source,
             FormatConfig {
                 rules: RulesConfig {
+                    comment_spacing: false,
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     object_property_spacing: false,
@@ -7869,6 +8164,7 @@ mod tests {
                 source,
                 FormatConfig {
                     rules: RulesConfig {
+                        comment_spacing: false,
                         import_layout: false,
                         interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                         object_property_spacing: false,
@@ -8107,6 +8403,7 @@ mod tests {
             source,
             FormatConfig {
                 rules: RulesConfig {
+                    comment_spacing: false,
                     import_layout: false,
                     statement_spacing: StatementSpacingConfig {
                         control_flow_statements: StatementSpacingMode::Off,
@@ -8131,6 +8428,7 @@ mod tests {
             source,
             FormatConfig {
                 rules: RulesConfig {
+                    comment_spacing: false,
                     import_layout: true,
                     statement_spacing: StatementSpacingConfig {
                         control_flow_statements: StatementSpacingMode::Off,
@@ -8334,6 +8632,7 @@ mod tests {
                     definition,
                     FormatConfig {
                         rules: RulesConfig {
+                            comment_spacing: false,
                             semicolons: semicolons_off(),
                             ..RulesConfig::default()
                         },
@@ -8354,6 +8653,7 @@ mod tests {
                 declaration,
                 FormatConfig {
                     rules: RulesConfig {
+                        comment_spacing: false,
                         semicolons: semicolons_off(),
                         ..RulesConfig::default()
                     },
@@ -8370,6 +8670,7 @@ mod tests {
             &source,
             FormatConfig {
                 rules: RulesConfig {
+                    comment_spacing: false,
                     semicolons: semicolons_off(),
                     ..RulesConfig::default()
                 },
@@ -8383,6 +8684,7 @@ mod tests {
                 &output,
                 FormatConfig {
                     rules: RulesConfig {
+                        comment_spacing: false,
                         semicolons: semicolons_off(),
                         ..RulesConfig::default()
                     },

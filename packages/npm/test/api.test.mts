@@ -8,6 +8,30 @@ import test from 'node:test'
 import { format, type FormatConfig } from '../dist/index.js'
 import type { RulesConfig } from '../dist/types.js'
 
+test('preserves comment groups through the native API independently of other rules', async () => {
+  const rules: RulesConfig = {
+    commentSpacing: true,
+    importLayout: false,
+    interfaceLayout: 'off',
+    objectPropertySpacing: false,
+    statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
+    semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
+    trailingCommas: 'off'
+  }
+  for (const newline of ['\n', '\r\n']) {
+    const source = 'first()\n// second\nsecond()\n\n\n// detached\n\n\nthird()'.replaceAll('\n', newline)
+    const expected = 'first()\n\n// second\nsecond()\n\n\n// detached\n\n\nthird()'.replaceAll('\n', newline)
+    const output = await format('sample.ts', source, { rules })
+    assert.equal(output, expected)
+    const repeated = await format('sample.ts', output, { rules })
+    assert.equal(repeated, output)
+    const disabled = await format('sample.ts', source, { rules: { ...rules, commentSpacing: false } })
+    assert.equal(disabled, source)
+    const defaultOutput = await format('sample.ts', source)
+    assert.equal(defaultOutput, expected)
+  }
+})
+
 test('formats through the asynchronous native API', async () => {
   const source = "import{one,type Two}from'pkg';const value={items:[1,2]};"
   const output = await format('sample.ts', source)
@@ -16,6 +40,7 @@ test('formats through the asynchronous native API', async () => {
 
   const variablesOnly = await format('sample.ts', source, {
     rules: {
+      commentSpacing: false,
       importLayout: false,
       objectPropertySpacing: false,
       statementSpacing: { imports: 'off' }
@@ -35,6 +60,7 @@ test('formats through the asynchronous native API', async () => {
 
   const disabled = await format('sample.ts', source, {
     rules: {
+      commentSpacing: false,
       importLayout: false,
       objectPropertySpacing: false,
       interfaceLayout: 'off',
@@ -64,6 +90,7 @@ test('formats object property spacing through the native API', async () => {
   assert.equal(
     await format('sample.ts', source, {
       rules: {
+        commentSpacing: false,
         importLayout: false,
         interfaceLayout: 'off',
         objectPropertySpacing: false,
@@ -157,6 +184,7 @@ test('formats interface layouts through the native API', async () => {
   )
 
   const isolatedRules: RulesConfig = {
+    commentSpacing: false,
     importLayout: false,
     objectPropertySpacing: false,
     statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
@@ -211,6 +239,7 @@ test('formats type alias spacing through the native API', async () => {
   const source = 'type A=1;type B={\n value:string\n};\n\n\nrun();'
   const output = await format('sample.ts', source, {
     rules: {
+      commentSpacing: false,
       importLayout: false,
       objectPropertySpacing: false,
       interfaceLayout: 'off',
@@ -226,6 +255,7 @@ test('formats return statement spacing through the native API', async () => {
   const source = 'function f(){work();return value;}'
   const output = await format('sample.ts', source, {
     rules: {
+      commentSpacing: false,
       importLayout: false,
       objectPropertySpacing: false,
       interfaceLayout: 'off',
@@ -241,6 +271,7 @@ test('formats control-flow statement spacing through the native API', async () =
   const source = 'function f(){prepare();if(ok)work();finish();}'
   const output = await format('sample.ts', source, {
     rules: {
+      commentSpacing: false,
       importLayout: false,
       objectPropertySpacing: false,
       interfaceLayout: 'off',
@@ -257,6 +288,7 @@ test('formats granular semicolon groups through the native API', async () => {
     'const runtime=1;\nclass Example {\n  field=1;\n}\ninterface Shape {\n  value: string;\n}'
   const output = await format('sample.ts', source, {
     rules: {
+      commentSpacing: false,
       importLayout: false,
       objectPropertySpacing: false,
       statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
@@ -279,6 +311,7 @@ test('formats type member semicolons by container layout through the native API'
   const source = 'type Inline = { value: string };\ntype Block = {\n  value: string;\n};'
   const output = await format('sample.ts', source, {
     rules: {
+      commentSpacing: false,
       importLayout: false,
       interfaceLayout: 'off',
       objectPropertySpacing: false,
@@ -298,6 +331,7 @@ test('formats trailing commas through the native API', async () => {
   const withoutCommas = 'const value = {\n  items: [\n    1\n  ]\n};'
   const withCommas = 'const value = {\n  items: [\n    1,\n  ],\n};'
   const disabledRules: RulesConfig = {
+    commentSpacing: false,
     importLayout: false,
     objectPropertySpacing: false,
     statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
@@ -334,6 +368,8 @@ test('maps native failures to stable error codes', async () => {
     (error) => isConfigError(error, 'quoteStyle')
   )
   const invalidRules: Array<readonly [unknown, string]> = [
+    [{ commentSpacing: 'off' }, 'rules.commentSpacing'],
+    [{ commentSpacing: 1 }, 'rules.commentSpacing'],
     [{ imports: true }, 'rules.imports'],
     [{ variables: true }, 'rules.variables'],
     [{ interfaceLayout: -1 }, 'rules.interfaceLayout'],
