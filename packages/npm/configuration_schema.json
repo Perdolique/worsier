@@ -25,6 +25,7 @@
     "rules": {
       "$ref": "#/$defs/RulesConfig",
       "default": {
+        "commentSpacing": true,
         "importLayout": true,
         "interfaceLayout": 0,
         "objectPropertySpacing": true,
@@ -80,6 +81,10 @@
     "RulesConfig": {
       "type": "object",
       "properties": {
+        "commentSpacing": {
+          "type": "boolean",
+          "default": true
+        },
         "importLayout": {
           "type": "boolean",
           "default": true

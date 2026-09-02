@@ -697,7 +697,7 @@ mod tests {
         let result = update_config_source("{}", Path::new("worsier.jsonc")).unwrap();
         assert_eq!(
             result.output,
-            "{\n  \"$schema\": \"./node_modules/worsier/configuration_schema.json\",\n  \"lineWidth\": 120,\n  \"verifyAst\": true,\n  \"rules\": {\n    \"importLayout\": true,\n    \"interfaceLayout\": 0,\n    \"objectPropertySpacing\": true,\n    \"statementSpacing\": {\n      \"controlFlowStatements\": \"separate\",\n      \"imports\": \"separate\",\n      \"multilineCallStatements\": \"separate\",\n      \"returnStatements\": \"separate\",\n      \"singleLineCallStatements\": {\n        \"betweenCalls\": \"compact\",\n        \"withOtherStatements\": \"separate\"\n      },\n      \"typeAliases\": \"separate\",\n      \"variableDeclarations\": \"separate\"\n    },\n    \"semicolons\": {\n      \"statements\": \"asNeeded\",\n      \"classMembers\": \"asNeeded\",\n      \"typeMembers\": {\n        \"singleLine\": \"asNeeded\",\n        \"multiline\": \"always\"\n      }\n    },\n    \"trailingCommas\": \"never\"\n  },\n  \"ignorePatterns\": []\n}"
+            "{\n  \"$schema\": \"./node_modules/worsier/configuration_schema.json\",\n  \"lineWidth\": 120,\n  \"verifyAst\": true,\n  \"rules\": {\n    \"commentSpacing\": true,\n    \"importLayout\": true,\n    \"interfaceLayout\": 0,\n    \"objectPropertySpacing\": true,\n    \"statementSpacing\": {\n      \"controlFlowStatements\": \"separate\",\n      \"imports\": \"separate\",\n      \"multilineCallStatements\": \"separate\",\n      \"returnStatements\": \"separate\",\n      \"singleLineCallStatements\": {\n        \"betweenCalls\": \"compact\",\n        \"withOtherStatements\": \"separate\"\n      },\n      \"typeAliases\": \"separate\",\n      \"variableDeclarations\": \"separate\"\n    },\n    \"semicolons\": {\n      \"statements\": \"asNeeded\",\n      \"classMembers\": \"asNeeded\",\n      \"typeMembers\": {\n        \"singleLine\": \"asNeeded\",\n        \"multiline\": \"always\"\n      }\n    },\n    \"trailingCommas\": \"never\"\n  },\n  \"ignorePatterns\": []\n}"
         );
         assert_eq!(result.changes.len(), 5);
     }
@@ -706,6 +706,14 @@ mod tests {
     fn preserves_scalar_type_member_semicolons_when_updating() {
         let value = parsed_output(r#"{"rules":{"semicolons":{"typeMembers":"always"}}}"#);
         assert_eq!(value["rules"]["semicolons"]["typeMembers"], "always");
+    }
+
+    #[test]
+    fn adds_comment_spacing_without_overwriting_false() {
+        let default = parsed_output("{}");
+        assert_eq!(default["rules"]["commentSpacing"], true);
+        let disabled = parsed_output(r#"{"rules":{"commentSpacing":false}}"#);
+        assert_eq!(disabled["rules"]["commentSpacing"], false);
     }
 
     #[test]

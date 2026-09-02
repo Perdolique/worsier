@@ -3,6 +3,7 @@
   "lineWidth": 120,
   "verifyAst": true,
   "rules": {
+    "commentSpacing": true,
     "importLayout": true,
     "interfaceLayout": 0,
     "objectPropertySpacing": true,

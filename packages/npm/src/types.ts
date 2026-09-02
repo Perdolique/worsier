@@ -12,6 +12,7 @@ export interface FormatConfig {
   verifyAst?: boolean
 }
 export interface RulesConfig {
+  commentSpacing?: boolean
   importLayout?: boolean
   interfaceLayout?: number | InterfaceLayoutMode
   objectPropertySpacing?: boolean

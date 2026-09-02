@@ -189,7 +189,11 @@ where
     S: Into<OsString> + Clone,
 {
     match Args::try_parse_from(args) {
-        Ok(args) => match run_args(&args) {
+        Ok(args) => match run_args(&args).and_then(|exit_code| {
+            // The NAPI host does not run Rust's stdout cleanup on process exit.
+            io::stdout().flush().context("failed to flush stdout")?;
+            Ok(exit_code)
+        }) {
             Ok(exit_code) => exit_code,
             Err(error) => {
                 eprintln!("error: {error:#}");
@@ -1021,7 +1025,7 @@ mod tests {
         assert!(load_config_with_override(&path, false).is_ok());
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
-            "{\n  \"$schema\": \"./node_modules/worsier/configuration_schema.json\",\n  \"lineWidth\": 120,\n  \"verifyAst\": true,\n  \"rules\": {\n    \"importLayout\": true,\n    \"interfaceLayout\": 0,\n    \"objectPropertySpacing\": true,\n    \"statementSpacing\": {\n      \"controlFlowStatements\": \"separate\",\n      \"imports\": \"separate\",\n      \"multilineCallStatements\": \"separate\",\n      \"returnStatements\": \"separate\",\n      \"singleLineCallStatements\": {\n        \"betweenCalls\": \"compact\",\n        \"withOtherStatements\": \"separate\"\n      },\n      \"typeAliases\": \"separate\",\n      \"variableDeclarations\": \"separate\"\n    },\n    \"semicolons\": {\n      \"statements\": \"asNeeded\",\n      \"classMembers\": \"asNeeded\",\n      \"typeMembers\": {\n        \"singleLine\": \"asNeeded\",\n        \"multiline\": \"always\"\n      }\n    },\n    \"trailingCommas\": \"never\"\n  },\n  \"ignorePatterns\": []\n}\n"
+            "{\n  \"$schema\": \"./node_modules/worsier/configuration_schema.json\",\n  \"lineWidth\": 120,\n  \"verifyAst\": true,\n  \"rules\": {\n    \"commentSpacing\": true,\n    \"importLayout\": true,\n    \"interfaceLayout\": 0,\n    \"objectPropertySpacing\": true,\n    \"statementSpacing\": {\n      \"controlFlowStatements\": \"separate\",\n      \"imports\": \"separate\",\n      \"multilineCallStatements\": \"separate\",\n      \"returnStatements\": \"separate\",\n      \"singleLineCallStatements\": {\n        \"betweenCalls\": \"compact\",\n        \"withOtherStatements\": \"separate\"\n      },\n      \"typeAliases\": \"separate\",\n      \"variableDeclarations\": \"separate\"\n    },\n    \"semicolons\": {\n      \"statements\": \"asNeeded\",\n      \"classMembers\": \"asNeeded\",\n      \"typeMembers\": {\n        \"singleLine\": \"asNeeded\",\n        \"multiline\": \"always\"\n      }\n    },\n    \"trailingCommas\": \"never\"\n  },\n  \"ignorePatterns\": []\n}\n"
         );
         assert!(init_config(directory.path()).is_err());
     }
