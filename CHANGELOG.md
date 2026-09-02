@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.4.0](https://github.com/Perdolique/worsier/compare/v3.3.0...v3.4.0) (2026-09-02)
+
+
+### Features
+
+* **formatter:** add global comment spacing ([e80f0ca](https://github.com/Perdolique/worsier/commit/e80f0ca43269349e0ea46651c435294715b53b03))
+
 ## [3.3.0](https://github.com/Perdolique/worsier/compare/v3.2.0...v3.3.0) (2026-09-02)
 
 
