@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.3.0](https://github.com/Perdolique/worsier/compare/v3.2.0...v3.3.0) (2026-09-02)
+
+
+### Features
+
+* **formatter:** add single-line call spacing ([2b1b719](https://github.com/Perdolique/worsier/commit/2b1b7196b8b4fc0caf0843d055acf1732f11e478))
+
 ## [3.2.0](https://github.com/Perdolique/worsier/compare/v3.1.0...v3.2.0) (2026-08-30)
 
 
