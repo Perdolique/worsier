@@ -38,7 +38,7 @@ test('formats through the asynchronous native API', async () => {
       importLayout: false,
       objectPropertySpacing: false,
       interfaceLayout: 'off',
-      statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
+      statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
       semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
       trailingCommas: 'off'
     }
@@ -67,7 +67,7 @@ test('formats object property spacing through the native API', async () => {
         importLayout: false,
         interfaceLayout: 'off',
         objectPropertySpacing: false,
-        statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
+        statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
         semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
         trailingCommas: 'off'
       }
@@ -84,13 +84,52 @@ test('formats multiline call statement spacing through the native API', async ()
   assert.equal(await format('sample.ts', source), separated)
   assert.equal(
     await format('sample.ts', separated, {
-      rules: { statementSpacing: { multilineCallStatements: 'compact' } }
+      rules: { statementSpacing: { multilineCallStatements: 'compact', singleLineCallStatements: 'off' } }
     }),
     compact
   )
   assert.equal(
     await format('sample.ts', source, {
-      rules: { statementSpacing: { multilineCallStatements: 'off' } }
+      rules: { statementSpacing: { multilineCallStatements: 'off', singleLineCallStatements: 'off' } }
+    }),
+    source
+  )
+})
+
+test('formats single-line call statement spacing through the native API', async () => {
+  const source = "function complete() {\n  activePointerId = null\n  emit('complete')\n\n\n  holdTimer.stop()\n}"
+  const grouped = "function complete() {\n  activePointerId = null\n\n  emit('complete')\n  holdTimer.stop()\n}"
+
+  assert.equal(await format('sample.ts', source), grouped)
+  assert.equal(
+    await format('sample.ts', source, {
+      rules: { statementSpacing: { singleLineCallStatements: { betweenCalls: 'off' } } }
+    }),
+    "function complete() {\n  activePointerId = null\n\n  emit('complete')\n\n\n  holdTimer.stop()\n}"
+  )
+  const independentModes = await format('sample.ts', source, {
+    rules: {
+      statementSpacing: {
+        singleLineCallStatements: {
+          betweenCalls: 'separate',
+          withOtherStatements: 'compact'
+        }
+      }
+    }
+  })
+  assert.equal(
+    independentModes,
+    "function complete() {\n  activePointerId = null\n  emit('complete')\n\n  holdTimer.stop()\n}"
+  )
+  assert.equal(
+    await format('sample.ts', source, {
+      rules: { statementSpacing: { singleLineCallStatements: 'separate' } }
+    }),
+    "function complete() {\n  activePointerId = null\n\n  emit('complete')\n\n  holdTimer.stop()\n}"
+  )
+  assert.equal(
+    await format('sample.ts', source, {
+      rules: { statementSpacing: { singleLineCallStatements: 'off' } }
     }),
     source
   )
@@ -120,7 +159,7 @@ test('formats interface layouts through the native API', async () => {
   const isolatedRules: RulesConfig = {
     importLayout: false,
     objectPropertySpacing: false,
-    statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
+    statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
     semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
     trailingCommas: 'off'
   }
@@ -175,7 +214,7 @@ test('formats type alias spacing through the native API', async () => {
       importLayout: false,
       objectPropertySpacing: false,
       interfaceLayout: 'off',
-      statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', returnStatements: 'off', typeAliases: 'compact', variableDeclarations: 'off' },
+      statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'compact', variableDeclarations: 'off' },
       semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
       trailingCommas: 'off'
     }
@@ -190,7 +229,7 @@ test('formats return statement spacing through the native API', async () => {
       importLayout: false,
       objectPropertySpacing: false,
       interfaceLayout: 'off',
-      statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', returnStatements: 'separate', typeAliases: 'off', variableDeclarations: 'off' },
+      statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'separate', typeAliases: 'off', variableDeclarations: 'off' },
       semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
       trailingCommas: 'off'
     }
@@ -205,7 +244,7 @@ test('formats control-flow statement spacing through the native API', async () =
       importLayout: false,
       objectPropertySpacing: false,
       interfaceLayout: 'off',
-      statementSpacing: { controlFlowStatements: 'separate', imports: 'off', multilineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
+      statementSpacing: { controlFlowStatements: 'separate', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
       semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
       trailingCommas: 'off'
     }
@@ -220,7 +259,7 @@ test('formats granular semicolon groups through the native API', async () => {
     rules: {
       importLayout: false,
       objectPropertySpacing: false,
-      statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
+      statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
       semicolons: { statements: 'off', classMembers: 'asNeeded', typeMembers: 'always' },
       trailingCommas: 'off'
     }
@@ -243,7 +282,7 @@ test('formats type member semicolons by container layout through the native API'
       importLayout: false,
       interfaceLayout: 'off',
       objectPropertySpacing: false,
-      statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
+      statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
       semicolons: {
         statements: 'off',
         classMembers: 'off',
@@ -261,7 +300,7 @@ test('formats trailing commas through the native API', async () => {
   const disabledRules: RulesConfig = {
     importLayout: false,
     objectPropertySpacing: false,
-    statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
+    statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
     semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' }
   }
 
@@ -310,6 +349,10 @@ test('maps native failures to stable error codes', async () => {
     [{ statementSpacing: { controlFlowStatements: 'preserve' } }, 'rules.statementSpacing.controlFlowStatements'],
     [{ statementSpacing: { imports: 'preserve' } }, 'rules.statementSpacing.imports'],
     [{ statementSpacing: { multilineCallStatements: 'preserve' } }, 'rules.statementSpacing.multilineCallStatements'],
+    [{ statementSpacing: { singleLineCallStatements: 'preserve' } }, 'rules.statementSpacing.singleLineCallStatements'],
+    [{ statementSpacing: { singleLineCallStatements: { betweenCalls: 'preserve' } } }, 'rules.statementSpacing.singleLineCallStatements.betweenCalls'],
+    [{ statementSpacing: { singleLineCallStatements: { withOtherStatements: 'preserve' } } }, 'rules.statementSpacing.singleLineCallStatements.withOtherStatements'],
+    [{ statementSpacing: { singleLineCallStatements: { extra: 'off' } } }, 'rules.statementSpacing.singleLineCallStatements.extra'],
     [{ statementSpacing: { returnStatements: 'preserve' } }, 'rules.statementSpacing.returnStatements'],
     [{ statementSpacing: { typeAliases: 'preserve' } }, 'rules.statementSpacing.typeAliases'],
     [{ statementSpacing: { extra: 'off' } }, 'rules.statementSpacing.extra']

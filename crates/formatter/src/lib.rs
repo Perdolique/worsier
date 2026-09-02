@@ -7,7 +7,8 @@ mod vue;
 
 pub use config::{
     FormatConfig, InterfaceLayoutMode, InterfaceLayoutRule, ResolvedConfig, RulesConfig,
-    SemicolonConfig, SemicolonMode, StatementSpacingConfig, StatementSpacingMode,
+    SemicolonConfig, SemicolonMode, SingleLineCallStatementSpacingConfig,
+    SingleLineCallStatementSpacingRule, StatementSpacingConfig, StatementSpacingMode,
     TrailingCommaMode, TypeMemberSemicolonConfig, TypeMemberSemicolonRule, resolve_config,
 };
 pub use document::{format_text, is_supported_path};
