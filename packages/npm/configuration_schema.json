@@ -41,6 +41,10 @@
           "imports": "separate",
           "multilineCallStatements": "separate",
           "returnStatements": "separate",
+          "singleLineCallStatements": {
+            "betweenCalls": "compact",
+            "withOtherStatements": "separate"
+          },
           "typeAliases": "separate",
           "variableDeclarations": "separate"
         },
@@ -106,6 +110,10 @@
             "imports": "separate",
             "multilineCallStatements": "separate",
             "returnStatements": "separate",
+            "singleLineCallStatements": {
+              "betweenCalls": "compact",
+              "withOtherStatements": "separate"
+            },
             "typeAliases": "separate",
             "variableDeclarations": "separate"
           }
@@ -146,6 +154,30 @@
         "off"
       ]
     },
+    "SingleLineCallStatementSpacingConfig": {
+      "type": "object",
+      "properties": {
+        "betweenCalls": {
+          "$ref": "#/$defs/StatementSpacingMode",
+          "default": "compact"
+        },
+        "withOtherStatements": {
+          "$ref": "#/$defs/StatementSpacingMode",
+          "default": "separate"
+        }
+      },
+      "additionalProperties": false
+    },
+    "SingleLineCallStatementSpacingRule": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/StatementSpacingMode"
+        },
+        {
+          "$ref": "#/$defs/SingleLineCallStatementSpacingConfig"
+        }
+      ]
+    },
     "StatementSpacingConfig": {
       "type": "object",
       "properties": {
@@ -164,6 +196,13 @@
         "returnStatements": {
           "$ref": "#/$defs/StatementSpacingMode",
           "default": "separate"
+        },
+        "singleLineCallStatements": {
+          "$ref": "#/$defs/SingleLineCallStatementSpacingRule",
+          "default": {
+            "betweenCalls": "compact",
+            "withOtherStatements": "separate"
+          }
         },
         "typeAliases": {
           "$ref": "#/$defs/StatementSpacingMode",

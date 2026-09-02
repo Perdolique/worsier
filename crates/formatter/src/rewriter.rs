@@ -35,8 +35,8 @@ use oxc_parser::{Kind, ParseOptions, Parser, Token, config::TokensParserConfig};
 use oxc_span::{ContentEq, FileExtension, GetSpan, SourceType, Span};
 
 use crate::{
-    FormatError, ResolvedConfig, SemicolonMode, StatementSpacingMode, TrailingCommaMode,
-    TypeMemberSemicolonConfig,
+    FormatError, ResolvedConfig, SemicolonMode, SingleLineCallStatementSpacingConfig,
+    StatementSpacingMode, TrailingCommaMode, TypeMemberSemicolonConfig,
 };
 
 const BOM: char = '\u{feff}';
@@ -54,6 +54,9 @@ thread_local! {
     static LINE_BREAK_QUERIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static LINE_START_INDEX_QUERIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static RAW_LINE_START_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static LIST_MULTILINE_INDEX_QUERIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static RAW_LIST_MULTILINE_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static STANDALONE_INDENT_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static PARENTHESIS_INDEX_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static PARENTHESIS_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static DEFERRED_IMPORT_BOUNDARY_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -71,6 +74,12 @@ fn span_lookup_comparison(result: bool) -> bool {
 fn indent_resolution() {
     #[cfg(test)]
     INDENT_RESOLUTIONS.set(INDENT_RESOLUTIONS.get() + 1);
+}
+
+#[inline]
+fn standalone_indent_scan() {
+    #[cfg(test)]
+    STANDALONE_INDENT_SCANS.set(STANDALONE_INDENT_SCANS.get() + 1);
 }
 
 #[inline]
@@ -153,6 +162,7 @@ pub(crate) fn format_script(
         && config.control_flow_statement_spacing() == StatementSpacingMode::Off
         && config.import_spacing() == StatementSpacingMode::Off
         && config.multiline_call_statement_spacing() == StatementSpacingMode::Off
+        && config.single_line_call_statement_spacing().is_off()
         && config.return_statement_spacing() == StatementSpacingMode::Off
         && config.type_alias_spacing() == StatementSpacingMode::Off
         && config.variable_declaration_spacing() == StatementSpacingMode::Off
@@ -179,6 +189,7 @@ pub(crate) fn format_script(
             control_flow_spacing: config.control_flow_statement_spacing(),
             import_spacing: config.import_spacing(),
             multiline_call_spacing: config.multiline_call_statement_spacing(),
+            single_line_call_spacing: config.single_line_call_statement_spacing(),
             return_spacing: config.return_statement_spacing(),
             type_alias_spacing: config.type_alias_spacing(),
             variable_spacing: if source_type.is_typescript_definition() {
@@ -1193,6 +1204,18 @@ impl LineBreakIndex {
     }
 }
 
+fn list_is_multiline(source: &str, span: Span, line_breaks: Option<&LineBreakIndex>) -> bool {
+    if let Some(line_breaks) = line_breaks {
+        #[cfg(test)]
+        LIST_MULTILINE_INDEX_QUERIES.set(LIST_MULTILINE_INDEX_QUERIES.get() + 1);
+        line_breaks.contains(span)
+    } else {
+        #[cfg(test)]
+        RAW_LIST_MULTILINE_SCANS.set(RAW_LIST_MULTILINE_SCANS.get() + 1);
+        source_slice(source, span).is_ok_and(contains_line_break)
+    }
+}
+
 struct ParenthesisIndex {
     open_by_close: HashMap<u32, Span>,
 }
@@ -1309,9 +1332,10 @@ enum StatementTarget {
         multiline: bool,
         spacing: StatementSpacingMode,
     },
-    MultilineCall {
+    Call {
         multiline: bool,
-        spacing: StatementSpacingMode,
+        multiline_spacing: StatementSpacingMode,
+        single_line_spacing: SingleLineCallStatementSpacingConfig,
     },
     Return {
         spacing: StatementSpacingMode,
@@ -1334,6 +1358,7 @@ struct RewriteRules {
     control_flow_spacing: StatementSpacingMode,
     import_spacing: StatementSpacingMode,
     multiline_call_spacing: StatementSpacingMode,
+    single_line_call_spacing: SingleLineCallStatementSpacingConfig,
     return_spacing: StatementSpacingMode,
     type_alias_spacing: StatementSpacingMode,
     variable_spacing: StatementSpacingMode,
@@ -1646,6 +1671,7 @@ fn collect_layout_edits(
     if rules.import_spacing == StatementSpacingMode::Off
         && rules.control_flow_spacing == StatementSpacingMode::Off
         && rules.multiline_call_spacing == StatementSpacingMode::Off
+        && rules.single_line_call_spacing.is_off()
         && rules.return_spacing == StatementSpacingMode::Off
         && rules.type_alias_spacing == StatementSpacingMode::Off
         && rules.variable_spacing == StatementSpacingMode::Off
@@ -1655,8 +1681,9 @@ fn collect_layout_edits(
         return Ok(Vec::new());
     }
 
-    let line_breaks = (rules.object_property_spacing
-        || rules.multiline_call_spacing != StatementSpacingMode::Off)
+    let call_spacing_enabled = rules.multiline_call_spacing != StatementSpacingMode::Off
+        || !rules.single_line_call_spacing.is_off();
+    let line_breaks = (rules.object_property_spacing || call_spacing_enabled)
         .then(|| LineBreakIndex::new(source));
     let mut collector = StatementCollector {
         source,
@@ -1668,6 +1695,7 @@ fn collect_layout_edits(
         control_flow_spacing: rules.control_flow_spacing,
         import_spacing: rules.import_spacing,
         multiline_call_spacing: rules.multiline_call_spacing,
+        single_line_call_spacing: rules.single_line_call_spacing,
         return_spacing: rules.return_spacing,
         type_alias_spacing: rules.type_alias_spacing,
         variable_spacing: rules.variable_spacing,
@@ -1733,6 +1761,7 @@ struct StatementCollector<'s> {
     control_flow_spacing: StatementSpacingMode,
     import_spacing: StatementSpacingMode,
     multiline_call_spacing: StatementSpacingMode,
+    single_line_call_spacing: SingleLineCallStatementSpacingConfig,
     return_spacing: StatementSpacingMode,
     type_alias_spacing: StatementSpacingMode,
     variable_spacing: StatementSpacingMode,
@@ -1770,8 +1799,7 @@ impl StatementCollector<'_> {
         if items.is_empty() {
             return None;
         }
-        let original_multiline =
-            source_slice(self.source, container.span()).is_ok_and(contains_line_break);
+        let original_multiline = list_is_multiline(self.source, container.span(), self.line_breaks);
         let list_index = self.lists.len();
         self.lists.push(StatementList {
             items,
@@ -1813,14 +1841,16 @@ impl StatementCollector<'_> {
             StatementTarget::ControlFlow {
                 spacing: self.control_flow_spacing,
             }
-        } else if self.multiline_call_spacing != StatementSpacingMode::Off
+        } else if (self.multiline_call_spacing != StatementSpacingMode::Off
+            || !self.single_line_call_spacing.is_off())
             && let Some(call_span) = direct_call_expression_span(statement)
         {
-            StatementTarget::MultilineCall {
+            StatementTarget::Call {
                 multiline: self
                     .line_breaks
                     .is_some_and(|line_breaks| line_breaks.contains(call_span)),
-                spacing: self.multiline_call_spacing,
+                multiline_spacing: self.multiline_call_spacing,
+                single_line_spacing: self.single_line_call_spacing,
             }
         } else if self.return_spacing != StatementSpacingMode::Off
             && matches!(statement, Statement::ReturnStatement(_))
@@ -2369,8 +2399,8 @@ fn mark_parent_item_multiline(
             list_index,
             item_index,
         } => match &mut lists[list_index].items[item_index].target {
-            StatementTarget::Import { multiline, .. }
-            | StatementTarget::MultilineCall { multiline, .. }
+            StatementTarget::Call { multiline, .. }
+            | StatementTarget::Import { multiline, .. }
             | StatementTarget::TypeAlias { multiline, .. }
             | StatementTarget::Variable { multiline, .. } => *multiline = true,
             StatementTarget::ControlFlow { .. }
@@ -2390,6 +2420,19 @@ fn initial_list_expansion_cause(list: &StatementList) -> Option<LayoutExpansionC
         return None;
     }
 
+    let contains_single_line_call_spacing = list.items.windows(2).any(|pair| {
+        let [previous, next] = pair else {
+            unreachable!("windows(2) always contains two statements")
+        };
+        single_line_call_spacing_mode(previous.target, next.target)
+            .into_iter()
+            .chain(single_line_call_spacing_mode(next.target, previous.target))
+            .any(|mode| mode != StatementSpacingMode::Off)
+    });
+    if contains_single_line_call_spacing {
+        return Some(LayoutExpansionCause::Cascading);
+    }
+
     let mut contains_direct_statement_spacing = false;
     for item in &list.items {
         match item.target {
@@ -2405,9 +2448,9 @@ fn initial_list_expansion_cause(list: &StatementList) -> Option<LayoutExpansionC
                 return Some(LayoutExpansionCause::Cascading);
             }
             StatementTarget::ControlFlow { .. }
+            | StatementTarget::Call { .. }
             | StatementTarget::Other
             | StatementTarget::Import { .. }
-            | StatementTarget::MultilineCall { .. }
             | StatementTarget::Return { .. }
             | StatementTarget::TypeAlias { .. }
             | StatementTarget::Variable { .. } => {}
@@ -2447,10 +2490,10 @@ fn append_layout_edits(
     switches: &[SwitchLayout],
     interfaces: &[InterfaceBodyLayout],
     objects: &[ObjectLayout],
-    object_line_breaks: Option<&LineBreakIndex>,
+    line_breaks: Option<&LineBreakIndex>,
     edits: &mut Vec<Edit>,
 ) -> Result<(), FormatError> {
-    let mut indents = LayoutIndents::new(lists.len(), switches.len(), objects.len());
+    let mut indents = LayoutIndents::new(lists.len(), switches.len(), objects.len(), line_breaks);
     let directive_target_lines = typescript_directive_target_lines(source, comments)?;
     append_list_layout_edits(
         source,
@@ -2492,7 +2535,7 @@ fn append_layout_edits(
         lists,
         switches,
         objects,
-        object_line_breaks,
+        line_breaks,
         &mut indents,
         edits,
     )
@@ -2510,7 +2553,7 @@ fn append_list_layout_edits(
     lists: &[StatementList],
     switches: &[SwitchLayout],
     objects: &[ObjectLayout],
-    indents: &mut LayoutIndents,
+    indents: &mut LayoutIndents<'_>,
     edits: &mut Vec<Edit>,
 ) -> Result<(), FormatError> {
     for (list_index, list) in lists.iter().enumerate() {
@@ -2637,7 +2680,7 @@ fn append_switch_layout_edits(
     lists: &[StatementList],
     switches: &[SwitchLayout],
     objects: &[ObjectLayout],
-    indents: &mut LayoutIndents,
+    indents: &mut LayoutIndents<'_>,
     edits: &mut Vec<Edit>,
 ) -> Result<(), FormatError> {
     for (switch_index, switch) in switches
@@ -2694,7 +2737,7 @@ fn append_interface_layout_edits(
     switches: &[SwitchLayout],
     objects: &[ObjectLayout],
     interfaces: &[InterfaceBodyLayout],
-    indents: &mut LayoutIndents,
+    indents: &mut LayoutIndents<'_>,
     edits: &mut Vec<Edit>,
 ) -> Result<(), FormatError> {
     for interface in interfaces {
@@ -2750,7 +2793,7 @@ fn append_object_layout_edits(
     switches: &[SwitchLayout],
     objects: &[ObjectLayout],
     line_breaks: Option<&LineBreakIndex>,
-    indents: &mut LayoutIndents,
+    indents: &mut LayoutIndents<'_>,
     edits: &mut Vec<Edit>,
 ) -> Result<(), FormatError> {
     if objects.is_empty() {
@@ -2976,22 +3019,62 @@ fn statement_boundary_requirement(
     statement: StatementTarget,
     sibling: StatementTarget,
 ) -> Option<bool> {
+    if let Some(mode) = single_line_call_spacing_mode(statement, sibling) {
+        return spacing_mode_boundary_requirement(mode, true);
+    }
+
     let mode = match statement {
-        StatementTarget::Other
-        | StatementTarget::MultilineCall {
+        StatementTarget::Call {
+            multiline: true,
+            multiline_spacing,
+            ..
+        } => multiline_spacing,
+        StatementTarget::Call {
             multiline: false, ..
-        } => return None,
+        }
+        | StatementTarget::Other => return None,
         StatementTarget::ControlFlow { spacing }
         | StatementTarget::Import { spacing, .. }
-        | StatementTarget::MultilineCall { spacing, .. }
         | StatementTarget::Return { spacing }
         | StatementTarget::TypeAlias { spacing, .. }
         | StatementTarget::Variable { spacing, .. } => spacing,
     };
+    spacing_mode_boundary_requirement(mode, !same_single_line_category(statement, sibling))
+}
+
+const fn single_line_call_spacing_mode(
+    statement: StatementTarget,
+    sibling: StatementTarget,
+) -> Option<StatementSpacingMode> {
+    let StatementTarget::Call {
+        multiline: false,
+        single_line_spacing,
+        ..
+    } = statement
+    else {
+        return None;
+    };
+    if matches!(
+        sibling,
+        StatementTarget::Call {
+            multiline: false,
+            ..
+        }
+    ) {
+        Some(single_line_spacing.between_calls)
+    } else {
+        Some(single_line_spacing.with_other_statements)
+    }
+}
+
+const fn spacing_mode_boundary_requirement(
+    mode: StatementSpacingMode,
+    separate: bool,
+) -> Option<bool> {
     match mode {
         StatementSpacingMode::Off => None,
         StatementSpacingMode::Compact => Some(false),
-        StatementSpacingMode::Separate => Some(!same_single_line_category(statement, sibling)),
+        StatementSpacingMode::Separate => Some(separate),
     }
 }
 
@@ -3073,22 +3156,31 @@ fn existing_boundary_indent(
     }
 }
 
-struct LayoutIndents {
+struct LayoutIndents<'a> {
     list_bases: Vec<Option<String>>,
     list_items: Vec<Option<String>>,
+    existing_item_indents: Vec<Option<Vec<Option<String>>>>,
     switches: Vec<Option<String>>,
     object_bases: Vec<Option<String>>,
     object_items: Vec<Option<String>>,
+    line_breaks: Option<&'a LineBreakIndex>,
 }
 
-impl LayoutIndents {
-    fn new(list_count: usize, switch_count: usize, object_count: usize) -> Self {
+impl<'a> LayoutIndents<'a> {
+    fn new(
+        list_count: usize,
+        switch_count: usize,
+        object_count: usize,
+        line_breaks: Option<&'a LineBreakIndex>,
+    ) -> Self {
         Self {
             list_bases: vec![None; list_count],
             list_items: vec![None; list_count],
+            existing_item_indents: vec![None; list_count],
             switches: vec![None; switch_count],
             object_bases: vec![None; object_count],
             object_items: vec![None; object_count],
+            line_breaks,
         }
     }
 
@@ -3101,15 +3193,42 @@ impl LayoutIndents {
         list_index: usize,
         item_index: usize,
     ) -> String {
-        for index in (0..=item_index)
-            .rev()
-            .chain(item_index + 1..lists[list_index].items.len())
-        {
-            if let Some(indent) =
-                line_indent_if_standalone(source, lists[list_index].items[index].span.start)
-            {
-                return indent;
+        if self.existing_item_indents[list_index].is_none() {
+            let mut indents = lists[list_index]
+                .items
+                .iter()
+                .map(|item| {
+                    self.line_breaks.map_or_else(
+                        || line_indent_if_standalone(source, item.span.start),
+                        |line_breaks| {
+                            line_indent_if_standalone_indexed(source, line_breaks, item.span.start)
+                        },
+                    )
+                })
+                .collect::<Vec<_>>();
+            let mut previous = None;
+            for indent in &mut indents {
+                if indent.is_some() {
+                    previous.clone_from(indent);
+                } else {
+                    indent.clone_from(&previous);
+                }
             }
+            let mut following = None;
+            for indent in indents.iter_mut().rev() {
+                if indent.is_some() {
+                    following.clone_from(indent);
+                } else {
+                    indent.clone_from(&following);
+                }
+            }
+            self.existing_item_indents[list_index] = Some(indents);
+        }
+        if let Some(indent) = self.existing_item_indents[list_index]
+            .as_ref()
+            .and_then(|indents| indents[item_index].clone())
+        {
+            return indent;
         }
         self.item_indent(source, lists, switches, objects, list_index)
     }
@@ -3322,8 +3441,25 @@ fn line_leading_indent_at(source: &str, offset: u32) -> String {
 }
 
 fn line_indent_if_standalone(source: &str, offset: u32) -> Option<String> {
+    standalone_indent_scan();
     let prefix = source.get(..offset as usize).unwrap_or(source);
     let line = prefix.rsplit_once('\n').map_or(prefix, |(_, line)| line);
+    standalone_indent(line)
+}
+
+fn line_indent_if_standalone_indexed(
+    source: &str,
+    line_breaks: &LineBreakIndex,
+    offset: u32,
+) -> Option<String> {
+    standalone_indent_scan();
+    let line_start = usize::try_from(line_breaks.line_start(offset)).ok()?;
+    let offset = usize::try_from(offset).ok()?;
+    let line = source.get(line_start..offset)?;
+    standalone_indent(line)
+}
+
+fn standalone_indent(line: &str) -> Option<String> {
     if line
         .chars()
         .all(|character| matches!(character, ' ' | '\t' | '\r'))
@@ -4041,14 +4177,16 @@ mod tests {
     use super::{
         CORRUPT_REWRITE_FOR_TEST, DEFERRED_IMPORT_BOUNDARY_LOOKUPS, IMPORT_MULTILINE_SCANS,
         INDENT_RESOLUTIONS, LINE_BREAK_INDEX_BUILDS, LINE_BREAK_QUERIES, LINE_START_INDEX_QUERIES,
-        PARENTHESIS_INDEX_BUILDS, PARENTHESIS_LOOKUPS, RAW_LINE_START_SCANS,
-        SPAN_LOOKUP_COMPARISONS, TOKEN_PARSER_RUNS, TOKEN_PREFLIGHT_PARSES,
+        LIST_MULTILINE_INDEX_QUERIES, PARENTHESIS_INDEX_BUILDS, PARENTHESIS_LOOKUPS,
+        RAW_LINE_START_SCANS, RAW_LIST_MULTILINE_SCANS, SPAN_LOOKUP_COMPARISONS,
+        STANDALONE_INDENT_SCANS, TOKEN_PARSER_RUNS, TOKEN_PREFLIGHT_PARSES,
         TYPE_ALIAS_MULTILINE_SCANS, VARIABLE_MULTILINE_SCANS, parse, verify,
     };
     use crate::{
         FormatConfig, InterfaceLayoutMode, InterfaceLayoutRule, RulesConfig, SemicolonConfig,
-        SemicolonMode, StatementSpacingConfig, StatementSpacingMode, TrailingCommaMode,
-        TypeMemberSemicolonConfig, TypeMemberSemicolonRule, format_text, resolve_config,
+        SemicolonMode, SingleLineCallStatementSpacingConfig, SingleLineCallStatementSpacingRule,
+        StatementSpacingConfig, StatementSpacingMode, TrailingCommaMode, TypeMemberSemicolonConfig,
+        TypeMemberSemicolonRule, format_text, resolve_config,
     };
 
     fn format(source: &str) -> String {
@@ -4085,6 +4223,7 @@ mod tests {
                     control_flow_statements: StatementSpacingMode::Off,
                     imports: StatementSpacingMode::Off,
                     multiline_call_statements: StatementSpacingMode::Off,
+                    single_line_call_statements: StatementSpacingMode::Off.into(),
                     return_statements: StatementSpacingMode::Off,
                     type_aliases: StatementSpacingMode::Off,
                     variable_declarations: StatementSpacingMode::Off,
@@ -4389,7 +4528,7 @@ mod tests {
                 .is_none()
         );
         assert_eq!(LINE_BREAK_INDEX_BUILDS.get(), 1);
-        assert_eq!(LINE_BREAK_QUERIES.get(), depth * 2);
+        assert_eq!(LINE_BREAK_QUERIES.get(), depth * 2 + 1);
 
         let property_count = 256;
         let mut commented = String::from("const value={");
@@ -4421,6 +4560,7 @@ mod tests {
                         control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Off,
                         multiline_call_statements: StatementSpacingMode::Off,
+                        single_line_call_statements: StatementSpacingMode::Off.into(),
                         return_statements: StatementSpacingMode::Off,
                         type_aliases: StatementSpacingMode::Off,
                         variable_declarations: StatementSpacingMode::Off,
@@ -4464,6 +4604,7 @@ mod tests {
                         control_flow_statements: StatementSpacingMode::Off,
                         imports,
                         multiline_call_statements: StatementSpacingMode::Off,
+                        single_line_call_statements: StatementSpacingMode::Off.into(),
                         return_statements: StatementSpacingMode::Off,
                         type_aliases,
                         variable_declarations,
@@ -4487,6 +4628,7 @@ mod tests {
                         control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Off,
                         multiline_call_statements: StatementSpacingMode::Off,
+                        single_line_call_statements: StatementSpacingMode::Off.into(),
                         return_statements,
                         type_aliases: StatementSpacingMode::Off,
                         variable_declarations: StatementSpacingMode::Off,
@@ -4514,6 +4656,7 @@ mod tests {
                         control_flow_statements,
                         imports: StatementSpacingMode::Off,
                         multiline_call_statements: StatementSpacingMode::Off,
+                        single_line_call_statements: StatementSpacingMode::Off.into(),
                         return_statements: StatementSpacingMode::Off,
                         type_aliases: StatementSpacingMode::Off,
                         variable_declarations: StatementSpacingMode::Off,
@@ -4536,6 +4679,15 @@ mod tests {
         format_file_with(file_name, source, config)
     }
 
+    fn format_with_single_line_call_spacing(
+        source: &str,
+        rule: SingleLineCallStatementSpacingRule,
+    ) -> String {
+        let mut config = object_spacing_config(false);
+        config.rules.statement_spacing.single_line_call_statements = rule;
+        format_file_with("sample.ts", source, config)
+    }
+
     fn format_trailing(source: &str, mode: TrailingCommaMode) -> String {
         format_with_semicolons_off(
             source,
@@ -4548,6 +4700,7 @@ mod tests {
                         control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Off,
                         multiline_call_statements: StatementSpacingMode::Off,
+                        single_line_call_statements: StatementSpacingMode::Off.into(),
                         return_statements: StatementSpacingMode::Off,
                         type_aliases: StatementSpacingMode::Off,
                         variable_declarations: StatementSpacingMode::Off,
@@ -4573,6 +4726,7 @@ mod tests {
                         control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Off,
                         multiline_call_statements: StatementSpacingMode::Off,
+                        single_line_call_statements: StatementSpacingMode::Off.into(),
                         return_statements: StatementSpacingMode::Off,
                         type_aliases: StatementSpacingMode::Off,
                         variable_declarations: StatementSpacingMode::Off,
@@ -4603,6 +4757,7 @@ mod tests {
                         control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Off,
                         multiline_call_statements: StatementSpacingMode::Off,
+                        single_line_call_statements: StatementSpacingMode::Off.into(),
                         return_statements: StatementSpacingMode::Off,
                         type_aliases: StatementSpacingMode::Off,
                         variable_declarations: StatementSpacingMode::Off,
@@ -4674,6 +4829,7 @@ mod tests {
                             control_flow_statements: StatementSpacingMode::Off,
                             imports: StatementSpacingMode::Off,
                             multiline_call_statements: StatementSpacingMode::Off,
+                            single_line_call_statements: StatementSpacingMode::Off.into(),
                             return_statements: StatementSpacingMode::Off,
                             type_aliases: StatementSpacingMode::Off,
                             variable_declarations: StatementSpacingMode::Off,
@@ -4941,6 +5097,7 @@ mod tests {
                     control_flow_statements: StatementSpacingMode::Off,
                     imports: StatementSpacingMode::Off,
                     multiline_call_statements: StatementSpacingMode::Off,
+                    single_line_call_statements: StatementSpacingMode::Off.into(),
                     return_statements: StatementSpacingMode::Off,
                     type_aliases: StatementSpacingMode::Off,
                     variable_declarations: StatementSpacingMode::Off,
@@ -5662,6 +5819,7 @@ mod tests {
                     control_flow_statements: StatementSpacingMode::Off,
                     imports: StatementSpacingMode::Off,
                     multiline_call_statements: StatementSpacingMode::Off,
+                    single_line_call_statements: StatementSpacingMode::Off.into(),
                     return_statements: StatementSpacingMode::Off,
                     type_aliases: StatementSpacingMode::Off,
                     variable_declarations: StatementSpacingMode::Off,
@@ -5820,6 +5978,7 @@ mod tests {
                     control_flow_statements: StatementSpacingMode::Off,
                     imports: StatementSpacingMode::Off,
                     multiline_call_statements: StatementSpacingMode::Off,
+                    single_line_call_statements: StatementSpacingMode::Off.into(),
                     return_statements: StatementSpacingMode::Off,
                     type_aliases: StatementSpacingMode::Off,
                     variable_declarations: StatementSpacingMode::Off,
@@ -5969,6 +6128,7 @@ mod tests {
                         control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Separate,
                         multiline_call_statements: StatementSpacingMode::Off,
+                        single_line_call_statements: StatementSpacingMode::Off.into(),
                         return_statements: StatementSpacingMode::Off,
                         type_aliases: StatementSpacingMode::Off,
                         variable_declarations: StatementSpacingMode::Off,
@@ -5993,6 +6153,7 @@ mod tests {
                         control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Separate,
                         multiline_call_statements: StatementSpacingMode::Off,
+                        single_line_call_statements: StatementSpacingMode::Off.into(),
                         return_statements: StatementSpacingMode::Off,
                         type_aliases: StatementSpacingMode::Off,
                         variable_declarations: StatementSpacingMode::Off,
@@ -6092,6 +6253,7 @@ mod tests {
                     control_flow_statements: StatementSpacingMode::Off,
                     imports: StatementSpacingMode::Off,
                     multiline_call_statements: StatementSpacingMode::Off,
+                    single_line_call_statements: StatementSpacingMode::Off.into(),
                     return_statements: StatementSpacingMode::Off,
                     type_aliases: StatementSpacingMode::Off,
                     variable_declarations: StatementSpacingMode::Off,
@@ -6282,6 +6444,7 @@ mod tests {
                     control_flow_statements: StatementSpacingMode::Off,
                     imports: StatementSpacingMode::Off,
                     multiline_call_statements: StatementSpacingMode::Off,
+                    single_line_call_statements: StatementSpacingMode::Off.into(),
                     return_statements: StatementSpacingMode::Off,
                     type_aliases: StatementSpacingMode::Off,
                     variable_declarations: StatementSpacingMode::Compact,
@@ -6545,6 +6708,7 @@ mod tests {
                         control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Off,
                         multiline_call_statements: StatementSpacingMode::Off,
+                        single_line_call_statements: StatementSpacingMode::Off.into(),
                         return_statements: StatementSpacingMode::Off,
                         type_aliases: StatementSpacingMode::Separate,
                         variable_declarations: StatementSpacingMode::Off,
@@ -6627,6 +6791,7 @@ mod tests {
                                 control_flow_statements: StatementSpacingMode::Off,
                                 imports: StatementSpacingMode::Off,
                                 multiline_call_statements: StatementSpacingMode::Off,
+                                single_line_call_statements: StatementSpacingMode::Off.into(),
                                 return_statements: StatementSpacingMode::Off,
                                 type_aliases: StatementSpacingMode::Separate,
                                 variable_declarations: StatementSpacingMode::Off,
@@ -6763,6 +6928,325 @@ mod tests {
     }
 
     #[test]
+    fn groups_single_line_calls_and_separates_other_statements_by_default() {
+        let source = "function complete() {\n  activePointerId = null\n  pointerStart = null\n  isHolding.value = false\n  emit('complete')\n  holdTimer.stop()\n  pointerStart = null\n}";
+        let expected = "function complete() {\n  activePointerId = null\n  pointerStart = null\n  isHolding.value = false\n\n  emit('complete')\n  holdTimer.stop()\n\n  pointerStart = null\n}";
+        let rule = SingleLineCallStatementSpacingRule::default();
+        let output = format_with_single_line_call_spacing(source, rule);
+
+        assert_eq!(output, expected);
+        assert_eq!(format_with_single_line_call_spacing(&output, rule), output);
+    }
+
+    #[test]
+    fn groups_single_line_calls_around_a_multiline_call() {
+        let source = "emit()\n\nemit()\n\nemit({\n  a: 'b'\n})\n\nemit()";
+        let expected = "emit()\nemit()\n\nemit({\n  a: 'b'\n})\n\nemit()";
+
+        assert_eq!(
+            format_with_single_line_call_spacing(
+                source,
+                SingleLineCallStatementSpacingRule::default(),
+            ),
+            expected
+        );
+    }
+
+    #[test]
+    fn applies_independent_single_line_call_boundary_modes() {
+        let compact_calls =
+            SingleLineCallStatementSpacingRule::Layout(SingleLineCallStatementSpacingConfig {
+                between_calls: StatementSpacingMode::Compact,
+                with_other_statements: StatementSpacingMode::Separate,
+            });
+        assert_eq!(
+            format_with_single_line_call_spacing("first()\n\n\nsecond()\nvalue = 1", compact_calls,),
+            "first()\nsecond()\n\nvalue = 1"
+        );
+
+        let preserve_calls =
+            SingleLineCallStatementSpacingRule::Layout(SingleLineCallStatementSpacingConfig {
+                between_calls: StatementSpacingMode::Off,
+                with_other_statements: StatementSpacingMode::Separate,
+            });
+        assert_eq!(
+            format_with_single_line_call_spacing(
+                "first()\n\n\nsecond()\nvalue = 1",
+                preserve_calls,
+            ),
+            "first()\n\n\nsecond()\n\nvalue = 1"
+        );
+
+        let separate_calls =
+            SingleLineCallStatementSpacingRule::Layout(SingleLineCallStatementSpacingConfig {
+                between_calls: StatementSpacingMode::Separate,
+                with_other_statements: StatementSpacingMode::Off,
+            });
+        assert_eq!(
+            format_with_single_line_call_spacing("first()\nsecond()\nvalue = 1", separate_calls,),
+            "first()\n\nsecond()\nvalue = 1"
+        );
+    }
+
+    #[test]
+    fn applies_single_line_call_shorthand_to_both_boundaries() {
+        let source = "first()\n\n\nsecond()\nvalue = 1";
+
+        assert_eq!(
+            format_with_single_line_call_spacing(source, StatementSpacingMode::Off.into(),),
+            source
+        );
+        assert_eq!(
+            format_with_single_line_call_spacing(source, StatementSpacingMode::Compact.into(),),
+            "first()\nsecond()\nvalue = 1"
+        );
+        assert_eq!(
+            format_with_single_line_call_spacing(source, StatementSpacingMode::Separate.into(),),
+            "first()\n\nsecond()\n\nvalue = 1"
+        );
+    }
+
+    #[test]
+    fn unfolds_inline_lists_only_for_active_single_line_call_boundaries() {
+        let source = "function f(){first();second();value=1;third();}";
+        assert_eq!(
+            format_with_single_line_call_spacing(
+                source,
+                SingleLineCallStatementSpacingRule::default(),
+            ),
+            "function f(){\n  first();\n  second();\n\n  value=1;\n\n  third();\n}"
+        );
+
+        let calls_only = "function f(){first();second();}";
+        let inactive_boundary =
+            SingleLineCallStatementSpacingRule::Layout(SingleLineCallStatementSpacingConfig {
+                between_calls: StatementSpacingMode::Off,
+                with_other_statements: StatementSpacingMode::Separate,
+            });
+        assert_eq!(
+            format_with_single_line_call_spacing(calls_only, inactive_boundary),
+            calls_only
+        );
+    }
+
+    #[test]
+    fn recognizes_supported_single_line_call_forms_and_excludes_nested_calls() {
+        let source = "async function f() {\n  value = 1\n  call()\n  client.call?.()\n  client.call<Type>()!\n  await (client.call() as Promise<void>)\n  value = 2\n}";
+        let expected = "async function f() {\n  value = 1\n\n  call()\n  client.call?.()\n  client.call<Type>()!\n  await (client.call() as Promise<void>)\n\n  value = 2\n}";
+        assert_eq!(
+            format_with_single_line_call_spacing(
+                source,
+                SingleLineCallStatementSpacingRule::default(),
+            ),
+            expected
+        );
+
+        let super_call =
+            "class Child extends Parent {\n  constructor() {\n    super()\n    value = 1\n  }\n}";
+        assert_eq!(
+            format_with_single_line_call_spacing(
+                super_call,
+                SingleLineCallStatementSpacingRule::default(),
+            ),
+            "class Child extends Parent {\n  constructor() {\n    super()\n\n    value = 1\n  }\n}"
+        );
+
+        let excluded = "async function f() {\n  const value = call()\n  result = call()\n  void call()\n  new Example()\n  await import(path)\n  return call()\n}";
+        assert_eq!(
+            format_with_single_line_call_spacing(
+                excluded,
+                SingleLineCallStatementSpacingRule::default(),
+            ),
+            excluded
+        );
+    }
+
+    #[test]
+    fn combines_single_line_calls_with_other_spacing_by_priority() {
+        let source = "function f() {\n  const value=1\n  call()\n  return value\n}";
+        let mut config = object_spacing_config(false);
+        config.rules.statement_spacing.single_line_call_statements =
+            StatementSpacingMode::Compact.into();
+        config.rules.statement_spacing.variable_declarations = StatementSpacingMode::Separate;
+        config.rules.statement_spacing.return_statements = StatementSpacingMode::Separate;
+
+        assert_eq!(
+            format_file_with("sample.ts", source, config),
+            "function f() {\n  const value=1\n\n  call()\n\n  return value\n}"
+        );
+
+        let control_flow = "function f(){call();if(ok)work();}";
+        let mut config = object_spacing_config(false);
+        config.rules.statement_spacing.single_line_call_statements =
+            StatementSpacingMode::Compact.into();
+        config.rules.statement_spacing.control_flow_statements = StatementSpacingMode::Separate;
+        assert_eq!(
+            format_file_with("sample.ts", control_flow, config),
+            "function f(){\n  call();\n\n  if(ok)work();\n}"
+        );
+
+        let calls = "function f() {\n  single()\n  multiline(\n    value\n  )\n}";
+        let format = |single_line_spacing, multiline_spacing| {
+            let mut config = object_spacing_config(false);
+            config.rules.statement_spacing.single_line_call_statements =
+                SingleLineCallStatementSpacingRule::Layout(SingleLineCallStatementSpacingConfig {
+                    between_calls: StatementSpacingMode::Compact,
+                    with_other_statements: single_line_spacing,
+                });
+            config.rules.statement_spacing.multiline_call_statements = multiline_spacing;
+            format_file_with("sample.ts", calls, config)
+        };
+
+        assert_eq!(
+            format(
+                StatementSpacingMode::Separate,
+                StatementSpacingMode::Compact,
+            ),
+            "function f() {\n  single()\n\n  multiline(\n    value\n  )\n}"
+        );
+        assert_eq!(
+            format(
+                StatementSpacingMode::Compact,
+                StatementSpacingMode::Separate,
+            ),
+            "function f() {\n  single()\n\n  multiline(\n    value\n  )\n}"
+        );
+        assert_eq!(
+            format(StatementSpacingMode::Compact, StatementSpacingMode::Compact,),
+            calls
+        );
+    }
+
+    #[test]
+    fn preserves_single_line_call_comments_directives_and_file_shape() {
+        let source = "\u{feff}function f(){\r\n  before(); // trailing\r\n  // attached\r\n  next()\r\n\r\n\r\n  /** detached */\r\n\r\n\r\n  after()\r\n}";
+        let expected = "\u{feff}function f(){\r\n  before(); // trailing\r\n  // attached\r\n  next()\r\n  /** detached */\r\n\r\n  after()\r\n}";
+        let output = format_with_single_line_call_spacing(
+            source,
+            SingleLineCallStatementSpacingRule::default(),
+        );
+
+        assert_eq!(output, expected);
+        assert!(!output.replace("\r\n", "").contains('\n'));
+        assert!(!output.ends_with('\n'));
+        assert_eq!(
+            format_with_single_line_call_spacing(
+                &output,
+                SingleLineCallStatementSpacingRule::default(),
+            ),
+            output
+        );
+
+        for directive in ["@ts-ignore", "@ts-expect-error"] {
+            let source = format!("before()\n// {directive}\nmissing()\nafter()");
+            let expected = format!("before()\n\n// {directive}\nmissing()\n\nafter()");
+            assert_eq!(
+                format_with_single_line_call_spacing(
+                    &source,
+                    StatementSpacingMode::Separate.into(),
+                ),
+                expected,
+                "{directive}"
+            );
+        }
+    }
+
+    #[test]
+    fn single_line_call_line_break_queries_stay_indexed_and_skip_off_mode() {
+        let statement_count = 512;
+        let source = std::iter::repeat_n("call();", statement_count)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut config = object_spacing_config(false);
+        config.verify_ast = false;
+        config.rules.statement_spacing.single_line_call_statements =
+            SingleLineCallStatementSpacingRule::default();
+        let config = resolve_config(config).unwrap();
+
+        LINE_BREAK_INDEX_BUILDS.set(0);
+        LINE_BREAK_QUERIES.set(0);
+        assert!(
+            format_text(Path::new("single-line-calls.ts"), &source, &config)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(LINE_BREAK_INDEX_BUILDS.get(), 1);
+        assert_eq!(LINE_BREAK_QUERIES.get(), statement_count + 1);
+
+        let disabled = resolve_config(object_spacing_config(false)).unwrap();
+        LINE_BREAK_INDEX_BUILDS.set(0);
+        LINE_BREAK_QUERIES.set(0);
+        assert!(
+            format_text(Path::new("single-line-calls.ts"), &source, &disabled)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(LINE_BREAK_INDEX_BUILDS.get(), 0);
+        assert_eq!(LINE_BREAK_QUERIES.get(), 0);
+    }
+
+    #[test]
+    fn unfolded_single_line_call_indent_scans_stay_linear() {
+        let item_count = 256;
+        let mut source = String::from("function outer(){\n");
+        for index in 0..item_count {
+            write!(source, "task{index}(()=>{{first();second()}});").unwrap();
+        }
+        source.push_str("\n}");
+        let mut config = object_spacing_config(false);
+        config.verify_ast = false;
+        config.rules.statement_spacing.single_line_call_statements =
+            SingleLineCallStatementSpacingRule::Layout(SingleLineCallStatementSpacingConfig {
+                between_calls: StatementSpacingMode::Compact,
+                with_other_statements: StatementSpacingMode::Off,
+            });
+        let config = resolve_config(config).unwrap();
+
+        STANDALONE_INDENT_SCANS.set(0);
+        assert!(
+            format_text(Path::new("wide-inline-calls.ts"), &source, &config)
+                .unwrap()
+                .is_some()
+        );
+        let scans = STANDALONE_INDENT_SCANS.get();
+        assert!(
+            scans <= item_count * 8,
+            "standalone indent scanning ran {scans} times for {item_count} unfolded call items"
+        );
+    }
+
+    #[test]
+    fn nested_single_line_call_lists_use_indexed_multiline_queries() {
+        let depth = 256;
+        let mut source = String::new();
+        for index in 0..depth {
+            write!(source, "function f{index}(){{").unwrap();
+        }
+        source.push_str("work();");
+        for _ in 0..depth {
+            source.push('}');
+        }
+        let mut config = object_spacing_config(false);
+        config.verify_ast = false;
+        config.rules.statement_spacing.single_line_call_statements =
+            SingleLineCallStatementSpacingRule::Layout(SingleLineCallStatementSpacingConfig {
+                between_calls: StatementSpacingMode::Compact,
+                with_other_statements: StatementSpacingMode::Off,
+            });
+        let config = resolve_config(config).unwrap();
+
+        LIST_MULTILINE_INDEX_QUERIES.set(0);
+        RAW_LIST_MULTILINE_SCANS.set(0);
+        assert!(
+            format_text(Path::new("nested-no-op-calls.ts"), &source, &config)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(LIST_MULTILINE_INDEX_QUERIES.get(), depth + 1);
+        assert_eq!(RAW_LIST_MULTILINE_SCANS.get(), 0);
+    }
+
+    #[test]
     fn spaces_the_supplied_multiline_awaited_call_idempotently() {
         let source = "async function submit() {\n  prepare()\n  await requestFetch('/api', {\n    body: formData\n  })\n  isSubmitted.value = true\n}";
         let expected = "async function submit() {\n  prepare()\n\n  await requestFetch('/api', {\n    body: formData\n  })\n\n  isSubmitted.value = true\n}";
@@ -6887,6 +7371,24 @@ mod tests {
 
         assert_eq!(output, expected);
         assert_eq!(format_file_with("sample.ts", &output, config), output);
+
+        let mut transitioned = object_spacing_config(true);
+        transitioned
+            .rules
+            .statement_spacing
+            .multiline_call_statements = StatementSpacingMode::Compact;
+        transitioned
+            .rules
+            .statement_spacing
+            .single_line_call_statements = StatementSpacingMode::Separate.into();
+        assert_eq!(
+            format_file_with(
+                "sample.ts",
+                "function f(){value=1;run({first:1,second:2});value=2;}",
+                transitioned,
+            ),
+            "function f(){\n  value=1;\n  run({\n    first:1,\n    second:2\n  });\n  value=2;\n}"
+        );
     }
 
     #[test]
@@ -6946,7 +7448,7 @@ mod tests {
         LINE_BREAK_QUERIES.set(0);
         format_text(Path::new("nested-calls.ts"), &source, &config).unwrap();
         assert_eq!(LINE_BREAK_INDEX_BUILDS.get(), 1);
-        assert_eq!(LINE_BREAK_QUERIES.get(), depth + 1);
+        assert_eq!(LINE_BREAK_QUERIES.get(), (depth + 1) * 2);
 
         let disabled = resolve_config(object_spacing_config(false)).unwrap();
         LINE_BREAK_INDEX_BUILDS.set(0);
@@ -7060,6 +7562,7 @@ mod tests {
                             control_flow_statements: StatementSpacingMode::Separate,
                             imports: StatementSpacingMode::Off,
                             multiline_call_statements: StatementSpacingMode::Off,
+                            single_line_call_statements: StatementSpacingMode::Off.into(),
                             return_statements: StatementSpacingMode::Off,
                             type_aliases: StatementSpacingMode::Off,
                             variable_declarations: StatementSpacingMode::Separate,
@@ -7107,6 +7610,7 @@ mod tests {
                             control_flow_statements,
                             imports: StatementSpacingMode::Off,
                             multiline_call_statements: StatementSpacingMode::Off,
+                            single_line_call_statements: StatementSpacingMode::Off.into(),
                             return_statements,
                             type_aliases: StatementSpacingMode::Off,
                             variable_declarations,
@@ -7151,6 +7655,7 @@ mod tests {
                             control_flow_statements,
                             imports,
                             multiline_call_statements: StatementSpacingMode::Off,
+                            single_line_call_statements: StatementSpacingMode::Off.into(),
                             return_statements: StatementSpacingMode::Off,
                             type_aliases,
                             variable_declarations: StatementSpacingMode::Off,
@@ -7320,6 +7825,7 @@ mod tests {
                         control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Off,
                         multiline_call_statements: StatementSpacingMode::Off,
+                        single_line_call_statements: StatementSpacingMode::Off.into(),
                         return_statements: StatementSpacingMode::Separate,
                         type_aliases: StatementSpacingMode::Off,
                         variable_declarations: StatementSpacingMode::Separate,
@@ -7370,6 +7876,7 @@ mod tests {
                             control_flow_statements: StatementSpacingMode::Off,
                             imports: StatementSpacingMode::Off,
                             multiline_call_statements: StatementSpacingMode::Off,
+                            single_line_call_statements: StatementSpacingMode::Off.into(),
                             return_statements,
                             type_aliases,
                             variable_declarations,
@@ -7586,7 +8093,7 @@ mod tests {
     #[test]
     fn preserves_a_typed_class_field_before_its_constructor() {
         let source = "import{type BaseIssue}from'valibot'\nclass RegistryUserValidationError extends Error {\n  readonly fieldErrors: RegistryUserFieldErrors\n\n  constructor(fieldErrors: RegistryUserFieldErrors) {\n    const details = String(fieldErrors)\n    super(details)\n    this.fieldErrors = fieldErrors\n  }\n}";
-        let expected = "import { type BaseIssue } from 'valibot'\n\nclass RegistryUserValidationError extends Error {\n  readonly fieldErrors: RegistryUserFieldErrors\n\n  constructor(fieldErrors: RegistryUserFieldErrors) {\n    const details = String(fieldErrors)\n\n    super(details)\n    this.fieldErrors = fieldErrors\n  }\n}";
+        let expected = "import { type BaseIssue } from 'valibot'\n\nclass RegistryUserValidationError extends Error {\n  readonly fieldErrors: RegistryUserFieldErrors\n\n  constructor(fieldErrors: RegistryUserFieldErrors) {\n    const details = String(fieldErrors)\n\n    super(details)\n\n    this.fieldErrors = fieldErrors\n  }\n}";
 
         let output = format(source);
         assert_eq!(output, expected);
@@ -7605,6 +8112,7 @@ mod tests {
                         control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Off,
                         multiline_call_statements: StatementSpacingMode::Off,
+                        single_line_call_statements: StatementSpacingMode::Off.into(),
                         return_statements: StatementSpacingMode::Off,
                         type_aliases: StatementSpacingMode::Off,
                         variable_declarations: StatementSpacingMode::Separate,
@@ -7628,6 +8136,7 @@ mod tests {
                         control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Separate,
                         multiline_call_statements: StatementSpacingMode::Off,
+                        single_line_call_statements: StatementSpacingMode::Off.into(),
                         return_statements: StatementSpacingMode::Off,
                         type_aliases: StatementSpacingMode::Off,
                         variable_declarations: StatementSpacingMode::Off,
@@ -7662,7 +8171,7 @@ mod tests {
         );
         assert_eq!(
             format("function f(){work();finish();}"),
-            "function f(){work();finish();}"
+            "function f(){\n  work();\n  finish();\n}"
         );
 
         let multiline_parent = "function outer() {\n  if(ok){const a=1;work();}\n}";

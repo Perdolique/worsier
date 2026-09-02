@@ -11,6 +11,10 @@
       "imports": "separate",
       "multilineCallStatements": "separate",
       "returnStatements": "separate",
+      "singleLineCallStatements": {
+        "betweenCalls": "compact",
+        "withOtherStatements": "separate"
+      },
       "typeAliases": "separate",
       "variableDeclarations": "separate"
     },

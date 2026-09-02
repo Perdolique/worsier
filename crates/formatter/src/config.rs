@@ -286,6 +286,7 @@ pub struct StatementSpacingConfig {
     pub imports: StatementSpacingMode,
     pub multiline_call_statements: StatementSpacingMode,
     pub return_statements: StatementSpacingMode,
+    pub single_line_call_statements: SingleLineCallStatementSpacingRule,
     pub type_aliases: StatementSpacingMode,
     pub variable_declarations: StatementSpacingMode,
 }
@@ -297,6 +298,7 @@ impl Default for StatementSpacingConfig {
             imports: StatementSpacingMode::Separate,
             multiline_call_statements: StatementSpacingMode::Separate,
             return_statements: StatementSpacingMode::Separate,
+            single_line_call_statements: SingleLineCallStatementSpacingRule::default(),
             type_aliases: StatementSpacingMode::Separate,
             variable_declarations: StatementSpacingMode::Separate,
         }
@@ -310,6 +312,111 @@ pub enum StatementSpacingMode {
     Separate,
     Compact,
     Off,
+}
+
+#[derive(Clone, Copy, Debug, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum SingleLineCallStatementSpacingRule {
+    Mode(StatementSpacingMode),
+    Layout(SingleLineCallStatementSpacingConfig),
+}
+
+impl SingleLineCallStatementSpacingRule {
+    #[must_use]
+    pub const fn resolve(self) -> SingleLineCallStatementSpacingConfig {
+        match self {
+            Self::Mode(mode) => SingleLineCallStatementSpacingConfig {
+                between_calls: mode,
+                with_other_statements: mode,
+            },
+            Self::Layout(config) => config,
+        }
+    }
+}
+
+impl Default for SingleLineCallStatementSpacingRule {
+    fn default() -> Self {
+        Self::Layout(SingleLineCallStatementSpacingConfig::default())
+    }
+}
+
+impl From<StatementSpacingMode> for SingleLineCallStatementSpacingRule {
+    fn from(mode: StatementSpacingMode) -> Self {
+        Self::Mode(mode)
+    }
+}
+
+impl<'de> Deserialize<'de> for SingleLineCallStatementSpacingRule {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct SingleLineCallStatementSpacingRuleVisitor;
+
+        impl<'de> Visitor<'de> for SingleLineCallStatementSpacingRuleVisitor {
+            type Value = SingleLineCallStatementSpacingRule;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str(
+                    r#""separate", "compact", "off", or a betweenCalls/withOtherStatements object"#,
+                )
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                let mode = match value {
+                    "separate" => StatementSpacingMode::Separate,
+                    "compact" => StatementSpacingMode::Compact,
+                    "off" => StatementSpacingMode::Off,
+                    _ => {
+                        return Err(E::unknown_variant(value, &["separate", "compact", "off"]));
+                    }
+                };
+                Ok(SingleLineCallStatementSpacingRule::Mode(mode))
+            }
+
+            fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                SingleLineCallStatementSpacingConfig::deserialize(MapAccessDeserializer::new(map))
+                    .map(SingleLineCallStatementSpacingRule::Layout)
+            }
+        }
+
+        deserializer.deserialize_any(SingleLineCallStatementSpacingRuleVisitor)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields, rename_all = "camelCase")]
+pub struct SingleLineCallStatementSpacingConfig {
+    pub between_calls: StatementSpacingMode,
+    pub with_other_statements: StatementSpacingMode,
+}
+
+impl SingleLineCallStatementSpacingConfig {
+    #[must_use]
+    pub const fn is_off(self) -> bool {
+        matches!(
+            self,
+            Self {
+                between_calls: StatementSpacingMode::Off,
+                with_other_statements: StatementSpacingMode::Off,
+            }
+        )
+    }
+}
+
+impl Default for SingleLineCallStatementSpacingConfig {
+    fn default() -> Self {
+        Self {
+            between_calls: StatementSpacingMode::Compact,
+            with_other_statements: StatementSpacingMode::Separate,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
@@ -363,6 +470,15 @@ impl ResolvedConfig {
     #[must_use]
     pub const fn multiline_call_statement_spacing(&self) -> StatementSpacingMode {
         self.value.rules.statement_spacing.multiline_call_statements
+    }
+
+    #[must_use]
+    pub const fn single_line_call_statement_spacing(&self) -> SingleLineCallStatementSpacingConfig {
+        self.value
+            .rules
+            .statement_spacing
+            .single_line_call_statements
+            .resolve()
     }
 
     #[must_use]
@@ -430,7 +546,8 @@ pub fn resolve_config(config: FormatConfig) -> Result<ResolvedConfig, FormatErro
 mod tests {
     use super::{
         FormatConfig, InterfaceLayoutMode, InterfaceLayoutRule, SemicolonMode,
-        StatementSpacingMode, TrailingCommaMode, TypeMemberSemicolonConfig, resolve_config,
+        SingleLineCallStatementSpacingConfig, StatementSpacingMode, TrailingCommaMode,
+        TypeMemberSemicolonConfig, resolve_config,
     };
 
     #[test]
@@ -449,6 +566,10 @@ mod tests {
         assert_eq!(
             config.multiline_call_statement_spacing(),
             StatementSpacingMode::Separate
+        );
+        assert_eq!(
+            config.single_line_call_statement_spacing(),
+            SingleLineCallStatementSpacingConfig::default()
         );
         assert_eq!(
             config.return_statement_spacing(),
@@ -497,6 +618,9 @@ mod tests {
             r#"{"rules":{"statementSpacing":{"imports":"preserve"}}}"#,
             r#"{"rules":{"statementSpacing":{"controlFlowStatements":"preserve"}}}"#,
             r#"{"rules":{"statementSpacing":{"multilineCallStatements":"preserve"}}}"#,
+            r#"{"rules":{"statementSpacing":{"singleLineCallStatements":"preserve"}}}"#,
+            r#"{"rules":{"statementSpacing":{"singleLineCallStatements":{"betweenCalls":"preserve"}}}}"#,
+            r#"{"rules":{"statementSpacing":{"singleLineCallStatements":{"extra":"off"}}}}"#,
             r#"{"rules":{"statementSpacing":{"returnStatements":"preserve"}}}"#,
             r#"{"rules":{"statementSpacing":{"typeAliases":"preserve"}}}"#,
             r#"{"rules":{"statementSpacing":{"variables":"compact"}}}"#,
@@ -531,6 +655,10 @@ mod tests {
             StatementSpacingMode::Separate
         );
         assert_eq!(
+            config.single_line_call_statement_spacing(),
+            SingleLineCallStatementSpacingConfig::default()
+        );
+        assert_eq!(
             config.return_statement_spacing(),
             StatementSpacingMode::Separate
         );
@@ -546,6 +674,55 @@ mod tests {
             TypeMemberSemicolonConfig::default()
         );
         assert_eq!(config.trailing_commas(), TrailingCommaMode::Never);
+    }
+
+    #[test]
+    fn resolves_single_line_call_shorthand_and_partial_layouts() {
+        for (value, expected) in [
+            ("separate", StatementSpacingMode::Separate),
+            ("compact", StatementSpacingMode::Compact),
+            ("off", StatementSpacingMode::Off),
+        ] {
+            let source = format!(
+                r#"{{"rules":{{"statementSpacing":{{"singleLineCallStatements":"{value}"}}}}}}"#
+            );
+            let config: FormatConfig = serde_json::from_str(&source).unwrap();
+            let resolved = resolve_config(config).unwrap();
+
+            assert_eq!(
+                resolved.single_line_call_statement_spacing(),
+                SingleLineCallStatementSpacingConfig {
+                    between_calls: expected,
+                    with_other_statements: expected,
+                }
+            );
+        }
+
+        let config: FormatConfig = serde_json::from_str(
+            r#"{"rules":{"statementSpacing":{"singleLineCallStatements":{"betweenCalls":"off"}}}}"#,
+        )
+        .unwrap();
+        let resolved = resolve_config(config).unwrap();
+        assert_eq!(
+            resolved.single_line_call_statement_spacing(),
+            SingleLineCallStatementSpacingConfig {
+                between_calls: StatementSpacingMode::Off,
+                with_other_statements: StatementSpacingMode::Separate,
+            }
+        );
+
+        let config: FormatConfig = serde_json::from_str(
+            r#"{"rules":{"statementSpacing":{"singleLineCallStatements":{"withOtherStatements":"compact"}}}}"#,
+        )
+        .unwrap();
+        let resolved = resolve_config(config).unwrap();
+        assert_eq!(
+            resolved.single_line_call_statement_spacing(),
+            SingleLineCallStatementSpacingConfig {
+                between_calls: StatementSpacingMode::Compact,
+                with_other_statements: StatementSpacingMode::Compact,
+            }
+        );
     }
 
     #[test]

@@ -1,5 +1,6 @@
 export type InterfaceLayoutMode = 'off';
 export type SemicolonMode = 'always' | 'asNeeded' | 'off';
+export type StatementSpacingMode = 'separate' | 'compact' | 'off';
 export interface FormatConfig {
     $schema?: string | null;
     ignorePatterns?: string[];
@@ -29,6 +30,11 @@ export interface StatementSpacingConfig {
     imports?: 'separate' | 'compact' | 'off';
     multilineCallStatements?: 'separate' | 'compact' | 'off';
     returnStatements?: 'separate' | 'compact' | 'off';
+    singleLineCallStatements?: StatementSpacingMode | SingleLineCallStatementSpacingConfig;
     typeAliases?: 'separate' | 'compact' | 'off';
     variableDeclarations?: 'separate' | 'compact' | 'off';
+}
+export interface SingleLineCallStatementSpacingConfig {
+    betweenCalls?: 'separate' | 'compact' | 'off';
+    withOtherStatements?: 'separate' | 'compact' | 'off';
 }

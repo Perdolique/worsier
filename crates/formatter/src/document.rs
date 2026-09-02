@@ -230,7 +230,9 @@ mod tests {
                 "statementSpacing": {
                     "controlFlowStatements": "off",
                     "imports": "off",
+                    "multilineCallStatements": "off",
                     "returnStatements": "off",
+                    "singleLineCallStatements": "off",
                     "typeAliases": "off",
                     "variableDeclarations": "off"
                 },
