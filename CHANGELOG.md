@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.5.0](https://github.com/Perdolique/worsier/compare/v3.4.0...v3.5.0) (2026-09-05)
+
+
+### Features
+
+* **formatter:** add quote style rule ([4f95af6](https://github.com/Perdolique/worsier/commit/4f95af62a49cdd2523bd368470eb553109a98945))
+* **formatter:** add quote style rule ([8257b18](https://github.com/Perdolique/worsier/commit/8257b18bd4b0e2a20fab4cdd9aa9c704b86f3740))
+
 ## [3.4.0](https://github.com/Perdolique/worsier/compare/v3.3.0...v3.4.0) (2026-09-02)
 
 
