@@ -9,4 +9,5 @@ const props = {
 };
 
 const rendered = <View {...props} />;
+const quoted = <section title="preserved">{"formatted"}</section>;
 <View {...props} />;

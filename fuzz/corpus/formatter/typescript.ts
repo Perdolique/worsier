@@ -3,6 +3,8 @@ import{type Value as ImportedValue,createValue}from'package';
 
 interface Value<T> { readonly item: T; }
 const value = { item: 'text' } satisfies Value<string>;
+const escaped = "don't say \"later\" or \u0041";
+function directive() { "use 'quotes'"; return escaped; }
 
 namespace Runtime { const first: Value<string> = value; work(); }
 

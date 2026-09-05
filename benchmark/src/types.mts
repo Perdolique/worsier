@@ -183,6 +183,7 @@ export interface WorsierSemicolonConfig {
 }
 
 export interface WorsierRulesConfig {
+  quoteStyle: 'single'
   semicolons: WorsierSemicolonConfig
   trailingCommas: 'never'
 }

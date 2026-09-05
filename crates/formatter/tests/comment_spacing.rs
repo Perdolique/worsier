@@ -2,8 +2,8 @@ use std::fmt::Write;
 use std::path::Path;
 
 use worsier_formatter::{
-    FormatConfig, InterfaceLayoutMode, InterfaceLayoutRule, SemicolonMode, StatementSpacingMode,
-    TrailingCommaMode, format_text, resolve_config,
+    FormatConfig, InterfaceLayoutMode, InterfaceLayoutRule, QuoteStyle, SemicolonMode,
+    StatementSpacingMode, TrailingCommaMode, format_text, resolve_config,
 };
 
 fn comments_only() -> FormatConfig {
@@ -11,6 +11,7 @@ fn comments_only() -> FormatConfig {
     config.rules.import_layout = false;
     config.rules.interface_layout = InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off);
     config.rules.object_property_spacing = false;
+    config.rules.quote_style = QuoteStyle::Off;
     let spacing = &mut config.rules.statement_spacing;
     spacing.control_flow_statements = StatementSpacingMode::Off;
     spacing.imports = StatementSpacingMode::Off;

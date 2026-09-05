@@ -14,6 +14,7 @@ test('preserves comment groups through the native API independently of other rul
     importLayout: false,
     interfaceLayout: 'off',
     objectPropertySpacing: false,
+    quoteStyle: 'off',
     statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
     semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
     trailingCommas: 'off'
@@ -43,6 +44,7 @@ test('formats through the asynchronous native API', async () => {
       commentSpacing: false,
       importLayout: false,
       objectPropertySpacing: false,
+      quoteStyle: 'off',
       statementSpacing: { imports: 'off' }
     }
   })
@@ -63,6 +65,7 @@ test('formats through the asynchronous native API', async () => {
       commentSpacing: false,
       importLayout: false,
       objectPropertySpacing: false,
+      quoteStyle: 'off',
       interfaceLayout: 'off',
       statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
       semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
@@ -75,6 +78,31 @@ test('formats through the asynchronous native API', async () => {
     rules: { statementSpacing: { imports: 'compact' } }
   })
   assert.equal(partialNested, 'const first=1\n\nwork()')
+})
+
+test('formats quote styles through the native API', async () => {
+  const source = `const message = "don't"; const element = <div title="kept">{"child"}</div>;`
+  const rules: RulesConfig = {
+    commentSpacing: false,
+    importLayout: false,
+    interfaceLayout: 'off',
+    objectPropertySpacing: false,
+    statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
+    semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
+    trailingCommas: 'off'
+  }
+  assert.equal(
+    await format('sample.tsx', source, { rules }),
+    `const message = 'don\\'t'; const element = <div title="kept">{'child'}</div>;`
+  )
+  assert.equal(
+    await format('sample.ts', `const message = 'say "hi"';`, { rules: { ...rules, quoteStyle: 'double' } }),
+    `const message = "say \\"hi\\"";`
+  )
+  assert.equal(
+    await format('sample.tsx', source, { rules: { ...rules, quoteStyle: 'off' } }),
+    source
+  )
 })
 
 test('formats object property spacing through the native API', async () => {
@@ -94,6 +122,7 @@ test('formats object property spacing through the native API', async () => {
         importLayout: false,
         interfaceLayout: 'off',
         objectPropertySpacing: false,
+        quoteStyle: 'off',
         statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
         semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
         trailingCommas: 'off'
@@ -187,6 +216,7 @@ test('formats interface layouts through the native API', async () => {
     commentSpacing: false,
     importLayout: false,
     objectPropertySpacing: false,
+    quoteStyle: 'off',
     statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
     semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
     trailingCommas: 'off'
@@ -242,6 +272,7 @@ test('formats type alias spacing through the native API', async () => {
       commentSpacing: false,
       importLayout: false,
       objectPropertySpacing: false,
+      quoteStyle: 'off',
       interfaceLayout: 'off',
       statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'compact', variableDeclarations: 'off' },
       semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
@@ -258,6 +289,7 @@ test('formats return statement spacing through the native API', async () => {
       commentSpacing: false,
       importLayout: false,
       objectPropertySpacing: false,
+      quoteStyle: 'off',
       interfaceLayout: 'off',
       statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'separate', typeAliases: 'off', variableDeclarations: 'off' },
       semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
@@ -274,6 +306,7 @@ test('formats control-flow statement spacing through the native API', async () =
       commentSpacing: false,
       importLayout: false,
       objectPropertySpacing: false,
+      quoteStyle: 'off',
       interfaceLayout: 'off',
       statementSpacing: { controlFlowStatements: 'separate', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
       semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
@@ -291,6 +324,7 @@ test('formats granular semicolon groups through the native API', async () => {
       commentSpacing: false,
       importLayout: false,
       objectPropertySpacing: false,
+      quoteStyle: 'off',
       statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
       semicolons: { statements: 'off', classMembers: 'asNeeded', typeMembers: 'always' },
       trailingCommas: 'off'
@@ -315,6 +349,7 @@ test('formats type member semicolons by container layout through the native API'
       importLayout: false,
       interfaceLayout: 'off',
       objectPropertySpacing: false,
+      quoteStyle: 'off',
       statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
       semicolons: {
         statements: 'off',
@@ -334,6 +369,7 @@ test('formats trailing commas through the native API', async () => {
     commentSpacing: false,
     importLayout: false,
     objectPropertySpacing: false,
+    quoteStyle: 'off',
     statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
     semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' }
   }
@@ -376,6 +412,7 @@ test('maps native failures to stable error codes', async () => {
     [{ interfaceLayout: 1.5 }, 'rules.interfaceLayout'],
     [{ interfaceLayout: 'always' }, 'rules.interfaceLayout'],
     [{ objectPropertySpacing: 'always' }, 'rules.objectPropertySpacing'],
+    [{ quoteStyle: 'smart' }, 'rules.quoteStyle'],
     [{ semicolons: 'always' }, 'rules.semicolons'],
     [{ semicolons: { statements: 'never' } }, 'rules.semicolons.statements'],
     [{ semicolons: { typeMembers: { singleLine: 'never' } } }, 'rules.semicolons.typeMembers.singleLine'],
