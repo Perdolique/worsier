@@ -29,6 +29,7 @@
         "importLayout": true,
         "interfaceLayout": 0,
         "objectPropertySpacing": true,
+        "quoteStyle": "single",
         "semicolons": {
           "classMembers": "asNeeded",
           "statements": "asNeeded",
@@ -78,6 +79,14 @@
         }
       ]
     },
+    "QuoteStyle": {
+      "type": "string",
+      "enum": [
+        "single",
+        "double",
+        "off"
+      ]
+    },
     "RulesConfig": {
       "type": "object",
       "properties": {
@@ -96,6 +105,10 @@
         "objectPropertySpacing": {
           "type": "boolean",
           "default": true
+        },
+        "quoteStyle": {
+          "$ref": "#/$defs/QuoteStyle",
+          "default": "single"
         },
         "semicolons": {
           "$ref": "#/$defs/SemicolonConfig",

@@ -37,6 +37,7 @@ pub struct RulesConfig {
     pub import_layout: bool,
     pub interface_layout: InterfaceLayoutRule,
     pub object_property_spacing: bool,
+    pub quote_style: QuoteStyle,
     pub statement_spacing: StatementSpacingConfig,
     pub semicolons: SemicolonConfig,
     pub trailing_commas: TrailingCommaMode,
@@ -49,6 +50,7 @@ impl Default for RulesConfig {
             import_layout: true,
             interface_layout: InterfaceLayoutRule::default(),
             object_property_spacing: true,
+            quote_style: QuoteStyle::default(),
             statement_spacing: StatementSpacingConfig::default(),
             semicolons: SemicolonConfig::default(),
             trailing_commas: TrailingCommaMode::Never,
@@ -430,6 +432,15 @@ pub enum TrailingCommaMode {
     Off,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum QuoteStyle {
+    #[default]
+    Single,
+    Double,
+    Off,
+}
+
 #[derive(Clone, Debug)]
 pub struct ResolvedConfig {
     value: FormatConfig,
@@ -467,6 +478,11 @@ impl ResolvedConfig {
     #[must_use]
     pub const fn object_property_spacing_enabled(&self) -> bool {
         self.value.rules.object_property_spacing
+    }
+
+    #[must_use]
+    pub const fn quote_style(&self) -> QuoteStyle {
+        self.value.rules.quote_style
     }
 
     #[must_use]
@@ -552,7 +568,7 @@ pub fn resolve_config(config: FormatConfig) -> Result<ResolvedConfig, FormatErro
 #[cfg(test)]
 mod tests {
     use super::{
-        FormatConfig, InterfaceLayoutMode, InterfaceLayoutRule, SemicolonMode,
+        FormatConfig, InterfaceLayoutMode, InterfaceLayoutRule, QuoteStyle, SemicolonMode,
         SingleLineCallStatementSpacingConfig, StatementSpacingMode, TrailingCommaMode,
         TypeMemberSemicolonConfig, resolve_config,
     };
@@ -566,6 +582,7 @@ mod tests {
         assert!(config.import_layout_enabled());
         assert_eq!(config.interface_layout_threshold(), Some(0));
         assert!(config.object_property_spacing_enabled());
+        assert_eq!(config.quote_style(), QuoteStyle::Single);
         assert_eq!(
             config.control_flow_statement_spacing(),
             StatementSpacingMode::Separate
@@ -607,12 +624,26 @@ mod tests {
     }
 
     #[test]
+    fn accepts_all_quote_styles() {
+        for (value, expected) in [
+            ("single", QuoteStyle::Single),
+            ("double", QuoteStyle::Double),
+            ("off", QuoteStyle::Off),
+        ] {
+            let source = format!(r#"{{"rules":{{"quoteStyle":"{value}"}}}}"#);
+            let config = serde_json::from_str::<FormatConfig>(&source).unwrap();
+            assert_eq!(resolve_config(config).unwrap().quote_style(), expected);
+        }
+    }
+
+    #[test]
     fn rejects_removed_and_unknown_keys() {
         for source in [
             r#"{"quoteStyle":"single"}"#,
             r#"{"imports":{"specifierLayout":"auto"}}"#,
             r#"{"statementSpacing":[]}"#,
             r#"{"rules":{"objects":true}}"#,
+            r#"{"rules":{"quoteStyle":"smart"}}"#,
             r#"{"rules":{"commentSpacing":"off"}}"#,
             r#"{"rules":{"commentSpacing":1}}"#,
             r#"{"rules":{"commentSpacing":null}}"#,
@@ -656,6 +687,7 @@ mod tests {
         assert!(!config.import_layout_enabled());
         assert_eq!(config.interface_layout_threshold(), Some(0));
         assert!(config.object_property_spacing_enabled());
+        assert_eq!(config.quote_style(), QuoteStyle::Single);
         assert_eq!(
             config.control_flow_statement_spacing(),
             StatementSpacingMode::Separate

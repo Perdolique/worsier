@@ -47,6 +47,8 @@ assert.equal(installedSchema.properties.rules.default.commentSpacing, true)
 assert.equal(installedSchema.$defs.RulesConfig.properties.commentSpacing.default, true)
 assert.equal(installedSchema.properties.rules.default.objectPropertySpacing, true)
 assert.equal(installedSchema.$defs.RulesConfig.properties.objectPropertySpacing.default, true)
+assert.equal(installedSchema.properties.rules.default.quoteStyle, 'single')
+assert.equal(installedSchema.$defs.RulesConfig.properties.quoteStyle.default, 'single')
 assert.equal(installedSchema.properties.rules.default.statementSpacing.multilineCallStatements, 'separate')
 assert.equal(installedSchema.$defs.RulesConfig.properties.statementSpacing.default.multilineCallStatements, 'separate')
 assert.equal(installedSchema.$defs.StatementSpacingConfig.properties.multilineCallStatements.default, 'separate')
@@ -68,6 +70,7 @@ assert.deepEqual(installedSchema.$defs.RulesConfig.properties.semicolons.default
 assert.deepEqual(installedSchema.$defs.SemicolonConfig.properties.typeMembers.default, defaultTypeMembers)
 const installedTypes = await readFile(join(installedPackage, 'dist/types.d.ts'), 'utf8')
 assert.match(installedTypes, /objectPropertySpacing\?: boolean/)
+assert.match(installedTypes, /quoteStyle\?: 'single' \| 'double' \| 'off'/)
 assert.match(installedTypes, /commentSpacing\?: boolean/)
 assert.match(installedTypes, /multilineCallStatements\?: 'separate' \| 'compact' \| 'off'/)
 assert.match(installedTypes, /singleLineCallStatements\?: StatementSpacingMode \| SingleLineCallStatementSpacingConfig/)
@@ -81,10 +84,43 @@ const executable = join(project, 'node_modules/worsier/bin/worsier.js')
 const version = run(process.execPath, [executable, '--version'], project)
 assert.equal(version.stdout.trim(), `worsier ${rootVersion}`)
 run(process.execPath, [executable, '--init'], project)
-assert.equal(
-  await readFile(join(project, 'worsier.jsonc'), 'utf8'),
-  '{\n  "$schema": "./node_modules/worsier/configuration_schema.json",\n  "lineWidth": 120,\n  "verifyAst": true,\n  "rules": {\n    "commentSpacing": true,\n    "importLayout": true,\n    "interfaceLayout": 0,\n    "objectPropertySpacing": true,\n    "statementSpacing": {\n      "controlFlowStatements": "separate",\n      "imports": "separate",\n      "multilineCallStatements": "separate",\n      "returnStatements": "separate",\n      "singleLineCallStatements": {\n        "betweenCalls": "compact",\n        "withOtherStatements": "separate"\n      },\n      "typeAliases": "separate",\n      "variableDeclarations": "separate"\n    },\n    "semicolons": {\n      "statements": "asNeeded",\n      "classMembers": "asNeeded",\n      "typeMembers": {\n        "singleLine": "asNeeded",\n        "multiline": "always"\n      }\n    },\n    "trailingCommas": "never"\n  },\n  "ignorePatterns": []\n}\n'
-)
+const initializedConfig = await readFile(join(project, 'worsier.jsonc'), 'utf8')
+const expectedInitializedConfig = `{
+  "$schema": "./node_modules/worsier/configuration_schema.json",
+  "lineWidth": 120,
+  "verifyAst": true,
+  "rules": {
+    "commentSpacing": true,
+    "importLayout": true,
+    "interfaceLayout": 0,
+    "objectPropertySpacing": true,
+    "quoteStyle": "single",
+    "statementSpacing": {
+      "controlFlowStatements": "separate",
+      "imports": "separate",
+      "multilineCallStatements": "separate",
+      "returnStatements": "separate",
+      "singleLineCallStatements": {
+        "betweenCalls": "compact",
+        "withOtherStatements": "separate"
+      },
+      "typeAliases": "separate",
+      "variableDeclarations": "separate"
+    },
+    "semicolons": {
+      "statements": "asNeeded",
+      "classMembers": "asNeeded",
+      "typeMembers": {
+        "singleLine": "asNeeded",
+        "multiline": "always"
+      }
+    },
+    "trailingCommas": "never"
+  },
+  "ignorePatterns": []
+}
+`
+assert.equal(initializedConfig, expectedInitializedConfig)
 await writeFile(
   join(project, 'worsier.jsonc'),
   '{\n  "$schema": "./node_modules/worsier/configuration_schema.json",\n  "lineWidth": 120,\n  "verifyAst": true,\n  "rules": {\n    // legacy layout\n    "imports": false,\n    "variables": false\n  },\n  "ignorePatterns": []\n}\n'
@@ -92,10 +128,44 @@ await writeFile(
 const updatedConfig = run(process.execPath, [executable, '--update-config'], project)
 assert.match(updatedConfig.stdout, /Migrated rules\.imports/)
 assert.match(updatedConfig.stdout, /Migrated rules\.variables/)
-assert.equal(
-  await readFile(join(project, 'worsier.jsonc'), 'utf8'),
-  '{\n  "$schema": "./node_modules/worsier/configuration_schema.json",\n  "lineWidth": 120,\n  "verifyAst": true,\n  "rules": {\n    "commentSpacing": true,\n    // legacy layout\n    "importLayout": false,\n    "interfaceLayout": 0,\n    "objectPropertySpacing": true,\n    "statementSpacing": {\n      "controlFlowStatements": "separate",\n      "imports": "off",\n      "multilineCallStatements": "separate",\n      "returnStatements": "separate",\n      "singleLineCallStatements": {\n        "betweenCalls": "compact",\n        "withOtherStatements": "separate"\n      },\n      "typeAliases": "separate",\n      "variableDeclarations": "off"\n    },\n    "semicolons": {\n      "statements": "asNeeded",\n      "classMembers": "asNeeded",\n      "typeMembers": {\n        "singleLine": "asNeeded",\n        "multiline": "always"\n      }\n    },\n    "trailingCommas": "never"\n  },\n  "ignorePatterns": []\n}\n'
-)
+const migratedConfig = await readFile(join(project, 'worsier.jsonc'), 'utf8')
+const expectedMigratedConfig = `{
+  "$schema": "./node_modules/worsier/configuration_schema.json",
+  "lineWidth": 120,
+  "verifyAst": true,
+  "rules": {
+    "commentSpacing": true,
+    // legacy layout
+    "importLayout": false,
+    "interfaceLayout": 0,
+    "objectPropertySpacing": true,
+    "quoteStyle": "single",
+    "statementSpacing": {
+      "controlFlowStatements": "separate",
+      "imports": "off",
+      "multilineCallStatements": "separate",
+      "returnStatements": "separate",
+      "singleLineCallStatements": {
+        "betweenCalls": "compact",
+        "withOtherStatements": "separate"
+      },
+      "typeAliases": "separate",
+      "variableDeclarations": "off"
+    },
+    "semicolons": {
+      "statements": "asNeeded",
+      "classMembers": "asNeeded",
+      "typeMembers": {
+        "singleLine": "asNeeded",
+        "multiline": "always"
+      }
+    },
+    "trailingCommas": "never"
+  },
+  "ignorePatterns": []
+}
+`
+assert.equal(migratedConfig, expectedMigratedConfig)
 await writeFile(join(project, 'sample.ts'), 'const first=1;let second=2;')
 run(process.execPath, [executable, '--write', 'sample.ts'], project)
 assert.equal(
@@ -113,6 +183,17 @@ const api = run(
   project
 )
 assert.equal(api.stdout, "import { packed } from 'pkg'\n\nconst raw=[1,2]\n")
+
+const quoteStyle = run(
+  process.execPath,
+  [
+    '--input-type=module',
+    '--eval',
+    `import { format } from 'worsier'; console.log(await format('sample.ts', 'const value = "double";'))`
+  ],
+  project
+)
+assert.equal(quoteStyle.stdout, "const value = 'double'\n")
 
 const singleLineTypeMembers = run(
   process.execPath,

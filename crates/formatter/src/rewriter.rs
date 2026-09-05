@@ -1,4 +1,5 @@
 mod comment_spacing;
+mod quote_style;
 
 use comment_spacing::CommentSpacing;
 
@@ -39,7 +40,7 @@ use oxc_parser::{Kind, ParseOptions, Parser, Token, config::TokensParserConfig};
 use oxc_span::{ContentEq, FileExtension, GetSpan, SourceType, Span};
 
 use crate::{
-    FormatError, ResolvedConfig, SemicolonMode, SingleLineCallStatementSpacingConfig,
+    FormatError, QuoteStyle, ResolvedConfig, SemicolonMode, SingleLineCallStatementSpacingConfig,
     StatementSpacingMode, TrailingCommaMode, TypeMemberSemicolonConfig,
 };
 
@@ -164,6 +165,71 @@ pub(crate) fn format_script(
         return Ok(None);
     }
 
+    let quote_rewrite = quote_style::rewrite(source, &parsed.program, config.quote_style())?;
+    let quote_source = quote_rewrite.as_deref().unwrap_or(source);
+    let rule_rewrite = if quote_rewrite.is_some() {
+        if script_rules_after_quotes_disabled(config, type_member_semicolons) {
+            None
+        } else {
+            let quote_allocator = Allocator::default();
+            let quote_parsed = parse_tokens(&quote_allocator, quote_source, source_type)?;
+            rewrite_after_quotes(
+                quote_source,
+                &quote_parsed,
+                source_type,
+                newline_hint,
+                config,
+                type_member_semicolons,
+            )?
+        }
+    } else {
+        rewrite_after_quotes(
+            source,
+            &parsed,
+            source_type,
+            newline_hint,
+            config,
+            type_member_semicolons,
+        )?
+    };
+    let rewritten = rule_rewrite.or(quote_rewrite);
+
+    let Some(mut rewritten) = rewritten else {
+        return Ok(None);
+    };
+    maybe_corrupt_rewrite_for_test(&mut rewritten);
+    if rewritten == source {
+        return Ok(None);
+    }
+    if config.verify_ast() {
+        verify(
+            file_name,
+            source_type,
+            source,
+            &parsed.program,
+            &rewritten,
+            config.quote_style(),
+        )?;
+    }
+
+    if bom.is_empty() {
+        return Ok(Some(rewritten));
+    }
+
+    let mut output = String::with_capacity(bom.len() + rewritten.len());
+    output.push_str(bom);
+    output.push_str(&rewritten);
+    Ok(Some(output))
+}
+
+fn rewrite_after_quotes(
+    source: &str,
+    parsed: &oxc_parser::ParserReturn<'_>,
+    source_type: SourceType,
+    newline_hint: Option<&'static str>,
+    config: &ResolvedConfig,
+    type_member_semicolons: TypeMemberSemicolonConfig,
+) -> Result<Option<String>, FormatError> {
     let newline = detect_newline(source, newline_hint);
     let comment_spacing = if config.comment_spacing_enabled() {
         CommentSpacing::new(source, &parsed.program, &parsed.tokens)?
@@ -206,7 +272,7 @@ pub(crate) fn format_script(
     rewritten = apply_always_trailing_commas(
         source,
         rewritten,
-        &parsed,
+        parsed,
         source_type,
         config.trailing_commas(),
         single_arrow_comma,
@@ -215,35 +281,25 @@ pub(crate) fn format_script(
     rewritten = apply_semicolons(
         source,
         rewritten,
-        &parsed,
+        parsed,
         source_type,
         config.statement_semicolons(),
         config.class_member_semicolons(),
         type_member_semicolons,
     )?;
 
-    let Some(mut rewritten) = rewritten else {
-        return Ok(None);
-    };
-    maybe_corrupt_rewrite_for_test(&mut rewritten);
-    if rewritten == source {
-        return Ok(None);
-    }
-    if config.verify_ast() {
-        verify(file_name, source_type, &parsed.program, &rewritten)?;
-    }
-
-    if bom.is_empty() {
-        return Ok(Some(rewritten));
-    }
-
-    let mut output = String::with_capacity(bom.len() + rewritten.len());
-    output.push_str(bom);
-    output.push_str(&rewritten);
-    Ok(Some(output))
+    Ok(rewritten)
 }
 
 fn script_rules_disabled(
+    config: &ResolvedConfig,
+    type_member_semicolons: TypeMemberSemicolonConfig,
+) -> bool {
+    config.quote_style() == QuoteStyle::Off
+        && script_rules_after_quotes_disabled(config, type_member_semicolons)
+}
+
+fn script_rules_after_quotes_disabled(
     config: &ResolvedConfig,
     type_member_semicolons: TypeMemberSemicolonConfig,
 ) -> bool {
@@ -436,8 +492,10 @@ fn parse_result(
 fn verify(
     file_name: &Path,
     source_type: SourceType,
+    input_source: &str,
     input: &Program<'_>,
     output: &str,
+    quote_style: QuoteStyle,
 ) -> Result<(), FormatError> {
     let allocator = Allocator::default();
     let parsed =
@@ -445,13 +503,107 @@ fn verify(
             message: format!("{}: output does not parse: {error}", file_name.display()),
         })?;
 
-    if input.content_ne(&parsed.program) {
+    if input.content_ne(&parsed.program)
+        && !directives_match_after_quote_rewrite(
+            input_source,
+            input,
+            output,
+            &parsed.program,
+            source_type,
+            quote_style,
+        )?
+    {
         return Err(FormatError::Verification {
             message: format!("{}: output AST differs from input AST", file_name.display()),
         });
     }
 
     Ok(())
+}
+
+fn directives_match_after_quote_rewrite(
+    input_source: &str,
+    input: &Program<'_>,
+    output_source: &str,
+    output: &Program<'_>,
+    source_type: SourceType,
+    quote_style: QuoteStyle,
+) -> Result<bool, FormatError> {
+    if quote_style == QuoteStyle::Off {
+        return Ok(false);
+    }
+
+    let input_directives = collect_directives(input);
+    let output_directives = collect_directives(output);
+    if input_directives.len() != output_directives.len() {
+        return Ok(false);
+    }
+    for (input, output) in input_directives.iter().zip(&output_directives) {
+        if input.value != output.value || input.lone_surrogates != output.lone_surrogates {
+            return Ok(false);
+        }
+        let expected = quote_style::canonical_span(input_source, input.span, quote_style)?;
+        if source_slice(output_source, output.span)? != expected {
+            return Ok(false);
+        }
+    }
+
+    let masked_input = mask_directives(input_source, &input_directives)?;
+    let masked_output = mask_directives(output_source, &output_directives)?;
+    let input_allocator = Allocator::default();
+    let masked_input = parse(&input_allocator, &masked_input, source_type).map_err(|error| {
+        FormatError::internal(format!(
+            "failed to parse masked verification input: {error}"
+        ))
+    })?;
+    let output_allocator = Allocator::default();
+    let masked_output = parse(&output_allocator, &masked_output, source_type).map_err(|error| {
+        FormatError::internal(format!(
+            "failed to parse masked verification output: {error}"
+        ))
+    })?;
+    Ok(masked_input.program.content_eq(&masked_output.program))
+}
+
+struct DirectiveInfo {
+    span: Span,
+    value: String,
+    lone_surrogates: bool,
+}
+
+fn collect_directives(program: &Program<'_>) -> Vec<DirectiveInfo> {
+    struct Collector {
+        directives: Vec<DirectiveInfo>,
+    }
+
+    impl<'a> Visit<'a> for Collector {
+        fn visit_directive(&mut self, directive: &Directive<'a>) {
+            self.directives.push(DirectiveInfo {
+                span: directive.expression.span,
+                value: directive.expression.value.to_string(),
+                lone_surrogates: directive.expression.lone_surrogates,
+            });
+            walk_directive(self, directive);
+        }
+    }
+
+    let mut collector = Collector {
+        directives: Vec::new(),
+    };
+    collector.visit_program(program);
+    collector.directives
+}
+
+fn mask_directives(source: &str, directives: &[DirectiveInfo]) -> Result<String, FormatError> {
+    let edits = directives
+        .iter()
+        .map(|directive| Edit {
+            start: directive.span.start,
+            end: directive.span.end,
+            replacement: "'worsier-directive'".to_owned(),
+        })
+        .collect::<Vec<_>>();
+    apply_edits(source, &edits)
 }
 
 #[derive(Debug)]
@@ -4428,7 +4580,14 @@ pub fn benchmark_verify(file_name: &Path, source: &str) -> Result<(), FormatErro
         .ok_or_else(|| FormatError::unsupported_source(file_name))?;
     let allocator = Allocator::default();
     let parsed = parse(&allocator, source, source_type)?;
-    verify(file_name, source_type, &parsed.program, source)
+    verify(
+        file_name,
+        source_type,
+        source,
+        &parsed.program,
+        source,
+        QuoteStyle::Off,
+    )
 }
 
 #[cfg(test)]
@@ -4447,10 +4606,11 @@ mod tests {
         TYPE_ALIAS_MULTILINE_SCANS, VARIABLE_MULTILINE_SCANS, parse, verify,
     };
     use crate::{
-        FormatConfig, InterfaceLayoutMode, InterfaceLayoutRule, RulesConfig, SemicolonConfig,
-        SemicolonMode, SingleLineCallStatementSpacingConfig, SingleLineCallStatementSpacingRule,
-        StatementSpacingConfig, StatementSpacingMode, TrailingCommaMode, TypeMemberSemicolonConfig,
-        TypeMemberSemicolonRule, format_text, resolve_config,
+        FormatConfig, InterfaceLayoutMode, InterfaceLayoutRule, QuoteStyle, RulesConfig,
+        SemicolonConfig, SemicolonMode, SingleLineCallStatementSpacingConfig,
+        SingleLineCallStatementSpacingRule, StatementSpacingConfig, StatementSpacingMode,
+        TrailingCommaMode, TypeMemberSemicolonConfig, TypeMemberSemicolonRule, format_text,
+        resolve_config,
     };
 
     fn format(source: &str) -> String {
@@ -4460,6 +4620,7 @@ mod tests {
     fn format_with_semicolons_off(source: &str, mut config: FormatConfig) -> String {
         config.rules.semicolons = semicolons_off();
         config.rules.comment_spacing = false;
+        config.rules.quote_style = QuoteStyle::Off;
         format_file_with("sample.ts", source, config)
     }
 
@@ -4485,6 +4646,7 @@ mod tests {
                 import_layout: false,
                 interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                 object_property_spacing: enabled,
+                quote_style: QuoteStyle::Off,
                 statement_spacing: StatementSpacingConfig {
                     control_flow_statements: StatementSpacingMode::Off,
                     imports: StatementSpacingMode::Off,
@@ -4823,6 +4985,7 @@ mod tests {
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     object_property_spacing: false,
+                    quote_style: QuoteStyle::Off,
                     statement_spacing: StatementSpacingConfig {
                         control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Off,
@@ -4893,6 +5056,7 @@ mod tests {
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     object_property_spacing: false,
+                    quote_style: QuoteStyle::Off,
                     statement_spacing: StatementSpacingConfig {
                         control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Off,
@@ -4922,6 +5086,7 @@ mod tests {
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     object_property_spacing: false,
+                    quote_style: QuoteStyle::Off,
                     statement_spacing: StatementSpacingConfig {
                         control_flow_statements,
                         imports: StatementSpacingMode::Off,
@@ -4967,6 +5132,7 @@ mod tests {
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     object_property_spacing: false,
+                    quote_style: QuoteStyle::Off,
                     statement_spacing: StatementSpacingConfig {
                         control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Off,
@@ -4994,6 +5160,7 @@ mod tests {
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     object_property_spacing: false,
+                    quote_style: QuoteStyle::Off,
                     statement_spacing: StatementSpacingConfig {
                         control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Off,
@@ -5026,6 +5193,7 @@ mod tests {
                     import_layout: false,
                     interface_layout,
                     object_property_spacing: false,
+                    quote_style: QuoteStyle::Off,
                     statement_spacing: StatementSpacingConfig {
                         control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Off,
@@ -5099,6 +5267,7 @@ mod tests {
                         import_layout: false,
                         interface_layout: InterfaceLayoutRule::Threshold(0),
                         object_property_spacing: false,
+                        quote_style: QuoteStyle::Off,
                         statement_spacing: StatementSpacingConfig {
                             control_flow_statements: StatementSpacingMode::Off,
                             imports: StatementSpacingMode::Off,
@@ -5368,6 +5537,7 @@ mod tests {
                 import_layout: false,
                 interface_layout: InterfaceLayoutRule::Threshold(0),
                 object_property_spacing: false,
+                quote_style: QuoteStyle::Off,
                 statement_spacing: StatementSpacingConfig {
                     control_flow_statements: StatementSpacingMode::Off,
                     imports: StatementSpacingMode::Off,
@@ -6093,6 +6263,7 @@ mod tests {
                 import_layout: false,
                 interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                 object_property_spacing: false,
+                quote_style: QuoteStyle::Off,
                 statement_spacing: StatementSpacingConfig {
                     control_flow_statements: StatementSpacingMode::Off,
                     imports: StatementSpacingMode::Off,
@@ -6255,6 +6426,7 @@ mod tests {
                 import_layout: true,
                 interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                 object_property_spacing: false,
+                quote_style: QuoteStyle::Off,
                 statement_spacing: StatementSpacingConfig {
                     control_flow_statements: StatementSpacingMode::Off,
                     imports: StatementSpacingMode::Off,
@@ -6534,6 +6706,7 @@ mod tests {
                 import_layout: false,
                 interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                 object_property_spacing: false,
+                quote_style: QuoteStyle::Off,
                 statement_spacing: StatementSpacingConfig {
                     control_flow_statements: StatementSpacingMode::Off,
                     imports: StatementSpacingMode::Off,
@@ -6558,6 +6731,47 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn quote_only_rewrite_skips_post_quote_parsing() {
+        let config = resolve_config(FormatConfig {
+            verify_ast: false,
+            rules: RulesConfig {
+                comment_spacing: false,
+                import_layout: false,
+                interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                object_property_spacing: false,
+                quote_style: QuoteStyle::Single,
+                statement_spacing: StatementSpacingConfig {
+                    control_flow_statements: StatementSpacingMode::Off,
+                    imports: StatementSpacingMode::Off,
+                    multiline_call_statements: StatementSpacingMode::Off,
+                    single_line_call_statements: StatementSpacingMode::Off.into(),
+                    return_statements: StatementSpacingMode::Off,
+                    type_aliases: StatementSpacingMode::Off,
+                    variable_declarations: StatementSpacingMode::Off,
+                },
+                semicolons: semicolons_off(),
+                trailing_commas: TrailingCommaMode::Off,
+            },
+            ..FormatConfig::default()
+        })
+        .unwrap();
+        TOKEN_PREFLIGHT_PARSES.set(0);
+        TOKEN_PARSER_RUNS.set(0);
+
+        let output = format_text(
+            Path::new("sample.ts"),
+            r#"const value = "double";"#,
+            &config,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(output, "const value = 'double';");
+        assert_eq!(TOKEN_PREFLIGHT_PARSES.get(), 1);
+        assert_eq!(TOKEN_PARSER_RUNS.get(), 1);
     }
 
     #[test]
@@ -6664,10 +6878,65 @@ mod tests {
         let error = verify(
             file_name,
             source_type,
+            "import { original } from 'pkg';",
             &input.program,
             "import { changed } from 'pkg';",
+            QuoteStyle::Off,
         )
         .unwrap_err();
+        assert_eq!(error.code(), "VERIFICATION_ERROR");
+    }
+
+    #[test]
+    fn verification_accepts_only_quote_escape_changes_in_directives() {
+        let file_name = Path::new("sample.ts");
+        let source_type = crate::document::script_source_type(file_name).unwrap();
+        let allocator = Allocator::default();
+        let source = r#""use 'client'"; const value = "same";"#;
+        let input = parse(&allocator, source, source_type).unwrap();
+        verify(
+            file_name,
+            source_type,
+            source,
+            &input.program,
+            r"'use \'client\''; const value = 'same';",
+            QuoteStyle::Single,
+        )
+        .unwrap();
+
+        let escaped_allocator = Allocator::default();
+        let escaped_source = r#""use\x20strict"; const value = "same";"#;
+        let escaped_input = parse(&escaped_allocator, escaped_source, source_type).unwrap();
+        let error = verify(
+            file_name,
+            source_type,
+            escaped_source,
+            &escaped_input.program,
+            r"'use strict'; const value = 'same';",
+            QuoteStyle::Single,
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), "VERIFICATION_ERROR");
+    }
+
+    #[test]
+    fn verification_rejects_neighbor_change_after_directive_quote_rewrite() {
+        let file_name = Path::new("sample.ts");
+        let source_type = crate::document::script_source_type(file_name).unwrap();
+        let allocator = Allocator::default();
+        let source = r#""use strict"; const original = "same";"#;
+        let input = parse(&allocator, source, source_type).unwrap();
+
+        let error = verify(
+            file_name,
+            source_type,
+            source,
+            &input.program,
+            r"'use strict'; const changed = 'same';",
+            QuoteStyle::Single,
+        )
+        .unwrap_err();
+
         assert_eq!(error.code(), "VERIFICATION_ERROR");
     }
 
@@ -6994,6 +7263,7 @@ mod tests {
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     object_property_spacing: false,
+                    quote_style: QuoteStyle::Off,
                     statement_spacing: StatementSpacingConfig {
                         control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Off,
@@ -7078,6 +7348,7 @@ mod tests {
                             import_layout: false,
                             interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                             object_property_spacing: false,
+                            quote_style: QuoteStyle::Off,
                             statement_spacing: StatementSpacingConfig {
                                 control_flow_statements: StatementSpacingMode::Off,
                                 imports: StatementSpacingMode::Off,
@@ -7850,6 +8121,7 @@ mod tests {
                         import_layout: false,
                         interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                         object_property_spacing: false,
+                        quote_style: QuoteStyle::Off,
                         statement_spacing: StatementSpacingConfig {
                             control_flow_statements: StatementSpacingMode::Separate,
                             imports: StatementSpacingMode::Off,
@@ -7899,6 +8171,7 @@ mod tests {
                         import_layout: false,
                         interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                         object_property_spacing: false,
+                        quote_style: QuoteStyle::Off,
                         statement_spacing: StatementSpacingConfig {
                             control_flow_statements,
                             imports: StatementSpacingMode::Off,
@@ -7945,6 +8218,7 @@ mod tests {
                         import_layout: false,
                         interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                         object_property_spacing: false,
+                        quote_style: QuoteStyle::Off,
                         statement_spacing: StatementSpacingConfig {
                             control_flow_statements,
                             imports,
@@ -8116,6 +8390,7 @@ mod tests {
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     object_property_spacing: false,
+                    quote_style: QuoteStyle::Off,
                     statement_spacing: StatementSpacingConfig {
                         control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Off,
@@ -8168,6 +8443,7 @@ mod tests {
                         import_layout: false,
                         interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                         object_property_spacing: false,
+                        quote_style: QuoteStyle::Off,
                         statement_spacing: StatementSpacingConfig {
                             control_flow_statements: StatementSpacingMode::Off,
                             imports: StatementSpacingMode::Off,

@@ -7,6 +7,7 @@
     "importLayout": true,
     "interfaceLayout": 0,
     "objectPropertySpacing": true,
+    "quoteStyle": "single",
     "statementSpacing": {
       "controlFlowStatements": "separate",
       "imports": "separate",

@@ -6,8 +6,8 @@ mod rewriter;
 mod vue;
 
 pub use config::{
-    FormatConfig, InterfaceLayoutMode, InterfaceLayoutRule, ResolvedConfig, RulesConfig,
-    SemicolonConfig, SemicolonMode, SingleLineCallStatementSpacingConfig,
+    FormatConfig, InterfaceLayoutMode, InterfaceLayoutRule, QuoteStyle, ResolvedConfig,
+    RulesConfig, SemicolonConfig, SemicolonMode, SingleLineCallStatementSpacingConfig,
     SingleLineCallStatementSpacingRule, StatementSpacingConfig, StatementSpacingMode,
     TrailingCommaMode, TypeMemberSemicolonConfig, TypeMemberSemicolonRule, resolve_config,
 };
