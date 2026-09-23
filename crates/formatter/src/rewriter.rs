@@ -7058,10 +7058,15 @@ mod tests {
         for index in 0..import_count {
             writeln!(source, "import{{value{index}}}from'package-{index}';").unwrap();
         }
-        let mut config = FormatConfig::default();
-        config.verify_ast = false;
-        config.rules.import_layout = false;
-        let config = resolve_config(config).unwrap();
+        let config = resolve_config(FormatConfig {
+            verify_ast: false,
+            rules: RulesConfig {
+                import_layout: false,
+                ..RulesConfig::default()
+            },
+            ..FormatConfig::default()
+        })
+        .unwrap();
 
         NAMED_BRACE_TOKEN_SCANS.set(0);
         let output = format_text(Path::new("many-imports.ts"), &source, &config)
