@@ -697,9 +697,20 @@ mod tests {
         let result = update_config_source("{}", Path::new("worsier.jsonc")).unwrap();
         assert_eq!(
             result.output,
-            "{\n  \"$schema\": \"./node_modules/worsier/configuration_schema.json\",\n  \"lineWidth\": 120,\n  \"verifyAst\": true,\n  \"rules\": {\n    \"commentSpacing\": true,\n    \"importLayout\": true,\n    \"interfaceLayout\": 0,\n    \"objectPropertySpacing\": true,\n    \"quoteStyle\": \"single\",\n    \"statementSpacing\": {\n      \"controlFlowStatements\": \"separate\",\n      \"imports\": \"separate\",\n      \"multilineCallStatements\": \"separate\",\n      \"returnStatements\": \"separate\",\n      \"singleLineCallStatements\": {\n        \"betweenCalls\": \"compact\",\n        \"withOtherStatements\": \"separate\"\n      },\n      \"typeAliases\": \"separate\",\n      \"variableDeclarations\": \"separate\"\n    },\n    \"semicolons\": {\n      \"statements\": \"asNeeded\",\n      \"classMembers\": \"asNeeded\",\n      \"typeMembers\": {\n        \"singleLine\": \"asNeeded\",\n        \"multiline\": \"always\"\n      }\n    },\n    \"trailingCommas\": \"never\"\n  },\n  \"ignorePatterns\": []\n}"
+            "{\n  \"$schema\": \"./node_modules/worsier/configuration_schema.json\",\n  \"lineWidth\": 120,\n  \"verifyAst\": true,\n  \"rules\": {\n    \"bracketSpacing\": {\n      \"curly\": \"always\",\n      \"square\": \"never\"\n    },\n    \"commentSpacing\": true,\n    \"importLayout\": true,\n    \"interfaceLayout\": 0,\n    \"objectPropertySpacing\": true,\n    \"quoteStyle\": \"single\",\n    \"statementSpacing\": {\n      \"controlFlowStatements\": \"separate\",\n      \"imports\": \"separate\",\n      \"multilineCallStatements\": \"separate\",\n      \"returnStatements\": \"separate\",\n      \"singleLineCallStatements\": {\n        \"betweenCalls\": \"compact\",\n        \"withOtherStatements\": \"separate\"\n      },\n      \"typeAliases\": \"separate\",\n      \"variableDeclarations\": \"separate\"\n    },\n    \"semicolons\": {\n      \"statements\": \"asNeeded\",\n      \"classMembers\": \"asNeeded\",\n      \"typeMembers\": {\n        \"singleLine\": \"asNeeded\",\n        \"multiline\": \"always\"\n      }\n    },\n    \"trailingCommas\": \"never\"\n  },\n  \"ignorePatterns\": []\n}"
         );
         assert_eq!(result.changes.len(), 5);
+    }
+
+    #[test]
+    fn adds_missing_bracket_spacing_without_overwriting_a_selected_mode() {
+        let default = parsed_output("{}");
+        assert_eq!(default["rules"]["bracketSpacing"]["curly"], "always");
+        assert_eq!(default["rules"]["bracketSpacing"]["square"], "never");
+
+        let partial = parsed_output(r#"{"rules":{"bracketSpacing":{"curly":"off"}}}"#);
+        assert_eq!(partial["rules"]["bracketSpacing"]["curly"], "off");
+        assert_eq!(partial["rules"]["bracketSpacing"]["square"], "never");
     }
 
     #[test]

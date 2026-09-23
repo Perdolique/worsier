@@ -160,7 +160,7 @@ mod tests {
 
         assert_eq!(
             output,
-            "﻿<!-- top -->\r\n<template><script>not code</script><div>é</div></template>\r\n<script>import { a } from 'a'\r\n\r\nconst one={x:1}</script>\r\n<style>.x{}</style>\r\n<script setup lang=\"ts\">import { b } from 'b'\r\n\r\nconst two:number=2</script>\r\n<docs><script>also not code</script></docs>\r\n"
+            "﻿<!-- top -->\r\n<template><script>not code</script><div>é</div></template>\r\n<script>import { a } from 'a'\r\n\r\nconst one={ x:1 }</script>\r\n<style>.x{}</style>\r\n<script setup lang=\"ts\">import { b } from 'b'\r\n\r\nconst two:number=2</script>\r\n<docs><script>also not code</script></docs>\r\n"
         );
         assert!(
             format_text(Path::new("тест.vue"), &output, &config())
@@ -183,7 +183,7 @@ mod tests {
 
         assert_eq!(
             output,
-            "<script setup lang=\"ts\">\n  import {\n    first,\n    second\n  } from 'pkg'\n\n  type Alias=string\n\n  interface Shape {\n    first: string;\n    second: number;\n  }\n  class Store { value=1 }\n\n  const value={items:[1,2]}\n\n  run()\n</script>"
+            "<script setup lang=\"ts\">\n  import {\n    first,\n    second\n  } from 'pkg'\n\n  type Alias=string\n\n  interface Shape {\n    first: string;\n    second: number;\n  }\n  class Store { value=1 }\n\n  const value={ items:[1,2] }\n\n  run()\n</script>"
         );
         assert!(
             format_text(Path::new("component.vue"), &output, &config)
@@ -225,6 +225,7 @@ mod tests {
         let source = "<template> untouched </template>\n<script>const value={a:1,};function f(){work();return value;}</script>";
         let raw = r#"{
             "rules": {
+                "bracketSpacing": { "curly": "off", "square": "off" },
                 "importLayout": false,
                 "interfaceLayout": "off",
                 "statementSpacing": {

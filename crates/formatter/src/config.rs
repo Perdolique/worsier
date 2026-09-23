@@ -33,6 +33,7 @@ impl Default for FormatConfig {
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
 #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
 pub struct RulesConfig {
+    pub bracket_spacing: BracketSpacingConfig,
     pub comment_spacing: bool,
     pub import_layout: bool,
     pub interface_layout: InterfaceLayoutRule,
@@ -46,6 +47,7 @@ pub struct RulesConfig {
 impl Default for RulesConfig {
     fn default() -> Self {
         Self {
+            bracket_spacing: BracketSpacingConfig::default(),
             comment_spacing: true,
             import_layout: true,
             interface_layout: InterfaceLayoutRule::default(),
@@ -56,6 +58,30 @@ impl Default for RulesConfig {
             trailing_commas: TrailingCommaMode::Never,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(default, deny_unknown_fields, rename_all = "camelCase")]
+pub struct BracketSpacingConfig {
+    pub curly: BracketSpacingMode,
+    pub square: BracketSpacingMode,
+}
+
+impl Default for BracketSpacingConfig {
+    fn default() -> Self {
+        Self {
+            curly: BracketSpacingMode::Always,
+            square: BracketSpacingMode::Never,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BracketSpacingMode {
+    Always,
+    Never,
+    Off,
 }
 
 #[derive(Clone, Copy, Debug, Eq, JsonSchema, PartialEq, Serialize)]
@@ -448,6 +474,11 @@ pub struct ResolvedConfig {
 
 impl ResolvedConfig {
     #[must_use]
+    pub const fn bracket_spacing(&self) -> BracketSpacingConfig {
+        self.value.rules.bracket_spacing
+    }
+
+    #[must_use]
     pub const fn comment_spacing_enabled(&self) -> bool {
         self.value.rules.comment_spacing
     }
@@ -568,9 +599,9 @@ pub fn resolve_config(config: FormatConfig) -> Result<ResolvedConfig, FormatErro
 #[cfg(test)]
 mod tests {
     use super::{
-        FormatConfig, InterfaceLayoutMode, InterfaceLayoutRule, QuoteStyle, SemicolonMode,
-        SingleLineCallStatementSpacingConfig, StatementSpacingMode, TrailingCommaMode,
-        TypeMemberSemicolonConfig, resolve_config,
+        BracketSpacingMode, FormatConfig, InterfaceLayoutMode, InterfaceLayoutRule, QuoteStyle,
+        SemicolonMode, SingleLineCallStatementSpacingConfig, StatementSpacingMode,
+        TrailingCommaMode, TypeMemberSemicolonConfig, resolve_config,
     };
 
     #[test]
@@ -578,6 +609,8 @@ mod tests {
         let config = resolve_config(FormatConfig::default()).unwrap();
         assert_eq!(config.line_width(), 120);
         assert!(config.verify_ast());
+        assert_eq!(config.bracket_spacing().curly, BracketSpacingMode::Always);
+        assert_eq!(config.bracket_spacing().square, BracketSpacingMode::Never);
         assert!(config.comment_spacing_enabled());
         assert!(config.import_layout_enabled());
         assert_eq!(config.interface_layout_threshold(), Some(0));
@@ -637,6 +670,21 @@ mod tests {
     }
 
     #[test]
+    fn accepts_bracket_spacing_modes_and_keeps_partial_defaults() {
+        for (value, expected) in [
+            ("always", BracketSpacingMode::Always),
+            ("never", BracketSpacingMode::Never),
+            ("off", BracketSpacingMode::Off),
+        ] {
+            let source = format!(r#"{{"rules":{{"bracketSpacing":{{"square":"{value}"}}}}}}"#);
+            let config: FormatConfig = serde_json::from_str(&source).unwrap();
+            let spacing = resolve_config(config).unwrap().bracket_spacing();
+            assert_eq!(spacing.curly, BracketSpacingMode::Always);
+            assert_eq!(spacing.square, expected);
+        }
+    }
+
+    #[test]
     fn rejects_removed_and_unknown_keys() {
         for source in [
             r#"{"quoteStyle":"single"}"#,
@@ -647,6 +695,9 @@ mod tests {
             r#"{"rules":{"commentSpacing":"off"}}"#,
             r#"{"rules":{"commentSpacing":1}}"#,
             r#"{"rules":{"commentSpacing":null}}"#,
+            r#"{"rules":{"bracketSpacing":true}}"#,
+            r#"{"rules":{"bracketSpacing":{"curly":"preserve"}}}"#,
+            r#"{"rules":{"bracketSpacing":{"extra":"off"}}}"#,
             r#"{"rules":{"imports":true}}"#,
             r#"{"rules":{"variables":true}}"#,
             r#"{"trailingCommas":"always"}"#,

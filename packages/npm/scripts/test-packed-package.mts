@@ -44,6 +44,9 @@ run('npm', ['install', '--ignore-scripts', rootTarball, platformTarball], projec
 const installedPackage = join(project, 'node_modules/worsier')
 const installedSchema = JSON.parse(await readFile(join(installedPackage, 'configuration_schema.json'), 'utf8'))
 assert.equal(installedSchema.properties.rules.default.commentSpacing, true)
+const defaultBrackets = { curly: 'always', square: 'never' }
+assert.deepEqual(installedSchema.properties.rules.default.bracketSpacing, defaultBrackets)
+assert.deepEqual(installedSchema.$defs.RulesConfig.properties.bracketSpacing.default, defaultBrackets)
 assert.equal(installedSchema.$defs.RulesConfig.properties.commentSpacing.default, true)
 assert.equal(installedSchema.properties.rules.default.objectPropertySpacing, true)
 assert.equal(installedSchema.$defs.RulesConfig.properties.objectPropertySpacing.default, true)
@@ -69,6 +72,9 @@ assert.deepEqual(installedSchema.properties.rules.default.semicolons.typeMembers
 assert.deepEqual(installedSchema.$defs.RulesConfig.properties.semicolons.default.typeMembers, defaultTypeMembers)
 assert.deepEqual(installedSchema.$defs.SemicolonConfig.properties.typeMembers.default, defaultTypeMembers)
 const installedTypes = await readFile(join(installedPackage, 'dist/types.d.ts'), 'utf8')
+assert.match(installedTypes, /bracketSpacing\?: BracketSpacingConfig/)
+assert.match(installedTypes, /curly\?: 'always' \| 'never' \| 'off'/)
+assert.match(installedTypes, /square\?: 'always' \| 'never' \| 'off'/)
 assert.match(installedTypes, /objectPropertySpacing\?: boolean/)
 assert.match(installedTypes, /quoteStyle\?: 'single' \| 'double' \| 'off'/)
 assert.match(installedTypes, /commentSpacing\?: boolean/)
@@ -90,6 +96,10 @@ const expectedInitializedConfig = `{
   "lineWidth": 120,
   "verifyAst": true,
   "rules": {
+    "bracketSpacing": {
+      "curly": "always",
+      "square": "never"
+    },
     "commentSpacing": true,
     "importLayout": true,
     "interfaceLayout": 0,
@@ -134,6 +144,10 @@ const expectedMigratedConfig = `{
   "lineWidth": 120,
   "verifyAst": true,
   "rules": {
+    "bracketSpacing": {
+      "curly": "always",
+      "square": "never"
+    },
     "commentSpacing": true,
     // legacy layout
     "importLayout": false,

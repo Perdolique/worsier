@@ -25,6 +25,10 @@
     "rules": {
       "$ref": "#/$defs/RulesConfig",
       "default": {
+        "bracketSpacing": {
+          "curly": "always",
+          "square": "never"
+        },
         "commentSpacing": true,
         "importLayout": true,
         "interfaceLayout": 0,
@@ -60,6 +64,28 @@
   },
   "additionalProperties": false,
   "$defs": {
+    "BracketSpacingConfig": {
+      "type": "object",
+      "properties": {
+        "curly": {
+          "$ref": "#/$defs/BracketSpacingMode",
+          "default": "always"
+        },
+        "square": {
+          "$ref": "#/$defs/BracketSpacingMode",
+          "default": "never"
+        }
+      },
+      "additionalProperties": false
+    },
+    "BracketSpacingMode": {
+      "type": "string",
+      "enum": [
+        "always",
+        "never",
+        "off"
+      ]
+    },
     "InterfaceLayoutMode": {
       "type": "string",
       "enum": [
@@ -90,6 +116,13 @@
     "RulesConfig": {
       "type": "object",
       "properties": {
+        "bracketSpacing": {
+          "$ref": "#/$defs/BracketSpacingConfig",
+          "default": {
+            "curly": "always",
+            "square": "never"
+          }
+        },
         "commentSpacing": {
           "type": "boolean",
           "default": true
