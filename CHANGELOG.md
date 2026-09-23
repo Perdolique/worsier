@@ -1,5 +1,17 @@
 # Changelog
 
+## [3.6.0](https://github.com/Perdolique/worsier/compare/v3.5.0...v3.6.0) (2026-09-23)
+
+
+### Features
+
+* **formatter:** add bracket spacing rule ([d38a588](https://github.com/Perdolique/worsier/commit/d38a58810179f17f740128978748f8fe374809b1))
+
+
+### Bug Fixes
+
+* **formatter:** initialize scan test config ([63a64c5](https://github.com/Perdolique/worsier/commit/63a64c57205d5eee6bebb05096b428901c40e909))
+
 ## [3.5.0](https://github.com/Perdolique/worsier/compare/v3.4.0...v3.5.0) (2026-09-05)
 
 
