@@ -1,3 +1,4 @@
+mod bracket_spacing;
 mod comment_spacing;
 mod quote_style;
 
@@ -40,8 +41,9 @@ use oxc_parser::{Kind, ParseOptions, Parser, Token, config::TokensParserConfig};
 use oxc_span::{ContentEq, FileExtension, GetSpan, SourceType, Span};
 
 use crate::{
-    FormatError, QuoteStyle, ResolvedConfig, SemicolonMode, SingleLineCallStatementSpacingConfig,
-    StatementSpacingMode, TrailingCommaMode, TypeMemberSemicolonConfig,
+    BracketSpacingConfig, BracketSpacingMode, FormatError, QuoteStyle, ResolvedConfig,
+    SemicolonMode, SingleLineCallStatementSpacingConfig, StatementSpacingMode, TrailingCommaMode,
+    TypeMemberSemicolonConfig,
 };
 
 const BOM: char = '\u{feff}';
@@ -49,6 +51,7 @@ const BOM: char = '\u{feff}';
 #[cfg(test)]
 thread_local! {
     static SPAN_LOOKUP_COMPARISONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static NAMED_BRACE_TOKEN_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static INDENT_RESOLUTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static IMPORT_MULTILINE_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static TYPE_ALIAS_MULTILINE_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -244,6 +247,7 @@ fn rewrite_after_quotes(
         config.line_width(),
         newline,
         RewriteRules {
+            bracket_spacing: config.bracket_spacing(),
             comment_spacing: &comment_spacing,
             import_layout: config.import_layout_enabled(),
             interface_layout_threshold: config.interface_layout_threshold(),
@@ -303,7 +307,9 @@ fn script_rules_after_quotes_disabled(
     config: &ResolvedConfig,
     type_member_semicolons: TypeMemberSemicolonConfig,
 ) -> bool {
-    !config.comment_spacing_enabled()
+    config.bracket_spacing().curly == BracketSpacingMode::Off
+        && config.bracket_spacing().square == BracketSpacingMode::Off
+        && !config.comment_spacing_enabled()
         && !config.import_layout_enabled()
         && config.interface_layout_threshold().is_none()
         && !config.object_property_spacing_enabled()
@@ -1521,6 +1527,7 @@ enum StatementTarget {
 
 #[derive(Clone, Copy, Debug)]
 struct RewriteRules<'a> {
+    bracket_spacing: BracketSpacingConfig,
     comment_spacing: &'a CommentSpacing,
     import_layout: bool,
     interface_layout_threshold: Option<u32>,
@@ -1721,6 +1728,15 @@ fn rewrite_edits(
     rules
         .comment_spacing
         .append_uncovered(source, newline, &mut edits)?;
+    bracket_spacing::append_edits(
+        source,
+        program,
+        tokens,
+        rules.bracket_spacing,
+        rules.import_layout,
+        &mut edits,
+    )?;
+    edits.sort_by_key(|edit| (edit.start, edit.end));
     Ok(edits)
 }
 
@@ -1816,6 +1832,7 @@ fn format_import_edits(
             line_width,
             newline,
             rules.trailing_commas,
+            rules.bracket_spacing.curly,
             semicolon_shape,
         )?;
         let original = source_slice(source, span)?;
@@ -3966,6 +3983,7 @@ fn format_import(
     line_width: u32,
     newline: &str,
     trailing_commas: TrailingCommaMode,
+    curly_spacing: BracketSpacingMode,
     semicolon_shape: ImportSemicolonShape,
 ) -> Result<FormattedImport, FormatError> {
     let omitted_attribute_comma = (trailing_commas == TrailingCommaMode::Never)
@@ -3985,6 +4003,7 @@ fn format_import(
             false,
             base_indent,
             trailing_commas,
+            curly_spacing,
             omitted_attribute_comma,
         )?;
         let effective_width = semicolon_shape
@@ -4003,6 +4022,7 @@ fn format_import(
                 true,
                 base_indent,
                 trailing_commas,
+                curly_spacing,
                 omitted_attribute_comma,
             )?
         } else {
@@ -4016,6 +4036,7 @@ fn format_import(
             comments,
             comment_spacing,
             newline,
+            curly_spacing,
             false,
             omitted_attribute_comma,
         )?
@@ -4060,9 +4081,10 @@ fn named_braces(declaration: &ImportDeclaration<'_>, tokens: &[Token]) -> Option
     }
 
     let mut left_brace = None;
-    for token in tokens.iter().filter(|token| {
-        token.start() >= declaration.span.start && token.end() <= declaration.source.span.start
-    }) {
+    let before_source = Span::new(declaration.span.start, declaration.source.span.start);
+    for token in tokens_in_span(tokens, before_source) {
+        #[cfg(test)]
+        NAMED_BRACE_TOKEN_SCANS.set(NAMED_BRACE_TOKEN_SCANS.get() + 1);
         match token.kind() {
             Kind::LCurly if left_brace.is_none() => left_brace = Some(token.span()),
             Kind::RCurly if left_brace.is_some() => return Some((left_brace?, token.span())),
@@ -4088,6 +4110,7 @@ fn format_named_import(
     multiline: bool,
     base_indent: &str,
     trailing_commas: TrailingCommaMode,
+    curly_spacing: BracketSpacingMode,
     omitted_attribute_comma: Option<Span>,
 ) -> Result<String, FormatError> {
     let prefix = canonicalize_range(
@@ -4097,6 +4120,7 @@ fn format_named_import(
         comments,
         comment_spacing,
         newline,
+        curly_spacing,
         false,
         None,
     )?;
@@ -4107,6 +4131,7 @@ fn format_named_import(
         comments,
         comment_spacing,
         newline,
+        curly_spacing,
         false,
         omitted_attribute_comma,
     )?;
@@ -4138,6 +4163,7 @@ fn format_named_import(
             comments,
             comment_spacing,
             newline,
+            curly_spacing,
             add_comma,
             segment.omitted_comma,
         )?;
@@ -4154,9 +4180,14 @@ fn format_named_import(
         multiline,
         base_indent,
         comment_spacing.enabled(),
+        curly_spacing,
     ))
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the import renderer needs its segments, layout, and independent spacing rules"
+)]
 fn assemble_named_import(
     prefix: CanonicalText,
     suffix: &CanonicalText,
@@ -4165,6 +4196,7 @@ fn assemble_named_import(
     multiline: bool,
     base_indent: &str,
     preserve_comment_layout: bool,
+    curly_spacing: BracketSpacingMode,
 ) -> String {
     let mut output = prefix.text;
     push_import_separator(
@@ -4207,16 +4239,26 @@ fn assemble_named_import(
                 .leading_lines
                 .or_else(|| previous.and_then(|segment| segment.trailing_lines));
             let line_comment = previous.is_some_and(|segment| segment.ends_line_comment);
-            push_import_separator(&mut output, lines, line_comment, newline);
+            if index != 0
+                || curly_spacing != BracketSpacingMode::Never
+                || lines.is_some_and(|lines| lines > 0)
+            {
+                push_import_separator(&mut output, lines, line_comment, newline);
+            }
             output.push_str(&segment.text);
         }
         let last = segments.last().unwrap();
-        push_import_separator(
-            &mut output,
-            last.trailing_lines,
-            last.ends_line_comment,
-            newline,
-        );
+        if curly_spacing != BracketSpacingMode::Never
+            || last.trailing_lines.is_some_and(|lines| lines > 0)
+            || last.ends_line_comment
+        {
+            push_import_separator(
+                &mut output,
+                last.trailing_lines,
+                last.ends_line_comment,
+                newline,
+            );
+        }
         output.push('}');
     }
 
@@ -4329,6 +4371,7 @@ fn canonicalize_range(
     comments: &[Comment],
     comment_spacing: &CommentSpacing,
     newline: &str,
+    curly_spacing: BracketSpacingMode,
     comma_after_last_token: bool,
     omitted_token: Option<Span>,
 ) -> Result<CanonicalText, FormatError> {
@@ -4382,6 +4425,7 @@ fn canonicalize_range(
                     previous,
                     item,
                     newline,
+                    curly_spacing,
                     preserve_inline_comment,
                 ));
             }
@@ -4415,6 +4459,7 @@ fn item_separator<'a>(
     previous: &LexicalItem<'_>,
     current: &LexicalItem<'_>,
     newline: &'a str,
+    curly_spacing: BracketSpacingMode,
     preserve_inline_comment: bool,
 ) -> &'a str {
     if matches!(previous.kind, LexicalKind::LineComment)
@@ -4433,7 +4478,9 @@ fn item_separator<'a>(
                 Kind::Comma | Kind::Semicolon | Kind::RParen | Kind::RBrack | Kind::Colon,
             ),
         ) => "",
+        (_, LexicalKind::Token(Kind::RCurly)) if curly_spacing == BracketSpacingMode::Never => "",
         (_, LexicalKind::Token(Kind::RCurly)) => " ",
+        (LexicalKind::Token(Kind::LCurly), _) if curly_spacing == BracketSpacingMode::Never => "",
         (LexicalKind::Token(Kind::LParen | Kind::LBrack), _) => "",
         _ => " ",
     }
@@ -4600,10 +4647,11 @@ mod tests {
     use super::{
         CORRUPT_REWRITE_FOR_TEST, DEFERRED_IMPORT_BOUNDARY_LOOKUPS, IMPORT_MULTILINE_SCANS,
         INDENT_RESOLUTIONS, LINE_BREAK_INDEX_BUILDS, LINE_BREAK_QUERIES, LINE_START_INDEX_QUERIES,
-        LIST_MULTILINE_INDEX_QUERIES, PARENTHESIS_INDEX_BUILDS, PARENTHESIS_LOOKUPS,
-        RAW_LINE_START_SCANS, RAW_LIST_MULTILINE_SCANS, SPAN_LOOKUP_COMPARISONS,
-        STANDALONE_INDENT_SCANS, TOKEN_PARSER_RUNS, TOKEN_PREFLIGHT_PARSES,
-        TYPE_ALIAS_MULTILINE_SCANS, VARIABLE_MULTILINE_SCANS, parse, verify,
+        LIST_MULTILINE_INDEX_QUERIES, NAMED_BRACE_TOKEN_SCANS, PARENTHESIS_INDEX_BUILDS,
+        PARENTHESIS_LOOKUPS, RAW_LINE_START_SCANS, RAW_LIST_MULTILINE_SCANS,
+        SPAN_LOOKUP_COMPARISONS, STANDALONE_INDENT_SCANS, TOKEN_PARSER_RUNS,
+        TOKEN_PREFLIGHT_PARSES, TYPE_ALIAS_MULTILINE_SCANS, VARIABLE_MULTILINE_SCANS, parse,
+        verify,
     };
     use crate::{
         FormatConfig, InterfaceLayoutMode, InterfaceLayoutRule, QuoteStyle, RulesConfig,
@@ -4613,12 +4661,18 @@ mod tests {
         resolve_config,
     };
 
+    const BRACKET_SPACING_OFF: crate::BracketSpacingConfig = crate::BracketSpacingConfig {
+        curly: crate::BracketSpacingMode::Off,
+        square: crate::BracketSpacingMode::Off,
+    };
+
     fn format(source: &str) -> String {
         format_with_semicolons_off(source, FormatConfig::default())
     }
 
     fn format_with_semicolons_off(source: &str, mut config: FormatConfig) -> String {
         config.rules.semicolons = semicolons_off();
+        config.rules.bracket_spacing = BRACKET_SPACING_OFF;
         config.rules.comment_spacing = false;
         config.rules.quote_style = QuoteStyle::Off;
         format_file_with("sample.ts", source, config)
@@ -4642,6 +4696,7 @@ mod tests {
     fn object_spacing_config(enabled: bool) -> FormatConfig {
         FormatConfig {
             rules: RulesConfig {
+                bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 import_layout: false,
                 interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
@@ -4981,6 +5036,7 @@ mod tests {
             source,
             FormatConfig {
                 rules: RulesConfig {
+                    bracket_spacing: BRACKET_SPACING_OFF,
                     comment_spacing: false,
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
@@ -5128,6 +5184,7 @@ mod tests {
             source,
             FormatConfig {
                 rules: RulesConfig {
+                    bracket_spacing: BRACKET_SPACING_OFF,
                     comment_spacing: false,
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
@@ -5156,6 +5213,7 @@ mod tests {
             source,
             FormatConfig {
                 rules: RulesConfig {
+                    bracket_spacing: BRACKET_SPACING_OFF,
                     comment_spacing: false,
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
@@ -5189,6 +5247,7 @@ mod tests {
             source,
             FormatConfig {
                 rules: RulesConfig {
+                    bracket_spacing: BRACKET_SPACING_OFF,
                     comment_spacing: false,
                     import_layout: false,
                     interface_layout,
@@ -5263,6 +5322,7 @@ mod tests {
                 FormatConfig {
                     line_width,
                     rules: RulesConfig {
+                        bracket_spacing: BRACKET_SPACING_OFF,
                         comment_spacing: false,
                         import_layout: false,
                         interface_layout: InterfaceLayoutRule::Threshold(0),
@@ -5533,6 +5593,7 @@ mod tests {
         let source = "\u{feff}interface Shape { /** value */ value: [\r\n    string,\r\n  ]; // run\r\nrun(): void; }";
         let raw_config = FormatConfig {
             rules: RulesConfig {
+                bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 import_layout: false,
                 interface_layout: InterfaceLayoutRule::Threshold(0),
@@ -6259,6 +6320,7 @@ mod tests {
 
         let config = resolve_config(FormatConfig {
             rules: RulesConfig {
+                bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 import_layout: false,
                 interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
@@ -6422,6 +6484,7 @@ mod tests {
         let config = resolve_config(FormatConfig {
             line_width: u32::try_from(expected.chars().count()).unwrap(),
             rules: RulesConfig {
+                bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 import_layout: true,
                 interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
@@ -6492,6 +6555,7 @@ mod tests {
         let config = || FormatConfig {
             line_width: 120,
             rules: RulesConfig {
+                bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 semicolons: SemicolonConfig {
                     statements: SemicolonMode::Always,
@@ -6702,6 +6766,7 @@ mod tests {
         let source = "import{a,b}from'x';interface Shape { value: string; }type Value={raw:true};const value={raw:true};function f(){work();return value;}";
         let config = resolve_config(FormatConfig {
             rules: RulesConfig {
+                bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 import_layout: false,
                 interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
@@ -6738,6 +6803,7 @@ mod tests {
         let config = resolve_config(FormatConfig {
             verify_ast: false,
             rules: RulesConfig {
+                bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 import_layout: false,
                 interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
@@ -6780,6 +6846,7 @@ mod tests {
         let output = format(source);
         let config = resolve_config(FormatConfig {
             rules: RulesConfig {
+                bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 semicolons: semicolons_off(),
                 ..RulesConfig::default()
@@ -6799,6 +6866,7 @@ mod tests {
         let config = resolve_config(FormatConfig {
             verify_ast: false,
             rules: RulesConfig {
+                bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 semicolons: semicolons_off(),
                 trailing_commas: TrailingCommaMode::Never,
@@ -6826,6 +6894,7 @@ mod tests {
         let config = resolve_config(FormatConfig {
             verify_ast: false,
             rules: RulesConfig {
+                bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 semicolons: semicolons_off(),
                 trailing_commas: TrailingCommaMode::Always,
@@ -6983,6 +7052,36 @@ mod tests {
     }
 
     #[test]
+    fn named_brace_scans_stay_bounded_without_import_layout() {
+        let import_count = 512;
+        let mut source = String::new();
+        for index in 0..import_count {
+            writeln!(source, "import{{value{index}}}from'package-{index}';").unwrap();
+        }
+        let config = resolve_config(FormatConfig {
+            verify_ast: false,
+            rules: RulesConfig {
+                import_layout: false,
+                ..RulesConfig::default()
+            },
+            ..FormatConfig::default()
+        })
+        .unwrap();
+
+        NAMED_BRACE_TOKEN_SCANS.set(0);
+        let output = format_text(Path::new("many-imports.ts"), &source, &config)
+            .unwrap()
+            .unwrap();
+        let scans = NAMED_BRACE_TOKEN_SCANS.get();
+        assert!(output.contains("import{ value0 }from'package-0'"));
+        assert!(scans > 0);
+        assert!(
+            scans < import_count * 32,
+            "named braces scanned {scans} tokens for {import_count} imports"
+        );
+    }
+
+    #[test]
     fn deferred_import_boundary_lookups_stay_linear() {
         let item_count = 512;
         let mut source = String::new();
@@ -6997,6 +7096,7 @@ mod tests {
         let config = resolve_config(FormatConfig {
             verify_ast: false,
             rules: RulesConfig {
+                bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 statement_spacing: StatementSpacingConfig {
                     control_flow_statements: StatementSpacingMode::Off,
@@ -7344,6 +7444,7 @@ mod tests {
                     definition,
                     FormatConfig {
                         rules: RulesConfig {
+                            bracket_spacing: BRACKET_SPACING_OFF,
                             comment_spacing: false,
                             import_layout: false,
                             interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
@@ -8908,6 +9009,7 @@ mod tests {
                     definition,
                     FormatConfig {
                         rules: RulesConfig {
+                            bracket_spacing: BRACKET_SPACING_OFF,
                             comment_spacing: false,
                             semicolons: semicolons_off(),
                             ..RulesConfig::default()
@@ -8929,6 +9031,7 @@ mod tests {
                 declaration,
                 FormatConfig {
                     rules: RulesConfig {
+                        bracket_spacing: BRACKET_SPACING_OFF,
                         comment_spacing: false,
                         semicolons: semicolons_off(),
                         ..RulesConfig::default()
@@ -8946,6 +9049,7 @@ mod tests {
             &source,
             FormatConfig {
                 rules: RulesConfig {
+                    bracket_spacing: BRACKET_SPACING_OFF,
                     comment_spacing: false,
                     semicolons: semicolons_off(),
                     ..RulesConfig::default()
@@ -8960,6 +9064,7 @@ mod tests {
                 &output,
                 FormatConfig {
                     rules: RulesConfig {
+                        bracket_spacing: BRACKET_SPACING_OFF,
                         comment_spacing: false,
                         semicolons: semicolons_off(),
                         ..RulesConfig::default()

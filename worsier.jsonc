@@ -3,6 +3,10 @@
   "lineWidth": 120,
   "verifyAst": true,
   "rules": {
+    "bracketSpacing": {
+      "curly": "always",
+      "square": "never"
+    },
     "commentSpacing": true,
     "importLayout": true,
     "interfaceLayout": 0,

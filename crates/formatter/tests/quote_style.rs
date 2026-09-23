@@ -7,6 +7,8 @@ use worsier_formatter::{
 
 fn quote_config(style: QuoteStyle) -> FormatConfig {
     let mut config = FormatConfig::default();
+    config.rules.bracket_spacing.curly = worsier_formatter::BracketSpacingMode::Off;
+    config.rules.bracket_spacing.square = worsier_formatter::BracketSpacingMode::Off;
     config.rules.comment_spacing = false;
     config.rules.import_layout = false;
     config.rules.interface_layout = InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off);

@@ -8,6 +8,8 @@ use worsier_formatter::{
 
 fn comments_only() -> FormatConfig {
     let mut config = FormatConfig::default();
+    config.rules.bracket_spacing.curly = worsier_formatter::BracketSpacingMode::Off;
+    config.rules.bracket_spacing.square = worsier_formatter::BracketSpacingMode::Off;
     config.rules.import_layout = false;
     config.rules.interface_layout = InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off);
     config.rules.object_property_spacing = false;

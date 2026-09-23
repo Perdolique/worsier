@@ -12,6 +12,7 @@ export interface FormatConfig {
   verifyAst?: boolean
 }
 export interface RulesConfig {
+  bracketSpacing?: BracketSpacingConfig
   commentSpacing?: boolean
   importLayout?: boolean
   interfaceLayout?: number | InterfaceLayoutMode
@@ -20,6 +21,10 @@ export interface RulesConfig {
   semicolons?: SemicolonConfig
   statementSpacing?: StatementSpacingConfig
   trailingCommas?: 'always' | 'never' | 'off'
+}
+export interface BracketSpacingConfig {
+  curly?: 'always' | 'never' | 'off'
+  square?: 'always' | 'never' | 'off'
 }
 export interface SemicolonConfig {
   classMembers?: 'always' | 'asNeeded' | 'off'

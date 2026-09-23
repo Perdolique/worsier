@@ -10,6 +10,7 @@ import type { RulesConfig } from '../dist/types.js'
 
 test('preserves comment groups through the native API independently of other rules', async () => {
   const rules: RulesConfig = {
+    bracketSpacing: { curly: 'off', square: 'off' },
     commentSpacing: true,
     importLayout: false,
     interfaceLayout: 'off',
@@ -36,11 +37,12 @@ test('preserves comment groups through the native API independently of other rul
 test('formats through the asynchronous native API', async () => {
   const source = "import{one,type Two}from'pkg';const value={items:[1,2]};"
   const output = await format('sample.ts', source)
-  assert.equal(output, "import { one, type Two } from 'pkg'\n\nconst value={items:[1,2]}")
+  assert.equal(output, "import { one, type Two } from 'pkg'\n\nconst value={ items:[1,2] }")
   assert.equal(await format('sample.ts', source, {}), output)
 
   const variablesOnly = await format('sample.ts', source, {
     rules: {
+      bracketSpacing: { curly: 'off', square: 'off' },
       commentSpacing: false,
       importLayout: false,
       objectPropertySpacing: false,
@@ -62,6 +64,7 @@ test('formats through the asynchronous native API', async () => {
 
   const disabled = await format('sample.ts', source, {
     rules: {
+      bracketSpacing: { curly: 'off', square: 'off' },
       commentSpacing: false,
       importLayout: false,
       objectPropertySpacing: false,
@@ -80,9 +83,29 @@ test('formats through the asynchronous native API', async () => {
   assert.equal(partialNested, 'const first=1\n\nwork()')
 })
 
+test('formats bracket spacing through the native API', async () => {
+  const rules: RulesConfig = { bracketSpacing: { curly: 'always', square: 'never' } }
+  const spacedObject = await format('sample.ts', 'let {taskId}=receipt', { rules })
+  assert.equal(spacedObject, 'let { taskId }=receipt')
+
+  const compactArray = await format('sample.ts', 'const items=[ one ]', { rules })
+  assert.equal(compactArray, 'const items=[one]')
+
+  const compactObject = await format('sample.ts', 'let { taskId }=receipt', {
+    rules: { bracketSpacing: { curly: 'never', square: 'off' } }
+  })
+  assert.equal(compactObject, 'let {taskId}=receipt')
+
+  const unchangedObject = await format('sample.ts', 'let {taskId}=receipt', {
+    rules: { bracketSpacing: { curly: 'off', square: 'off' } }
+  })
+  assert.equal(unchangedObject, 'let {taskId}=receipt')
+})
+
 test('formats quote styles through the native API', async () => {
   const source = `const message = "don't"; const element = <div title="kept">{"child"}</div>;`
   const rules: RulesConfig = {
+    bracketSpacing: { curly: 'off', square: 'off' },
     commentSpacing: false,
     importLayout: false,
     interfaceLayout: 'off',
@@ -118,6 +141,7 @@ test('formats object property spacing through the native API', async () => {
   assert.equal(
     await format('sample.ts', source, {
       rules: {
+        bracketSpacing: { curly: 'off', square: 'off' },
         commentSpacing: false,
         importLayout: false,
         interfaceLayout: 'off',

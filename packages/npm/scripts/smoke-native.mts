@@ -12,7 +12,9 @@ if (!addonPath) {
 const require = createRequire(import.meta.url)
 const binding = require(resolve(addonPath)) as NativeBinding
 const output = await binding.format('smoke.ts', "import{value}from'pkg';const raw={items:[1,2]};", '{}')
-assert.equal(output, "import { value } from 'pkg'\n\nconst raw={items:[1,2]}")
+assert.equal(output, "import { value } from 'pkg'\n\nconst raw={ items:[1,2] }")
+const brackets = await binding.format('smoke.ts', 'let {taskId}=receipt', '{}')
+assert.equal(brackets, 'let { taskId }=receipt')
 const quoteOutput = await binding.format('smoke.ts', `const message = "don't";`, '{}')
 assert.equal(quoteOutput, `const message = 'don\\'t'`)
 const objectSpacing = await binding.format(
