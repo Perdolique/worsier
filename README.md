@@ -318,6 +318,8 @@ const output = await format(
 
 Repository scripts, npm package tests, and benchmark tooling use native ESM TypeScript (`.mts`) executed directly by Node.js without a loader or transpilation step. Run `vp run check:types` for strict no-emit type checking; the complete `vp run check` includes that check alongside the Rust, npm, native-package, and benchmark suites.
 
+Local development pins Node.js 24 LTS, Rust 1.98.1, and pnpm 12.6.0. Linux CI checks use Ubuntu 26.04; release binaries for Linux still build on Ubuntu 24.04 to preserve their glibc compatibility baseline.
+
 On macOS, CLI tests compare ACL entries by UUID before and after file updates without resolving UUIDs to account names.
 
 ## Performance benchmarks

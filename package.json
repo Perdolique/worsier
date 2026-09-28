@@ -2,7 +2,7 @@
   "name": "worsier-workspace",
   "version": "3.6.0",
   "private": true,
-  "packageManager": "pnpm@11.24.0",
+  "packageManager": "pnpm@12.6.0",
   "scripts": {
     "benchmark": "pnpm --filter worsier build && pnpm --filter worsier build:native && pnpm --filter worsier-benchmark benchmark",
     "benchmark:update": "pnpm --filter worsier build && pnpm --filter worsier build:native && pnpm --filter worsier-benchmark benchmark:update",
@@ -14,8 +14,8 @@
     "generate": "cargo run -p worsier-formatter --example generate_schema && node scripts/generate-types.mts"
   },
   "devDependencies": {
-    "@napi-rs/cli": "3.8.6",
-    "@types/node": "26.4.0",
+    "@napi-rs/cli": "3.10.5",
+    "@types/node": "26.6.3",
     "json-schema-to-typescript": "16.0.0",
     "typescript": "7.0.2"
   }

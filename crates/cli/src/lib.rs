@@ -555,13 +555,14 @@ fn load_config(path: &Path, no_verify: bool) -> Result<Arc<LoadedConfig>> {
         )
     })?;
     let value: serde_json::Value =
-        jsonc_parser::parse_to_serde_value(&source, &jsonc_parser::ParseOptions::default())
-            .with_context(|| {
+        jsonc_parser::parse_to_serde_value(&source, &config_parse_options()).with_context(
+            || {
                 format!(
                     "invalid JSONC configuration {}",
                     escaped_path(&absolute_path)
                 )
-            })?;
+            },
+        )?;
     let contains_migratable_legacy_rules = has_migratable_legacy_keys(&value);
     let mut config: FormatConfig = match serde_path_to_error::deserialize(value) {
         Ok(config) => config,
@@ -589,6 +590,15 @@ fn load_config(path: &Path, no_verify: bool) -> Result<Arc<LoadedConfig>> {
         config: Arc::new(resolved),
         ignore,
     }))
+}
+
+fn config_parse_options() -> jsonc_parser::ParseOptions {
+    jsonc_parser::ParseOptions {
+        allow_bare_decimal_point_numbers: false,
+        allow_non_finite_numbers: false,
+        allow_extended_string_escapes: false,
+        ..Default::default()
+    }
 }
 
 fn build_config_ignore(path: &Path, config: &ResolvedConfig) -> Result<Gitignore> {
@@ -1028,6 +1038,19 @@ mod tests {
             "{\n  \"$schema\": \"./node_modules/worsier/configuration_schema.json\",\n  \"lineWidth\": 120,\n  \"verifyAst\": true,\n  \"rules\": {\n    \"bracketSpacing\": {\n      \"curly\": \"always\",\n      \"square\": \"never\"\n    },\n    \"commentSpacing\": true,\n    \"importLayout\": true,\n    \"interfaceLayout\": 0,\n    \"objectPropertySpacing\": true,\n    \"quoteStyle\": \"single\",\n    \"statementSpacing\": {\n      \"controlFlowStatements\": \"separate\",\n      \"imports\": \"separate\",\n      \"multilineCallStatements\": \"separate\",\n      \"returnStatements\": \"separate\",\n      \"singleLineCallStatements\": {\n        \"betweenCalls\": \"compact\",\n        \"withOtherStatements\": \"separate\"\n      },\n      \"typeAliases\": \"separate\",\n      \"variableDeclarations\": \"separate\"\n    },\n    \"semicolons\": {\n      \"statements\": \"asNeeded\",\n      \"classMembers\": \"asNeeded\",\n      \"typeMembers\": {\n        \"singleLine\": \"asNeeded\",\n        \"multiline\": \"always\"\n      }\n    },\n    \"trailingCommas\": \"never\"\n  },\n  \"ignorePatterns\": []\n}\n"
         );
         assert!(init_config(directory.path()).is_err());
+    }
+
+    #[test]
+    fn config_loader_keeps_json5_only_escapes_invalid() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(CONFIG_FILE);
+        fs::write(&path, r#"{"$schema":"\x41"}"#).unwrap();
+
+        let error = load_config_with_override(&path, false).unwrap_err();
+        assert!(error.to_string().contains("invalid JSONC configuration"));
+
+        fs::write(&path, "{ // comment\n  \"lineWidth\": 100\n}").unwrap();
+        assert!(load_config_with_override(&path, false).is_ok());
     }
 
     #[test]

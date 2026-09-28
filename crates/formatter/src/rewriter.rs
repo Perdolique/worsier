@@ -56,7 +56,6 @@ thread_local! {
     static IMPORT_MULTILINE_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static TYPE_ALIAS_MULTILINE_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static VARIABLE_MULTILINE_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static TOKEN_PREFLIGHT_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static TOKEN_PARSER_RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static LINE_BREAK_INDEX_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static LINE_BREAK_QUERIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -152,7 +151,7 @@ pub(crate) fn format_script(
         .strip_prefix(BOM)
         .map_or(("", source_text), |text| ("\u{feff}", text));
     let allocator = Allocator::default();
-    let parsed = parse_with_tokens(&allocator, source, source_type)?;
+    let parsed = parse_tokens(&allocator, source, source_type)?;
 
     if parsed.is_flow_language {
         return Err(FormatError::UnsupportedSource {
@@ -439,21 +438,6 @@ fn parse<'a>(
         .with_options(parse_options())
         .parse();
     parse_result(parsed)
-}
-
-fn parse_with_tokens<'a>(
-    allocator: &'a Allocator,
-    source: &'a str,
-    source_type: SourceType,
-) -> Result<oxc_parser::ParserReturn<'a>, FormatError> {
-    // The token-producing parser can panic on malformed lexer input such as NUL. Run the
-    // diagnostic parser first so invalid source is rejected before token collection begins.
-    #[cfg(test)]
-    TOKEN_PREFLIGHT_PARSES.set(TOKEN_PREFLIGHT_PARSES.get() + 1);
-    let preflight_allocator = Allocator::default();
-    parse(&preflight_allocator, source, source_type)?;
-
-    parse_tokens(allocator, source, source_type)
 }
 
 fn parse_tokens<'a>(
@@ -4393,7 +4377,9 @@ fn canonicalize_range(
             span: comment.span,
             text: source_slice(source, comment.span)?,
             kind: match comment.kind {
-                CommentKind::Line => LexicalKind::LineComment,
+                CommentKind::Line | CommentKind::HtmlOpen | CommentKind::HtmlClose => {
+                    LexicalKind::LineComment
+                }
                 CommentKind::SingleLineBlock | CommentKind::MultiLineBlock => {
                     LexicalKind::BlockComment
                 }
@@ -4650,8 +4636,7 @@ mod tests {
         LIST_MULTILINE_INDEX_QUERIES, NAMED_BRACE_TOKEN_SCANS, PARENTHESIS_INDEX_BUILDS,
         PARENTHESIS_LOOKUPS, RAW_LINE_START_SCANS, RAW_LIST_MULTILINE_SCANS,
         SPAN_LOOKUP_COMPARISONS, STANDALONE_INDENT_SCANS, TOKEN_PARSER_RUNS,
-        TOKEN_PREFLIGHT_PARSES, TYPE_ALIAS_MULTILINE_SCANS, VARIABLE_MULTILINE_SCANS, parse,
-        verify,
+        TYPE_ALIAS_MULTILINE_SCANS, VARIABLE_MULTILINE_SCANS, parse, verify,
     };
     use crate::{
         FormatConfig, InterfaceLayoutMode, InterfaceLayoutRule, QuoteStyle, RulesConfig,
@@ -6824,7 +6809,6 @@ mod tests {
             ..FormatConfig::default()
         })
         .unwrap();
-        TOKEN_PREFLIGHT_PARSES.set(0);
         TOKEN_PARSER_RUNS.set(0);
 
         let output = format_text(
@@ -6836,7 +6820,6 @@ mod tests {
         .unwrap();
 
         assert_eq!(output, "const value = 'double';");
-        assert_eq!(TOKEN_PREFLIGHT_PARSES.get(), 1);
         assert_eq!(TOKEN_PARSER_RUNS.get(), 1);
     }
 
@@ -6875,7 +6858,6 @@ mod tests {
             ..FormatConfig::default()
         })
         .unwrap();
-        TOKEN_PREFLIGHT_PARSES.set(0);
         TOKEN_PARSER_RUNS.set(0);
 
         format_text(
@@ -6885,12 +6867,11 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(TOKEN_PREFLIGHT_PARSES.get(), 1);
         assert_eq!(TOKEN_PARSER_RUNS.get(), 1);
     }
 
     #[test]
-    fn always_reparses_a_rewritten_intermediate_without_a_second_preflight() {
+    fn always_reparses_a_rewritten_intermediate() {
         let config = resolve_config(FormatConfig {
             verify_ast: false,
             rules: RulesConfig {
@@ -6903,7 +6884,6 @@ mod tests {
             ..FormatConfig::default()
         })
         .unwrap();
-        TOKEN_PREFLIGHT_PARSES.set(0);
         TOKEN_PARSER_RUNS.set(0);
 
         format_text(
@@ -6913,7 +6893,6 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(TOKEN_PREFLIGHT_PARSES.get(), 1);
         assert_eq!(TOKEN_PARSER_RUNS.get(), 2);
     }
 
@@ -9113,9 +9092,11 @@ mod tests {
     }
 
     #[test]
-    fn rejects_token_lexer_crash_input_without_panicking() {
+    fn rejects_malformed_token_input_without_panicking() {
         let config = resolve_config(FormatConfig::default()).unwrap();
-        let error = format_text(Path::new("sample.ts"), "\0", &config).unwrap_err();
-        assert_eq!(error.code(), "PARSE_ERROR");
+        for source in ["\0", "foo();\n'unterminated"] {
+            let error = format_text(Path::new("sample.ts"), source, &config).unwrap_err();
+            assert_eq!(error.code(), "PARSE_ERROR", "{source:?}");
+        }
     }
 }

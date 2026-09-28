@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   release-please:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       actions: write
       contents: write
@@ -80,9 +80,9 @@ jobs:
   validate:
     needs: release-please
     if: needs.release-please.outputs.release_created == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
-      - uses: Perdolique/automations/.github/actions/setup-pnpm@v3
+      - uses: Perdolique/automations/.github/actions/setup-pnpm@v4
         with:
           ref: ${{ needs.release-please.outputs.sha }}
           install-dependencies: true
@@ -137,7 +137,7 @@ jobs:
             build_args: --cross-compile
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: Perdolique/automations/.github/actions/setup-pnpm@v3
+      - uses: Perdolique/automations/.github/actions/setup-pnpm@v4
         with:
           ref: ${{ needs.release-please.outputs.sha }}
           install-dependencies: true
@@ -206,18 +206,18 @@ jobs:
   publish:
     needs: [release-please, native]
     if: needs.release-please.outputs.release_created == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     environment: npm
     permissions:
       contents: write
       id-token: write
     steps:
-      - uses: Perdolique/automations/.github/actions/setup-pnpm@v3
+      - uses: Perdolique/automations/.github/actions/setup-pnpm@v4
         with:
           ref: ${{ needs.release-please.outputs.sha }}
           install-dependencies: true
       - run: rustup toolchain install
-      - run: npm install --global npm@12.0.2
+      - run: npm install --global npm@12.1.0
       - uses: actions/download-artifact@v8
         with:
           pattern: binding-*
