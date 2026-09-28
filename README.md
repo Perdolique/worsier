@@ -318,6 +318,8 @@ const output = await format(
 
 Repository scripts, npm package tests, and benchmark tooling use native ESM TypeScript (`.mts`) executed directly by Node.js without a loader or transpilation step. Run `vp run check:types` for strict no-emit type checking; the complete `vp run check` includes that check alongside the Rust, npm, native-package, and benchmark suites.
 
+On macOS, CLI tests compare ACL entries by UUID before and after file updates without resolving UUIDs to account names.
+
 ## Performance benchmarks
 
 Benchmarks are manual snapshots, not release gates. The comparative suite measures Worsier, Prettier, and Oxfmt on the same small TypeScript input, TypeScript's `parser.ts`, and a pinned Outline source corpus. Run `vp run benchmark` for an ignored draft or `vp run benchmark:update` from a clean committed worktree to replace the published snapshot. See the [benchmark guide](benchmark/README.md) for the complete methodology.
@@ -329,11 +331,11 @@ Relative time normalizes each scenario to its fastest median (`1.00×`); higher 
 
 | Formatter | Small TS | TypeScript `parser.ts` | Outline project write | Project peak RSS |
 | --- | ---: | ---: | ---: | ---: |
-| Worsier 3.0.0 | 35.86 ms (1.00×) | 49.37 ms (1.00×) | 286.39 ms (1.16×) | 76.3 MiB |
-| Prettier 3.9.6 | 77.01 ms (2.15×) | 718.00 ms (14.54×) | 9.75 s (39.51×) | 629.2 MiB |
-| Oxfmt 0.64.0 | 99.98 ms (2.79×) | 109.66 ms (2.22×) | 246.74 ms (1.00×) | 142.8 MiB |
+| Worsier 3.6.0 | 32.79 ms (1.00×) | 47.67 ms (1.00×) | 306.69 ms (1.25×) | 88.5 MiB |
+| Prettier 3.9.6 | 76.17 ms (2.32×) | 740.21 ms (15.53×) | 10.08 s (41.23×) | 473.0 MiB |
+| Oxfmt 0.64.0 | 94.70 ms (2.89×) | 106.09 ms (2.23×) | 244.42 ms (1.00×) | 145.3 MiB |
 
-Environment: Mac14,6, Apple M2 Max, 12 cores, 32 GB RAM, macOS 26.5.2 arm64, Node 24.19.0.
+Environment: Mac14,6, Apple M2 Max, 12 cores, 32 GB RAM, macOS 26.5.2 arm64, Node 24.20.0.
 
 [Methodology, commands, raw samples, and diagnostic microbenchmarks](benchmark/results/latest.md).
 <!-- benchmark-results:end -->

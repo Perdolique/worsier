@@ -20,6 +20,23 @@ fn stderr(output: &Output) -> String {
     String::from_utf8(output.stderr.clone()).unwrap()
 }
 
+#[cfg(target_os = "macos")]
+fn acl_entries(path: &Path) -> Vec<String> {
+    // Numeric output keeps UUIDs and avoids Directory Services name lookups.
+    let listing = Command::new("/bin/ls")
+        .arg("-len")
+        .arg(path)
+        .output()
+        .unwrap();
+    assert!(listing.status.success(), "{}", stderr(&listing));
+    String::from_utf8(listing.stdout)
+        .unwrap()
+        .lines()
+        .skip(1)
+        .map(str::to_owned)
+        .collect()
+}
+
 #[test]
 fn uses_defaults_without_config_and_init_refuses_to_overwrite() {
     let directory = tempfile::tempdir().unwrap();
@@ -1011,12 +1028,17 @@ fn direct_write_preserves_access_control_lists() {
     let source = directory.path().join("protected.ts");
     write(&source, "import{value}from'pkg';");
 
-    let chmod = Command::new("chmod")
-        .args(["+a", "nobody deny read"])
+    let chmod = Command::new("/bin/chmod")
+        .args(["+a", "user:nobody deny read"])
         .arg(&source)
         .output()
         .unwrap();
     assert!(chmod.status.success(), "{}", stderr(&chmod));
+    let before = acl_entries(&source);
+    assert!(
+        before.iter().any(|entry| entry.ends_with(" deny read")),
+        "missing deny-read ACL: {before:?}"
+    );
 
     let output = command(directory.path())
         .args(["--write", "protected.ts"])
@@ -1024,13 +1046,8 @@ fn direct_write_preserves_access_control_lists() {
         .unwrap();
     assert!(output.status.success(), "{}", stderr(&output));
 
-    let listing = Command::new("ls").arg("-le").arg(&source).output().unwrap();
-    assert!(listing.status.success(), "{}", stderr(&listing));
-    assert!(
-        String::from_utf8(listing.stdout)
-            .unwrap()
-            .contains("user:nobody deny read")
-    );
+    let after = acl_entries(&source);
+    assert_eq!(after, before);
 }
 
 #[cfg(target_os = "macos")]
@@ -1040,12 +1057,17 @@ fn config_update_preserves_access_control_lists() {
     let config = directory.path().join("worsier.jsonc");
     write(&config, "{}");
 
-    let chmod = Command::new("chmod")
-        .args(["+a", "nobody deny read"])
+    let chmod = Command::new("/bin/chmod")
+        .args(["+a", "user:nobody deny read"])
         .arg(&config)
         .output()
         .unwrap();
     assert!(chmod.status.success(), "{}", stderr(&chmod));
+    let before = acl_entries(&config);
+    assert!(
+        before.iter().any(|entry| entry.ends_with(" deny read")),
+        "missing deny-read ACL: {before:?}"
+    );
 
     let output = command(directory.path())
         .arg("--update-config")
@@ -1053,13 +1075,8 @@ fn config_update_preserves_access_control_lists() {
         .unwrap();
     assert!(output.status.success(), "{}", stderr(&output));
 
-    let listing = Command::new("ls").arg("-le").arg(&config).output().unwrap();
-    assert!(listing.status.success(), "{}", stderr(&listing));
-    assert!(
-        String::from_utf8(listing.stdout)
-            .unwrap()
-            .contains("user:nobody deny read")
-    );
+    let after = acl_entries(&config);
+    assert_eq!(after, before);
 }
 
 #[test]

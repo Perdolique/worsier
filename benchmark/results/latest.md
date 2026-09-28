@@ -1,6 +1,6 @@
 # Worsier benchmark results
 
-Snapshot generated at 2026-08-19T11:54:31.433Z from Worsier commit `a467d604430069afa701315a9b6f0cd2fd4b5b8d`.
+Snapshot generated at 2026-09-28T15:00:42.004Z from Worsier commit `7c10adc661b0bc003adef48dfd6b1f728c89b886`.
 
 These numbers compare end-to-end CLI time on identical inputs. They do not claim equivalent formatting features or identical output between Worsier, Prettier, and Oxfmt.
 
@@ -9,7 +9,7 @@ These numbers compare end-to-end CLI time on identical inputs. They do not claim
 - Machine: Mac14,6, Apple M2 Max, 12 cores, 32 GB RAM
 - OS: macOS 26.5.2 (25F84), arm64
 - Power: AC power, normal power mode
-- Toolchain: Node 24.19.0, pnpm 11.22.0, Rust 1.97.1, Cargo 1.97.1, Hyperfine 1.20.0
+- Toolchain: Node 24.20.0, pnpm 11.24.0, Rust 1.98.0, Cargo 1.98.0, Hyperfine 1.20.0
 
 ## Comparative results
 
@@ -19,18 +19,18 @@ Relative time normalizes each scenario to its fastest median (`1.00×`); higher 
 
 | Scenario | Formatter | Input | Median | Relative time | Min | Max | Stddev | Throughput | Peak RSS |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Small TS stdin format | Worsier | 171 B | 35.86 ms | 1.00× | 34.42 ms | 40.12 ms | 1.91 ms | 0.00 MiB/s | 47.6 MiB |
-| Small TS stdin format | Prettier | 171 B | 77.01 ms | 2.15× | 75.59 ms | 80.85 ms | 1.46 ms | 0.00 MiB/s | 70.3 MiB |
-| Small TS stdin format | Oxfmt | 171 B | 99.98 ms | 2.79× | 94.18 ms | 104.47 ms | 3.21 ms | 0.00 MiB/s | 56.1 MiB |
-| TypeScript parser.ts stdin format | Worsier | 516.38 KiB | 49.37 ms | 1.00× | 47.58 ms | 82.66 ms | 13.27 ms | 10.22 MiB/s | 60.0 MiB |
-| TypeScript parser.ts stdin format | Prettier | 516.38 KiB | 718.00 ms | 14.54× | 704.70 ms | 754.08 ms | 14.54 ms | 0.70 MiB/s | 322.7 MiB |
-| TypeScript parser.ts stdin format | Oxfmt | 516.38 KiB | 109.66 ms | 2.22× | 108.46 ms | 117.67 ms | 2.92 ms | 4.60 MiB/s | 72.5 MiB |
-| Outline project write | Worsier | 9.12 MiB | 286.39 ms | 1.16× | 271.88 ms | 337.40 ms | 20.21 ms | 31.85 MiB/s | 76.3 MiB |
-| Outline project write | Prettier | 9.12 MiB | 9.75 s | 39.51× | 9.11 s | 10.21 s | 344.07 ms | 0.94 MiB/s | 629.2 MiB |
-| Outline project write | Oxfmt | 9.12 MiB | 246.74 ms | 1.00× | 233.78 ms | 271.23 ms | 13.06 ms | 36.97 MiB/s | 142.8 MiB |
-| Outline project check on canonical output | Worsier | 9.08 MiB | 166.83 ms | 1.15× | 163.93 ms | 172.33 ms | 2.60 ms | 54.45 MiB/s | 70.5 MiB |
-| Outline project check on canonical output | Prettier | 8.84 MiB | 8.79 s | 60.37× | 8.40 s | 9.80 s | 448.69 ms | 1.01 MiB/s | 469.9 MiB |
-| Outline project check on canonical output | Oxfmt | 8.84 MiB | 145.62 ms | 1.00× | 142.09 ms | 158.95 ms | 4.70 ms | 60.71 MiB/s | 145.1 MiB |
+| Small TS stdin format | Worsier | 171 B | 32.79 ms | 1.00× | 29.55 ms | 47.13 ms | 4.60 ms | 0.00 MiB/s | 47.9 MiB |
+| Small TS stdin format | Prettier | 171 B | 76.17 ms | 2.32× | 71.57 ms | 104.25 ms | 8.86 ms | 0.00 MiB/s | 69.8 MiB |
+| Small TS stdin format | Oxfmt | 171 B | 94.70 ms | 2.89× | 89.37 ms | 99.16 ms | 2.73 ms | 0.00 MiB/s | 56.1 MiB |
+| TypeScript parser.ts stdin format | Worsier | 516.38 KiB | 47.67 ms | 1.00× | 46.66 ms | 50.03 ms | 0.91 ms | 10.58 MiB/s | 64.5 MiB |
+| TypeScript parser.ts stdin format | Prettier | 516.38 KiB | 740.21 ms | 15.53× | 713.12 ms | 803.21 ms | 28.05 ms | 0.68 MiB/s | 327.5 MiB |
+| TypeScript parser.ts stdin format | Oxfmt | 516.38 KiB | 106.09 ms | 2.23× | 102.54 ms | 114.78 ms | 4.34 ms | 4.75 MiB/s | 72.4 MiB |
+| Outline project write | Worsier | 9.12 MiB | 306.69 ms | 1.25× | 291.14 ms | 337.40 ms | 15.93 ms | 29.74 MiB/s | 88.5 MiB |
+| Outline project write | Prettier | 9.12 MiB | 10.08 s | 41.23× | 9.31 s | 11.72 s | 706.21 ms | 0.91 MiB/s | 473.0 MiB |
+| Outline project write | Oxfmt | 9.12 MiB | 244.42 ms | 1.00× | 220.35 ms | 261.56 ms | 12.78 ms | 37.32 MiB/s | 145.3 MiB |
+| Outline project check on canonical output | Worsier | 9.09 MiB | 197.48 ms | 1.35× | 191.42 ms | 203.50 ms | 3.15 ms | 46.02 MiB/s | 73.7 MiB |
+| Outline project check on canonical output | Prettier | 8.84 MiB | 9.06 s | 61.87× | 8.74 s | 9.50 s | 197.76 ms | 0.98 MiB/s | 539.0 MiB |
+| Outline project check on canonical output | Oxfmt | 8.84 MiB | 146.48 ms | 1.00× | 140.96 ms | 155.43 ms | 3.80 ms | 60.35 MiB/s | 143.7 MiB |
 
 ## Fixtures and validation
 
@@ -72,21 +72,21 @@ Criterion measures parser, rewriting, and AST verification entry points without 
 
 | Measurement | Input | Median estimate | Throughput |
 | --- | --- | ---: | ---: |
-| `format_no_verify_default` | 1 MiB | 49.82 ms | 20.07 MiB/s |
-| `format_no_verify_default` | 50 KiB | 2.33 ms | 20.93 MiB/s |
-| `format_no_verify_default` | 512 B | 0.02 ms | 21.00 MiB/s |
-| `format_no_verify_semicolons_off` | 1 MiB | 39.21 ms | 25.50 MiB/s |
-| `format_no_verify_semicolons_off` | 50 KiB | 1.79 ms | 27.32 MiB/s |
-| `format_no_verify_semicolons_off` | 512 B | 0.02 ms | 27.40 MiB/s |
-| `format_no_verify_trailing_commas_off` | 1 MiB | 45.61 ms | 21.93 MiB/s |
-| `format_no_verify_trailing_commas_off` | 50 KiB | 2.12 ms | 23.07 MiB/s |
-| `format_no_verify_trailing_commas_off` | 512 B | 0.02 ms | 21.78 MiB/s |
-| `parse_and_verify` | 1 MiB | 9.80 ms | 102.04 MiB/s |
-| `parse_and_verify` | 50 KiB | 0.50 ms | 97.64 MiB/s |
-| `parse_and_verify` | 512 B | 0.01 ms | 86.14 MiB/s |
-| `single_parse` | 1 MiB | 4.62 ms | 216.46 MiB/s |
-| `single_parse` | 50 KiB | 0.24 ms | 202.04 MiB/s |
-| `single_parse` | 512 B | 0.00 ms | 176.04 MiB/s |
+| `format_no_verify_default` | 1 MiB | 58.39 ms | 17.13 MiB/s |
+| `format_no_verify_default` | 50 KiB | 2.47 ms | 19.76 MiB/s |
+| `format_no_verify_default` | 512 B | 0.03 ms | 19.08 MiB/s |
+| `format_no_verify_semicolons_off` | 1 MiB | 44.84 ms | 22.30 MiB/s |
+| `format_no_verify_semicolons_off` | 50 KiB | 1.99 ms | 24.54 MiB/s |
+| `format_no_verify_semicolons_off` | 512 B | 0.02 ms | 24.32 MiB/s |
+| `format_no_verify_trailing_commas_off` | 1 MiB | 50.76 ms | 19.70 MiB/s |
+| `format_no_verify_trailing_commas_off` | 50 KiB | 2.32 ms | 21.09 MiB/s |
+| `format_no_verify_trailing_commas_off` | 512 B | 0.02 ms | 19.90 MiB/s |
+| `parse_and_verify` | 1 MiB | 10.21 ms | 97.98 MiB/s |
+| `parse_and_verify` | 50 KiB | 0.51 ms | 96.60 MiB/s |
+| `parse_and_verify` | 512 B | 0.01 ms | 85.21 MiB/s |
+| `single_parse` | 1 MiB | 5.02 ms | 199.15 MiB/s |
+| `single_parse` | 50 KiB | 0.24 ms | 202.24 MiB/s |
+| `single_parse` | 512 B | 0.00 ms | 167.78 MiB/s |
 
 ## Reproduce
 
