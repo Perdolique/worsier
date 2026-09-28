@@ -7,15 +7,15 @@ use anyhow::{Context, Result, anyhow, bail};
 use jsonc_parser::cst::{
     CstInputValue, CstNewlineKind, CstNode, CstObject, CstObjectProp, CstRootNode, ObjectPropName,
 };
-use jsonc_parser::{ParseOptions, parse_to_serde_value};
+use jsonc_parser::parse_to_serde_value;
 use serde_json::Value;
 use worsier_formatter::{FormatConfig, resolve_config};
 
 #[cfg(unix)]
 use super::file_identity_from_metadata;
 use super::{
-    FileIdentity, atomic_write_from_source, build_config_ignore, escaped_path, file_identity,
-    open_read_only_no_follow,
+    FileIdentity, atomic_write_from_source, build_config_ignore, config_parse_options,
+    escaped_path, file_identity, open_read_only_no_follow,
 };
 
 const DEFAULT_SCHEMA: &str = "./node_modules/worsier/configuration_schema.json";
@@ -195,7 +195,7 @@ fn verify_update_target_unchanged(target: &UpdateTarget, source: &str) -> Result
 }
 
 fn update_config_source(source: &str, path: &Path) -> Result<UpdateResult> {
-    let root = CstRootNode::parse(source, &ParseOptions::default())
+    let root = CstRootNode::parse(source, &config_parse_options())
         .with_context(|| format!("invalid JSONC configuration {}", escaped_path(path)))?;
     let root_object = root
         .value()
@@ -207,7 +207,7 @@ fn update_config_source(source: &str, path: &Path) -> Result<UpdateResult> {
             )
         })?;
     reject_duplicate_properties(&root_object, "")?;
-    let source_value: Value = parse_to_serde_value(source, &ParseOptions::default())
+    let source_value: Value = parse_to_serde_value(source, &config_parse_options())
         .with_context(|| format!("invalid JSONC configuration {}", escaped_path(path)))?;
 
     reject_v0_config(&source_value, path)?;
@@ -219,7 +219,7 @@ fn update_config_source(source: &str, path: &Path) -> Result<UpdateResult> {
     migrate_v1_rules(&root_object, legacy, &mut changes, &mut deferred_comments)?;
 
     let template_source = serde_json::to_string_pretty(&complete_config())?;
-    let template_root = CstRootNode::parse(&template_source, &ParseOptions::default())?;
+    let template_root = CstRootNode::parse(&template_source, &config_parse_options())?;
     let template_object = template_root
         .value()
         .and_then(|value| value.as_object())
@@ -526,6 +526,7 @@ fn apply_deferred_comments(
     let newline = match newline_kind {
         CstNewlineKind::LineFeed => "\n",
         CstNewlineKind::CarriageReturnLineFeed => "\r\n",
+        CstNewlineKind::CarriageReturn => "\r",
     };
 
     for deferred in deferred_comments {
@@ -643,7 +644,7 @@ fn cst_node_to_input(node: &CstNode) -> Result<CstInputValue> {
             .map(CstInputValue::Array);
     }
 
-    let value: Value = parse_to_serde_value(&node.to_string(), &ParseOptions::default())?;
+    let value: Value = parse_to_serde_value(&node.to_string(), &config_parse_options())?;
     serde_value_to_input(&value)
 }
 
@@ -660,7 +661,7 @@ fn serde_value_to_input(value: &Value) -> Result<CstInputValue> {
 }
 
 fn validate_updated_config(source: &str, path: &Path) -> Result<()> {
-    let value: Value = parse_to_serde_value(source, &ParseOptions::default())
+    let value: Value = parse_to_serde_value(source, &config_parse_options())
         .with_context(|| format!("invalid updated JSONC configuration {}", escaped_path(path)))?;
     let config: FormatConfig = serde_path_to_error::deserialize(value).with_context(|| {
         format!(
@@ -680,16 +681,16 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use jsonc_parser::{ParseOptions, parse_to_serde_value};
+    use jsonc_parser::parse_to_serde_value;
     use serde_json::Value;
 
-    use super::{ConfigChange, update_config_source};
+    use super::{ConfigChange, config_parse_options, update_config_source};
     #[cfg(unix)]
     use super::{resolve_update_target, write_updated_config};
 
     fn parsed_output(source: &str) -> Value {
         let result = update_config_source(source, Path::new("worsier.jsonc")).unwrap();
-        parse_to_serde_value(&result.output, &ParseOptions::default()).unwrap()
+        parse_to_serde_value(&result.output, &config_parse_options()).unwrap()
     }
 
     #[test]
@@ -739,8 +740,7 @@ mod tests {
                 .output
                 .contains("\"quoteStyle\" /* key */ : /* value */ \"double\"")
         );
-        let updated: Value =
-            parse_to_serde_value(&result.output, &ParseOptions::default()).unwrap();
+        let updated: Value = parse_to_serde_value(&result.output, &config_parse_options()).unwrap();
         assert_eq!(updated["rules"]["quoteStyle"], "double");
 
         let disabled = parsed_output(r#"{"rules":{"quoteStyle":"off"}}"#);
@@ -800,6 +800,31 @@ mod tests {
             result
                 .changes
                 .contains(&ConfigChange::Migrated("rules.variables"))
+        );
+    }
+
+    #[test]
+    fn migrates_legacy_comments_without_changing_cr_line_endings() {
+        let source = "{\r  \"rules\": {\r    \"imports\": true, // legacy comment\r    \"importLayout\": true\r  }\r}";
+        let result = update_config_source(source, Path::new("worsier.jsonc")).unwrap();
+
+        assert!(result.output.contains("// legacy comment\r"));
+        assert!(!result.output.contains('\n'));
+        assert!(!result.output.contains("\"imports\": true"));
+    }
+
+    #[test]
+    fn config_updater_keeps_json5_only_escapes_invalid() {
+        let error =
+            update_config_source(r#"{"$schema":"\x41"}"#, Path::new("worsier.jsonc")).unwrap_err();
+        assert!(error.to_string().contains("invalid JSONC configuration"));
+
+        assert!(
+            update_config_source(
+                "{ // comment\n  \"lineWidth\": 100\n}",
+                Path::new("worsier.jsonc")
+            )
+            .is_ok()
         );
     }
 

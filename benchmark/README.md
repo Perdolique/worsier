@@ -13,7 +13,7 @@ This directory owns all benchmark-only dependencies, fixtures, runner code, deta
 
 ## What is measured
 
-The comparative benchmark pins Worsier from the current workspace, Prettier `3.9.6`, and Oxfmt `0.63.0`. It runs four end-to-end CLI scenarios:
+The comparative benchmark pins Worsier from the current workspace, Prettier `3.9.9`, and Oxfmt `0.71.0`. It runs four end-to-end CLI scenarios:
 
 1. Format the tracked small TypeScript fixture through stdin in a fresh process.
 2. Format TypeScript `parser.ts` through stdin in a fresh process.

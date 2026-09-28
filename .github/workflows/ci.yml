@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   rust:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - run: rustup toolchain install
@@ -31,9 +31,9 @@ jobs:
       - run: cargo test -p worsier-cli
 
   npm:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
-      - uses: Perdolique/automations/.github/actions/setup-pnpm@v3
+      - uses: Perdolique/automations/.github/actions/setup-pnpm@v4
         with:
           install-dependencies: true
       - run: rustup toolchain install
