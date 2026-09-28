@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.6.1](https://github.com/Perdolique/worsier/compare/v3.6.0...v3.6.1) (2026-09-28)
+
+
+### Bug Fixes
+
+* **formatter:** refresh parser and build toolchain ([f619636](https://github.com/Perdolique/worsier/commit/f61963644aa0a4ac59ecbb8a4c4576ce97e5871a))
+
 ## [3.6.0](https://github.com/Perdolique/worsier/compare/v3.5.0...v3.6.0) (2026-09-23)
 
 
