@@ -14,6 +14,7 @@ test('preserves comment groups through the native API independently of other rul
     commentSpacing: true,
     importLayout: false,
     interfaceLayout: 'off',
+    typeLiteralLayout: 'off',
     objectPropertySpacing: false,
     quoteStyle: 'off',
     statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
@@ -70,6 +71,7 @@ test('formats through the asynchronous native API', async () => {
       objectPropertySpacing: false,
       quoteStyle: 'off',
       interfaceLayout: 'off',
+      typeLiteralLayout: 'off',
       statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
       semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
       trailingCommas: 'off'
@@ -109,6 +111,7 @@ test('formats quote styles through the native API', async () => {
     commentSpacing: false,
     importLayout: false,
     interfaceLayout: 'off',
+    typeLiteralLayout: 'off',
     objectPropertySpacing: false,
     statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
     semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
@@ -145,6 +148,7 @@ test('formats object property spacing through the native API', async () => {
         commentSpacing: false,
         importLayout: false,
         interfaceLayout: 'off',
+        typeLiteralLayout: 'off',
         objectPropertySpacing: false,
         quoteStyle: 'off',
         statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
@@ -229,6 +233,21 @@ test('formats inline Vue scripts through the native API', async () => {
   })
 })
 
+test('formats object type layouts through the native API', async () => {
+  const source = 'type Shape = { value: string; run(): void }'
+  const expanded = 'type Shape = {\n  value: string;\n  run(): void;\n}'
+  const defaultOutput = await format('sample.ts', source)
+  assert.equal(defaultOutput, expanded)
+  for (const typeLiteralLayout of [0, 1, 2, 'off'] as const) {
+    const expected = typeLiteralLayout === 'off' || typeLiteralLayout === 2 ? source : expanded
+    const output = await format('sample.ts', source, { rules: { typeLiteralLayout } })
+    assert.equal(output, expected)
+  }
+  const sourceWithDirective = '// @ts-expect-error\ntype Shape = { value: Missing; nested: { item: Missing } }'
+  const directiveOutput = await format('sample.ts', sourceWithDirective)
+  assert.equal(directiveOutput, sourceWithDirective)
+})
+
 test('formats interface layouts through the native API', async () => {
   const source = 'interface Shape { value: string; run(): void; }'
   assert.equal(
@@ -298,6 +317,7 @@ test('formats type alias spacing through the native API', async () => {
       objectPropertySpacing: false,
       quoteStyle: 'off',
       interfaceLayout: 'off',
+      typeLiteralLayout: 'off',
       statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'compact', variableDeclarations: 'off' },
       semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
       trailingCommas: 'off'
@@ -315,6 +335,7 @@ test('formats return statement spacing through the native API', async () => {
       objectPropertySpacing: false,
       quoteStyle: 'off',
       interfaceLayout: 'off',
+      typeLiteralLayout: 'off',
       statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'separate', typeAliases: 'off', variableDeclarations: 'off' },
       semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
       trailingCommas: 'off'
@@ -332,6 +353,7 @@ test('formats control-flow statement spacing through the native API', async () =
       objectPropertySpacing: false,
       quoteStyle: 'off',
       interfaceLayout: 'off',
+      typeLiteralLayout: 'off',
       statementSpacing: { controlFlowStatements: 'separate', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
       semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' },
       trailingCommas: 'off'
@@ -362,7 +384,7 @@ test('formats granular semicolon groups through the native API', async () => {
 
 test('formats type member semicolons by container layout through the native API', async () => {
   assert.equal(
-    await format('sample.ts', 'function test(): { a: number; b: string; } {}'),
+    await format('sample.ts', 'function test(): { a: number; b: string; } {}', { rules: { typeLiteralLayout: 'off' } }),
     'function test(): { a: number; b: string } {}'
   )
 
@@ -372,6 +394,7 @@ test('formats type member semicolons by container layout through the native API'
       commentSpacing: false,
       importLayout: false,
       interfaceLayout: 'off',
+      typeLiteralLayout: 'off',
       objectPropertySpacing: false,
       quoteStyle: 'off',
       statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
@@ -432,6 +455,11 @@ test('maps native failures to stable error codes', async () => {
     [{ commentSpacing: 1 }, 'rules.commentSpacing'],
     [{ imports: true }, 'rules.imports'],
     [{ variables: true }, 'rules.variables'],
+    [{ typeLiteralLayout: -1 }, 'rules.typeLiteralLayout'],
+    [{ typeLiteralLayout: 1.5 }, 'rules.typeLiteralLayout'],
+    [{ typeLiteralLayout: 4294967296 }, 'rules.typeLiteralLayout'],
+    [{ typeLiteralLayout: 'always' }, 'rules.typeLiteralLayout'],
+    [{ typeLiteralLayout: null }, 'rules.typeLiteralLayout'],
     [{ interfaceLayout: -1 }, 'rules.interfaceLayout'],
     [{ interfaceLayout: 1.5 }, 'rules.interfaceLayout'],
     [{ interfaceLayout: 'always' }, 'rules.interfaceLayout'],

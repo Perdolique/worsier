@@ -698,7 +698,7 @@ mod tests {
         let result = update_config_source("{}", Path::new("worsier.jsonc")).unwrap();
         assert_eq!(
             result.output,
-            "{\n  \"$schema\": \"./node_modules/worsier/configuration_schema.json\",\n  \"lineWidth\": 120,\n  \"verifyAst\": true,\n  \"rules\": {\n    \"bracketSpacing\": {\n      \"curly\": \"always\",\n      \"square\": \"never\"\n    },\n    \"commentSpacing\": true,\n    \"importLayout\": true,\n    \"interfaceLayout\": 0,\n    \"objectPropertySpacing\": true,\n    \"quoteStyle\": \"single\",\n    \"statementSpacing\": {\n      \"controlFlowStatements\": \"separate\",\n      \"imports\": \"separate\",\n      \"multilineCallStatements\": \"separate\",\n      \"returnStatements\": \"separate\",\n      \"singleLineCallStatements\": {\n        \"betweenCalls\": \"compact\",\n        \"withOtherStatements\": \"separate\"\n      },\n      \"typeAliases\": \"separate\",\n      \"variableDeclarations\": \"separate\"\n    },\n    \"semicolons\": {\n      \"statements\": \"asNeeded\",\n      \"classMembers\": \"asNeeded\",\n      \"typeMembers\": {\n        \"singleLine\": \"asNeeded\",\n        \"multiline\": \"always\"\n      }\n    },\n    \"trailingCommas\": \"never\"\n  },\n  \"ignorePatterns\": []\n}"
+            "{\n  \"$schema\": \"./node_modules/worsier/configuration_schema.json\",\n  \"lineWidth\": 120,\n  \"verifyAst\": true,\n  \"rules\": {\n    \"bracketSpacing\": {\n      \"curly\": \"always\",\n      \"square\": \"never\"\n    },\n    \"commentSpacing\": true,\n    \"importLayout\": true,\n    \"interfaceLayout\": 0,\n    \"typeLiteralLayout\": 0,\n    \"objectPropertySpacing\": true,\n    \"quoteStyle\": \"single\",\n    \"statementSpacing\": {\n      \"controlFlowStatements\": \"separate\",\n      \"imports\": \"separate\",\n      \"multilineCallStatements\": \"separate\",\n      \"returnStatements\": \"separate\",\n      \"singleLineCallStatements\": {\n        \"betweenCalls\": \"compact\",\n        \"withOtherStatements\": \"separate\"\n      },\n      \"typeAliases\": \"separate\",\n      \"variableDeclarations\": \"separate\"\n    },\n    \"semicolons\": {\n      \"statements\": \"asNeeded\",\n      \"classMembers\": \"asNeeded\",\n      \"typeMembers\": {\n        \"singleLine\": \"asNeeded\",\n        \"multiline\": \"always\"\n      }\n    },\n    \"trailingCommas\": \"never\"\n  },\n  \"ignorePatterns\": []\n}"
         );
         assert_eq!(result.changes.len(), 5);
     }
@@ -726,6 +726,19 @@ mod tests {
         assert_eq!(default["rules"]["commentSpacing"], true);
         let disabled = parsed_output(r#"{"rules":{"commentSpacing":false}}"#);
         assert_eq!(disabled["rules"]["commentSpacing"], false);
+    }
+
+    #[test]
+    fn adds_type_literal_layout_without_overwriting_a_selected_threshold() {
+        assert_eq!(parsed_output("{}")["rules"]["typeLiteralLayout"], 0);
+        for value in ["1", "4294967295", r#""off""#] {
+            let source = format!(r#"{{"rules":{{"typeLiteralLayout":{value}}}}}"#);
+            let expected: serde_json::Value = serde_json::from_str(value).unwrap();
+            assert_eq!(
+                parsed_output(&source)["rules"]["typeLiteralLayout"],
+                expected
+            );
+        }
     }
 
     #[test]

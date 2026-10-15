@@ -37,6 +37,7 @@ pub struct RulesConfig {
     pub comment_spacing: bool,
     pub import_layout: bool,
     pub interface_layout: InterfaceLayoutRule,
+    pub type_literal_layout: TypeLiteralLayoutRule,
     pub object_property_spacing: bool,
     pub quote_style: QuoteStyle,
     pub statement_spacing: StatementSpacingConfig,
@@ -51,6 +52,7 @@ impl Default for RulesConfig {
             comment_spacing: true,
             import_layout: true,
             interface_layout: InterfaceLayoutRule::default(),
+            type_literal_layout: TypeLiteralLayoutRule::default(),
             object_property_spacing: true,
             quote_style: QuoteStyle::default(),
             statement_spacing: StatementSpacingConfig::default(),
@@ -167,6 +169,40 @@ impl Default for InterfaceLayoutRule {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum InterfaceLayoutMode {
+    Off,
+}
+
+#[derive(Clone, Copy, Debug, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum TypeLiteralLayoutRule {
+    Threshold(#[schemars(range(max = 4_294_967_295_u32))] u32),
+    Mode(TypeLiteralLayoutMode),
+}
+
+impl<'de> Deserialize<'de> for TypeLiteralLayoutRule {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // Both layout rules accept the same numeric range and integer JSON representations.
+        InterfaceLayoutRule::deserialize(deserializer).map(|rule| match rule {
+            InterfaceLayoutRule::Threshold(threshold) => Self::Threshold(threshold),
+            InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off) => {
+                Self::Mode(TypeLiteralLayoutMode::Off)
+            }
+        })
+    }
+}
+
+impl Default for TypeLiteralLayoutRule {
+    fn default() -> Self {
+        Self::Threshold(0)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TypeLiteralLayoutMode {
     Off,
 }
 
@@ -507,6 +543,14 @@ impl ResolvedConfig {
     }
 
     #[must_use]
+    pub const fn type_literal_layout_threshold(&self) -> Option<u32> {
+        match self.value.rules.type_literal_layout {
+            TypeLiteralLayoutRule::Threshold(threshold) => Some(threshold),
+            TypeLiteralLayoutRule::Mode(TypeLiteralLayoutMode::Off) => None,
+        }
+    }
+
+    #[must_use]
     pub const fn object_property_spacing_enabled(&self) -> bool {
         self.value.rules.object_property_spacing
     }
@@ -614,6 +658,7 @@ mod tests {
         assert!(config.comment_spacing_enabled());
         assert!(config.import_layout_enabled());
         assert_eq!(config.interface_layout_threshold(), Some(0));
+        assert_eq!(config.type_literal_layout_threshold(), Some(0));
         assert!(config.object_property_spacing_enabled());
         assert_eq!(config.quote_style(), QuoteStyle::Single);
         assert_eq!(
@@ -737,6 +782,7 @@ mod tests {
 
         assert!(!config.import_layout_enabled());
         assert_eq!(config.interface_layout_threshold(), Some(0));
+        assert_eq!(config.type_literal_layout_threshold(), Some(0));
         assert!(config.object_property_spacing_enabled());
         assert_eq!(config.quote_style(), QuoteStyle::Single);
         assert_eq!(
@@ -924,5 +970,62 @@ mod tests {
             let source = format!(r#"{{"rules":{{"interfaceLayout":{value}}}}}"#);
             assert!(serde_json::from_str::<FormatConfig>(&source).is_err());
         }
+    }
+
+    #[test]
+    fn accepts_type_literal_layout_thresholds_and_off() {
+        for (value, expected) in [
+            ("0", Some(0)),
+            ("1.0", Some(1)),
+            ("1e0", Some(1)),
+            ("4294967295", Some(u32::MAX)),
+            (r#""off""#, None),
+        ] {
+            let source = format!(r#"{{"rules":{{"typeLiteralLayout":{value}}}}}"#);
+            let config = serde_json::from_str::<FormatConfig>(&source).unwrap();
+            assert_eq!(
+                resolve_config(config)
+                    .unwrap()
+                    .type_literal_layout_threshold(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_type_literal_layout_values() {
+        for value in [
+            "-1",
+            "1.5",
+            "4294967296",
+            r#""always""#,
+            "true",
+            "false",
+            "null",
+            "[]",
+            "{}",
+        ] {
+            let source = format!(r#"{{"rules":{{"typeLiteralLayout":{value}}}}}"#);
+            assert!(
+                serde_json::from_str::<FormatConfig>(&source).is_err(),
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn type_literal_layout_schema_matches_runtime_range_and_default() {
+        let schema = serde_json::to_value(schemars::schema_for!(FormatConfig)).unwrap();
+        let rule = &schema["$defs"]["TypeLiteralLayoutRule"]["anyOf"][0];
+        assert_eq!(rule["minimum"], 0);
+        assert_eq!(rule["maximum"], u32::MAX);
+        assert_eq!(
+            schema["properties"]["rules"]["default"]["typeLiteralLayout"],
+            0
+        );
+        assert_eq!(
+            schema["$defs"]["RulesConfig"]["properties"]["typeLiteralLayout"]["default"],
+            0
+        );
     }
 }

@@ -1,6 +1,7 @@
 export type InterfaceLayoutMode = 'off';
 export type SemicolonMode = 'always' | 'asNeeded' | 'off';
 export type StatementSpacingMode = 'separate' | 'compact' | 'off';
+export type TypeLiteralLayoutMode = 'off';
 export interface FormatConfig {
     $schema?: string | null;
     ignorePatterns?: string[];
@@ -18,6 +19,7 @@ export interface RulesConfig {
     semicolons?: SemicolonConfig;
     statementSpacing?: StatementSpacingConfig;
     trailingCommas?: 'always' | 'never' | 'off';
+    typeLiteralLayout?: number | TypeLiteralLayoutMode;
 }
 export interface BracketSpacingConfig {
     curly?: 'always' | 'never' | 'off';
