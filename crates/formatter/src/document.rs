@@ -228,6 +228,7 @@ mod tests {
                 "bracketSpacing": { "curly": "off", "square": "off" },
                 "importLayout": false,
                 "exportLayout": false,
+                "classMemberSpacing": "off",
                 "interfaceLayout": "off",
                 "statementSpacing": {
                     "controlFlowStatements": "off",

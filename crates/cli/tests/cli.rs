@@ -284,7 +284,7 @@ fn supports_trailing_comma_modes_from_config() {
 
     write(
         &directory.path().join("worsier.jsonc"),
-        r#"{"rules":{"commentSpacing":false,"importLayout":false,"exportLayout":false,"objectPropertySpacing":false,"quoteStyle":"off","statementSpacing":{"controlFlowStatements":"off","imports":"off","multilineCallStatements":"off","singleLineCallStatements":"off","returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"always"}}"#,
+        r#"{"rules":{"commentSpacing":false,"importLayout":false,"exportLayout":false,"classMemberSpacing":"off","objectPropertySpacing":false,"quoteStyle":"off","statementSpacing":{"controlFlowStatements":"off","imports":"off","multilineCallStatements":"off","singleLineCallStatements":"off","returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"always"}}"#,
     );
     let always = command(directory.path()).arg("sample.ts").output().unwrap();
     assert!(always.status.success(), "{}", stderr(&always));
@@ -295,7 +295,7 @@ fn supports_trailing_comma_modes_from_config() {
 
     write(
         &directory.path().join("worsier.jsonc"),
-        r#"{"rules":{"commentSpacing":false,"importLayout":false,"exportLayout":false,"objectPropertySpacing":false,"quoteStyle":"off","statementSpacing":{"controlFlowStatements":"off","imports":"off","multilineCallStatements":"off","singleLineCallStatements":"off","returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}"#,
+        r#"{"rules":{"commentSpacing":false,"importLayout":false,"exportLayout":false,"classMemberSpacing":"off","objectPropertySpacing":false,"quoteStyle":"off","statementSpacing":{"controlFlowStatements":"off","imports":"off","multilineCallStatements":"off","singleLineCallStatements":"off","returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}"#,
     );
     let off = command(directory.path()).arg("sample.ts").output().unwrap();
     assert!(off.status.success(), "{}", stderr(&off));
@@ -308,7 +308,7 @@ fn supports_granular_semicolon_modes_from_config() {
     fs::create_dir(directory.path().join(".git")).unwrap();
     write(
         &directory.path().join("worsier.jsonc"),
-        r#"{"rules":{"commentSpacing":false,"importLayout":false,"exportLayout":false,"objectPropertySpacing":false,"quoteStyle":"off","statementSpacing":{"controlFlowStatements":"off","imports":"off","multilineCallStatements":"off","singleLineCallStatements":"off","returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"asNeeded","typeMembers":"always"},"trailingCommas":"off"}}"#,
+        r#"{"rules":{"commentSpacing":false,"importLayout":false,"exportLayout":false,"classMemberSpacing":"off","objectPropertySpacing":false,"quoteStyle":"off","statementSpacing":{"controlFlowStatements":"off","imports":"off","multilineCallStatements":"off","singleLineCallStatements":"off","returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"asNeeded","typeMembers":"always"},"trailingCommas":"off"}}"#,
     );
     write(
         &directory.path().join("sample.ts"),
@@ -349,7 +349,7 @@ fn supports_type_alias_spacing_from_config() {
     let directory = tempfile::tempdir().unwrap();
     write(
         &directory.path().join("worsier.jsonc"),
-        r#"{"rules":{"commentSpacing":false,"importLayout":false,"exportLayout":false,"objectPropertySpacing":false,"quoteStyle":"off","interfaceLayout":"off","typeLiteralLayout":"off","statementSpacing":{"controlFlowStatements":"off","imports":"off","multilineCallStatements":"off","singleLineCallStatements":"off","returnStatements":"off","typeAliases":"compact","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}"#,
+        r#"{"rules":{"commentSpacing":false,"importLayout":false,"exportLayout":false,"classMemberSpacing":"off","objectPropertySpacing":false,"quoteStyle":"off","interfaceLayout":"off","typeLiteralLayout":"off","statementSpacing":{"controlFlowStatements":"off","imports":"off","multilineCallStatements":"off","singleLineCallStatements":"off","returnStatements":"off","typeAliases":"compact","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}"#,
     );
     write(
         &directory.path().join("sample.ts"),
@@ -390,7 +390,7 @@ fn supports_multiline_call_spacing_from_config() {
     let directory = tempfile::tempdir().unwrap();
     write(
         &directory.path().join("worsier.jsonc"),
-        r#"{"rules":{"commentSpacing":false,"importLayout":false,"exportLayout":false,"objectPropertySpacing":false,"quoteStyle":"off","interfaceLayout":"off","typeLiteralLayout":"off","statementSpacing":{"controlFlowStatements":"off","imports":"off","multilineCallStatements":"separate","singleLineCallStatements":"off","returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}"#,
+        r#"{"rules":{"commentSpacing":false,"importLayout":false,"exportLayout":false,"classMemberSpacing":"off","objectPropertySpacing":false,"quoteStyle":"off","interfaceLayout":"off","typeLiteralLayout":"off","statementSpacing":{"controlFlowStatements":"off","imports":"off","multilineCallStatements":"separate","singleLineCallStatements":"off","returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}"#,
     );
     write(
         &directory.path().join("sample.ts"),
@@ -410,7 +410,7 @@ fn supports_single_line_call_spacing_from_config() {
     let directory = tempfile::tempdir().unwrap();
     write(
         &directory.path().join("worsier.jsonc"),
-        r#"{"rules":{"commentSpacing":false,"importLayout":false,"exportLayout":false,"objectPropertySpacing":false,"quoteStyle":"off","interfaceLayout":"off","typeLiteralLayout":"off","statementSpacing":{"controlFlowStatements":"off","imports":"off","multilineCallStatements":"off","singleLineCallStatements":{"betweenCalls":"compact","withOtherStatements":"separate"},"returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}"#,
+        r#"{"rules":{"commentSpacing":false,"importLayout":false,"exportLayout":false,"classMemberSpacing":"off","objectPropertySpacing":false,"quoteStyle":"off","interfaceLayout":"off","typeLiteralLayout":"off","statementSpacing":{"controlFlowStatements":"off","imports":"off","multilineCallStatements":"off","singleLineCallStatements":{"betweenCalls":"compact","withOtherStatements":"separate"},"returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}"#,
     );
     write(
         &directory.path().join("sample.ts"),
@@ -455,7 +455,7 @@ fn supports_control_flow_spacing_from_config() {
     let directory = tempfile::tempdir().unwrap();
     write(
         &directory.path().join("worsier.jsonc"),
-        r#"{"rules":{"commentSpacing":false,"importLayout":false,"exportLayout":false,"objectPropertySpacing":false,"quoteStyle":"off","interfaceLayout":"off","typeLiteralLayout":"off","statementSpacing":{"controlFlowStatements":"separate","imports":"off","multilineCallStatements":"off","singleLineCallStatements":"off","returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}"#,
+        r#"{"rules":{"commentSpacing":false,"importLayout":false,"exportLayout":false,"classMemberSpacing":"off","objectPropertySpacing":false,"quoteStyle":"off","interfaceLayout":"off","typeLiteralLayout":"off","statementSpacing":{"controlFlowStatements":"separate","imports":"off","multilineCallStatements":"off","singleLineCallStatements":"off","returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}"#,
     );
     write(
         &directory.path().join("sample.ts"),
@@ -468,6 +468,37 @@ fn supports_control_flow_spacing_from_config() {
         String::from_utf8(output.stdout).unwrap(),
         "function f(){\n  before();\n\n  if(ok)work();\n\n  after();\n}"
     );
+}
+
+#[test]
+fn supports_class_member_spacing_from_config_and_rejects_invalid_modes() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::create_dir(directory.path().join(".git")).unwrap();
+    let source = "class C { a=1; b=2; method() {} }";
+    write(&directory.path().join("sample.ts"), source);
+    for (mode, expected) in [
+        ("smart", "class C {\n  a=1\n  b=2\n\n  method() {}\n}"),
+        ("separate", "class C {\n  a=1\n\n  b=2\n\n  method() {}\n}"),
+        ("compact", "class C {\n  a=1\n  b=2\n  method() {}\n}"),
+        ("off", source),
+    ] {
+        write(
+            &directory.path().join("worsier.jsonc"),
+            &format!(r#"{{"rules":{{"classMemberSpacing":"{mode}"}}}}"#),
+        );
+        let output = command(directory.path()).arg("sample.ts").output().unwrap();
+        assert!(output.status.success(), "{}", stderr(&output));
+        assert_eq!(String::from_utf8(output.stdout).unwrap(), expected);
+    }
+    for value in [r#""always""#, "true", "1", "null"] {
+        write(
+            &directory.path().join("worsier.jsonc"),
+            &format!(r#"{{"rules":{{"classMemberSpacing":{value}}}}}"#),
+        );
+        let output = command(directory.path()).arg("sample.ts").output().unwrap();
+        assert!(!output.status.success());
+        assert!(stderr(&output).contains("rules.classMemberSpacing"));
+    }
 }
 
 #[test]
@@ -575,7 +606,7 @@ fn supports_object_property_spacing_from_config() {
 
     write(
         &directory.path().join("worsier.jsonc"),
-        r#"{"rules":{"bracketSpacing":{"curly":"off","square":"off"},"commentSpacing":false,"importLayout":false,"exportLayout":false,"interfaceLayout":"off","typeLiteralLayout":"off","objectPropertySpacing":false,"quoteStyle":"off","statementSpacing":{"controlFlowStatements":"off","imports":"off","multilineCallStatements":"off","singleLineCallStatements":"off","returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}"#,
+        r#"{"rules":{"bracketSpacing":{"curly":"off","square":"off"},"commentSpacing":false,"importLayout":false,"exportLayout":false,"classMemberSpacing":"off","interfaceLayout":"off","typeLiteralLayout":"off","objectPropertySpacing":false,"quoteStyle":"off","statementSpacing":{"controlFlowStatements":"off","imports":"off","multilineCallStatements":"off","singleLineCallStatements":"off","returnStatements":"off","typeAliases":"off","variableDeclarations":"off"},"semicolons":{"statements":"off","classMembers":"off","typeMembers":"off"},"trailingCommas":"off"}}"#,
     );
     let disabled = command(directory.path()).arg("sample.ts").output().unwrap();
     assert!(disabled.status.success(), "{}", stderr(&disabled));
@@ -744,7 +775,7 @@ fn partial_rule_configs_keep_sibling_defaults() {
 
     write(
         &directory.path().join("worsier.jsonc"),
-        r#"{"rules":{"bracketSpacing":{"curly":"off","square":"off"},"commentSpacing":false,"importLayout":false,"exportLayout":false,"objectPropertySpacing":false,"quoteStyle":"off","statementSpacing":{"imports":"off"}}}"#,
+        r#"{"rules":{"bracketSpacing":{"curly":"off","square":"off"},"commentSpacing":false,"importLayout":false,"exportLayout":false,"classMemberSpacing":"off","objectPropertySpacing":false,"quoteStyle":"off","statementSpacing":{"imports":"off"}}}"#,
     );
     let variables_only = command(directory.path()).arg("sample.ts").output().unwrap();
     assert!(

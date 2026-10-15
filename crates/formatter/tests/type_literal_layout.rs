@@ -11,6 +11,7 @@ fn isolated(threshold: u32) -> FormatConfig {
             "commentSpacing": false,
             "importLayout": false,
             "exportLayout": false,
+            "classMemberSpacing": "off",
             "interfaceLayout": "off",
             "typeLiteralLayout": threshold,
             "objectPropertySpacing": false,

@@ -43,6 +43,9 @@ await writeFile(join(project, 'package.json'), '{"type":"module","private":true}
 run('npm', ['install', '--ignore-scripts', rootTarball, platformTarball], project)
 const installedPackage = join(project, 'node_modules/worsier')
 const installedSchema = JSON.parse(await readFile(join(installedPackage, 'configuration_schema.json'), 'utf8'))
+assert.equal(installedSchema.properties.rules.default.classMemberSpacing, 'smart')
+assert.equal(installedSchema.$defs.RulesConfig.properties.classMemberSpacing.default, 'smart')
+assert.deepEqual(installedSchema.$defs.ClassMemberSpacingMode.enum, ['smart', 'separate', 'compact', 'off'])
 assert.equal(installedSchema.properties.rules.default.exportLayout, true)
 assert.equal(installedSchema.$defs.RulesConfig.properties.exportLayout.default, true)
 assert.equal(installedSchema.$defs.RulesConfig.properties.exportLayout.type, 'boolean')
@@ -82,6 +85,7 @@ assert.match(installedTypes, /curly\?: 'always' \| 'never' \| 'off'/)
 assert.match(installedTypes, /square\?: 'always' \| 'never' \| 'off'/)
 assert.match(installedTypes, /objectPropertySpacing\?: boolean/)
 assert.match(installedTypes, /quoteStyle\?: 'single' \| 'double' \| 'off'/)
+assert.match(installedTypes, /classMemberSpacing\?: 'smart' \| 'separate' \| 'compact' \| 'off'/)
 assert.match(installedTypes, /commentSpacing\?: boolean/)
 assert.match(installedTypes, /exportLayout\?: boolean/)
 assert.match(installedTypes, /multilineCallStatements\?: 'separate' \| 'compact' \| 'off'/)
@@ -106,6 +110,7 @@ const expectedInitializedConfig = `{
       "curly": "always",
       "square": "never"
     },
+    "classMemberSpacing": "smart",
     "commentSpacing": true,
     "importLayout": true,
     "exportLayout": true,
@@ -156,6 +161,7 @@ const expectedMigratedConfig = `{
       "curly": "always",
       "square": "never"
     },
+    "classMemberSpacing": "smart",
     "commentSpacing": true,
     // legacy layout
     "importLayout": false,
@@ -207,6 +213,21 @@ const api = run(
   project
 )
 assert.equal(api.stdout, "import { packed } from 'pkg'\n\nconst raw=[1,2]\n")
+
+const classMemberSpacing = run(
+  process.execPath,
+  [
+    '--input-type=module',
+    '--eval',
+    `import { format } from 'worsier'; const output = await format('sample.ts', 'class C { a=1; method() {} }'); process.stdout.write(output)`
+  ],
+  project
+)
+assert.equal(classMemberSpacing.stdout, 'class C {\n  a=1\n\n  method() {}\n}')
+const classPath = join(project, 'class.ts')
+await writeFile(classPath, 'class C { a=1; method() {} }')
+const classCli = run(process.execPath, [executable, 'class.ts'], project)
+assert.equal(classCli.stdout, 'class C {\n  a=1\n\n  method() {}\n}')
 
 const exportLayout = run(
   process.execPath,
