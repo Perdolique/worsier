@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.9.0](https://github.com/Perdolique/worsier/compare/v3.8.0...v3.9.0) (2026-10-15)
+
+
+### Features
+
+* **formatter:** add class member spacing ([30a5151](https://github.com/Perdolique/worsier/commit/30a51511961df288852ea83b1309ca1c8bbec222))
+* **formatter:** add class member spacing ([711cd9e](https://github.com/Perdolique/worsier/commit/711cd9edd9efbcbac0cb14c6e2a18402a28dad89)), closes [#75](https://github.com/Perdolique/worsier/issues/75)
+
 ## [3.8.0](https://github.com/Perdolique/worsier/compare/v3.7.0...v3.8.0) (2026-10-15)
 
 
