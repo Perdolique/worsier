@@ -9,8 +9,8 @@ pub use config::{
     BracketSpacingConfig, BracketSpacingMode, FormatConfig, InterfaceLayoutMode,
     InterfaceLayoutRule, QuoteStyle, ResolvedConfig, RulesConfig, SemicolonConfig, SemicolonMode,
     SingleLineCallStatementSpacingConfig, SingleLineCallStatementSpacingRule,
-    StatementSpacingConfig, StatementSpacingMode, TrailingCommaMode, TypeMemberSemicolonConfig,
-    TypeMemberSemicolonRule, resolve_config,
+    StatementSpacingConfig, StatementSpacingMode, TrailingCommaMode, TypeLiteralLayoutMode,
+    TypeLiteralLayoutRule, TypeMemberSemicolonConfig, TypeMemberSemicolonRule, resolve_config,
 };
 pub use document::{format_text, is_supported_path};
 pub use error::FormatError;

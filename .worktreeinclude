@@ -1,0 +1,7 @@
+node_modules/
+benchmark/node_modules/
+packages/npm/node_modules/
+target/
+fuzz/target/
+npm/darwin-arm64/index.d.ts
+npm/darwin-arm64/worsier.darwin-arm64.node

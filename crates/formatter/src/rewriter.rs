@@ -250,6 +250,7 @@ fn rewrite_after_quotes(
             comment_spacing: &comment_spacing,
             import_layout: config.import_layout_enabled(),
             interface_layout_threshold: config.interface_layout_threshold(),
+            type_literal_layout_threshold: config.type_literal_layout_threshold(),
             object_property_spacing: config.object_property_spacing_enabled(),
             control_flow_spacing: config.control_flow_statement_spacing(),
             import_spacing: config.import_spacing(),
@@ -311,6 +312,7 @@ fn script_rules_after_quotes_disabled(
         && !config.comment_spacing_enabled()
         && !config.import_layout_enabled()
         && config.interface_layout_threshold().is_none()
+        && config.type_literal_layout_threshold().is_none()
         && !config.object_property_spacing_enabled()
         && config.control_flow_statement_spacing() == StatementSpacingMode::Off
         && config.import_spacing() == StatementSpacingMode::Off
@@ -1515,6 +1517,7 @@ struct RewriteRules<'a> {
     comment_spacing: &'a CommentSpacing,
     import_layout: bool,
     interface_layout_threshold: Option<u32>,
+    type_literal_layout_threshold: Option<u32>,
     object_property_spacing: bool,
     control_flow_spacing: StatementSpacingMode,
     import_spacing: StatementSpacingMode,
@@ -1530,6 +1533,10 @@ struct RewriteRules<'a> {
 
 #[derive(Clone, Copy, Debug)]
 enum ParentItem {
+    TypeMember {
+        body_index: usize,
+        member_index: usize,
+    },
     Statement {
         list_index: usize,
         item_index: usize,
@@ -1548,7 +1555,7 @@ enum ParentItem {
 enum ExpandedLayout {
     List(usize),
     Switch(usize),
-    Interface(usize),
+    TypeBody(usize),
     Object(usize),
 }
 
@@ -1609,7 +1616,9 @@ struct SwitchLayout {
 }
 
 #[derive(Debug)]
-struct InterfaceBodyLayout {
+struct TypeBodyLayout {
+    preserve_indent: bool,
+    expanded: bool,
     open: Span,
     close: Span,
     members: Vec<Span>,
@@ -1851,6 +1860,7 @@ fn collect_layout_edits(
         && rules.type_alias_spacing == StatementSpacingMode::Off
         && rules.variable_spacing == StatementSpacingMode::Off
         && rules.interface_layout_threshold.is_none()
+        && rules.type_literal_layout_threshold.is_none()
         && !rules.object_property_spacing
     {
         return Ok(Vec::new());
@@ -1858,14 +1868,20 @@ fn collect_layout_edits(
 
     let call_spacing_enabled = rules.multiline_call_spacing != StatementSpacingMode::Off
         || !rules.single_line_call_spacing.is_off();
-    let line_breaks = (rules.object_property_spacing || call_spacing_enabled)
-        .then(|| LineBreakIndex::new(source));
+    let directive_target_lines = typescript_directive_target_lines(source, &program.comments)?;
+    let line_breaks = (rules.object_property_spacing
+        || call_spacing_enabled
+        || rules.type_literal_layout_threshold.is_some()
+        || !directive_target_lines.is_empty())
+    .then(|| LineBreakIndex::new(source));
     let mut collector = StatementCollector {
         source,
         tokens,
         formatted_imports,
         line_breaks: line_breaks.as_ref(),
         interface_layout_threshold: rules.interface_layout_threshold,
+        type_literal_layout_threshold: rules.type_literal_layout_threshold,
+        directive_target_lines: &directive_target_lines,
         object_property_spacing: rules.object_property_spacing,
         control_flow_spacing: rules.control_flow_spacing,
         import_spacing: rules.import_spacing,
@@ -1881,14 +1897,14 @@ fn collect_layout_edits(
         current_switch: None,
         lists: Vec::new(),
         switches: Vec::new(),
-        interfaces: Vec::new(),
+        type_bodies: Vec::new(),
         objects: Vec::new(),
     };
     collector.visit_program(program);
     mark_expanded_layouts(
         &mut collector.lists,
         &mut collector.switches,
-        &collector.interfaces,
+        &collector.type_bodies,
         &mut collector.objects,
     );
     let mut edits = Vec::new();
@@ -1897,9 +1913,10 @@ fn collect_layout_edits(
         &program.comments,
         rules.comment_spacing,
         newline,
+        &directive_target_lines,
         &collector.lists,
         &collector.switches,
-        &collector.interfaces,
+        &collector.type_bodies,
         &collector.objects,
         line_breaks.as_ref(),
         &mut edits,
@@ -1928,11 +1945,13 @@ fn append_never_comma_edits(
 }
 
 struct StatementCollector<'s> {
+    directive_target_lines: &'s HashSet<u32>,
     source: &'s str,
     tokens: &'s [Token],
     formatted_imports: &'s HashMap<u32, bool>,
     line_breaks: Option<&'s LineBreakIndex>,
     interface_layout_threshold: Option<u32>,
+    type_literal_layout_threshold: Option<u32>,
     object_property_spacing: bool,
     control_flow_spacing: StatementSpacingMode,
     import_spacing: StatementSpacingMode,
@@ -1948,7 +1967,7 @@ struct StatementCollector<'s> {
     current_switch: Option<usize>,
     lists: Vec<StatementList>,
     switches: Vec<SwitchLayout>,
-    interfaces: Vec<InterfaceBodyLayout>,
+    type_bodies: Vec<TypeBodyLayout>,
     objects: Vec<ObjectLayout>,
 }
 
@@ -2348,15 +2367,72 @@ impl<'a> Visit<'a> for StatementCollector<'_> {
             && body.body.len() > threshold
             && let Some((open, close)) = brace_tokens(self.tokens, body.span)
         {
-            self.interfaces.push(InterfaceBodyLayout {
+            let body_index = self.type_bodies.len();
+            self.type_bodies.push(TypeBodyLayout {
+                preserve_indent: false,
+                expanded: true,
                 open,
                 close,
                 members: body.body.iter().map(GetSpan::span).collect(),
                 layout_parent: self.current_layout,
                 parent_item: self.current_item,
             });
+            let previous_layout = self
+                .current_layout
+                .replace(ExpandedLayout::TypeBody(body_index));
+            for (member_index, member) in body.body.iter().enumerate() {
+                let previous_item = self.current_item.replace(ParentItem::TypeMember {
+                    body_index,
+                    member_index,
+                });
+                self.visit_ts_signature(member);
+                self.current_item = previous_item;
+            }
+            self.current_layout = previous_layout;
+        } else {
+            walk_ts_interface_body(self, body);
         }
-        walk_ts_interface_body(self, body);
+    }
+
+    fn visit_ts_type_literal(&mut self, literal: &TSTypeLiteral<'a>) {
+        let Some(threshold) = self.type_literal_layout_threshold else {
+            walk_ts_type_literal(self, literal);
+            return;
+        };
+        let Some((open, close)) = brace_tokens(self.tokens, literal.span) else {
+            walk_ts_type_literal(self, literal);
+            return;
+        };
+        let protected = !self.directive_target_lines.is_empty()
+            && self.line_breaks.is_some_and(|lines| {
+                self.directive_target_lines
+                    .contains(&lines.line_start(open.start))
+            });
+        let expanded = usize::try_from(threshold)
+            .is_ok_and(|threshold| literal.members.len() > threshold)
+            && !protected;
+        let body_index = self.type_bodies.len();
+        self.type_bodies.push(TypeBodyLayout {
+            preserve_indent: true,
+            expanded,
+            open,
+            close,
+            members: literal.members.iter().map(GetSpan::span).collect(),
+            layout_parent: self.current_layout,
+            parent_item: self.current_item,
+        });
+        let previous_layout = self
+            .current_layout
+            .replace(ExpandedLayout::TypeBody(body_index));
+        for (member_index, member) in literal.members.iter().enumerate() {
+            let previous_item = self.current_item.replace(ParentItem::TypeMember {
+                body_index,
+                member_index,
+            });
+            self.visit_ts_signature(member);
+            self.current_item = previous_item;
+        }
+        self.current_layout = previous_layout;
     }
 
     fn visit_ts_external_module_declaration(
@@ -2432,7 +2508,7 @@ fn case_colon(tokens: &[Token], case: &SwitchCase<'_>) -> Option<Span> {
 fn mark_expanded_layouts(
     lists: &mut [StatementList],
     switches: &mut [SwitchLayout],
-    interfaces: &[InterfaceBodyLayout],
+    type_bodies: &[TypeBodyLayout],
     objects: &mut [ObjectLayout],
 ) {
     let mut pending = VecDeque::new();
@@ -2449,11 +2525,14 @@ fn mark_expanded_layouts(
             );
         }
     }
-    for interface_index in 0..interfaces.len() {
+    for (interface_index, body) in type_bodies.iter().enumerate() {
+        if !body.expanded {
+            continue;
+        }
         enqueue_layout_expansion(
             &mut pending,
             &mut queued,
-            ExpandedLayout::Interface(interface_index),
+            ExpandedLayout::TypeBody(interface_index),
             LayoutExpansionCause::Cascading,
         );
     }
@@ -2478,9 +2557,9 @@ fn mark_expanded_layouts(
                 switches[switch_index].layout_parent,
                 switches[switch_index].parent_item,
             ),
-            ExpandedLayout::Interface(interface_index) => (
-                interfaces[interface_index].layout_parent,
-                interfaces[interface_index].parent_item,
+            ExpandedLayout::TypeBody(interface_index) => (
+                type_bodies[interface_index].layout_parent,
+                type_bodies[interface_index].parent_item,
             ),
             ExpandedLayout::Object(object_index) => (
                 objects[object_index].layout_parent,
@@ -2560,7 +2639,15 @@ fn mark_expanded_layouts(
                     LayoutExpansionCause::Cascading,
                 );
             }
-            Some(ExpandedLayout::Interface(_)) | None => {}
+            Some(ExpandedLayout::TypeBody(body_index)) => {
+                enqueue_layout_expansion(
+                    &mut pending,
+                    &mut queued,
+                    ExpandedLayout::TypeBody(body_index),
+                    LayoutExpansionCause::Cascading,
+                );
+            }
+            None => {}
         }
     }
 }
@@ -2587,7 +2674,7 @@ fn mark_parent_item_multiline(
             object_index,
             item_index,
         } => objects[object_index].items[item_index].multiline = true,
-        ParentItem::SwitchCaseLabel { .. } => {}
+        ParentItem::TypeMember { .. } | ParentItem::SwitchCaseLabel { .. } => {}
     }
 }
 
@@ -2663,21 +2750,28 @@ fn append_layout_edits(
     comments: &[Comment],
     comment_spacing: &CommentSpacing,
     newline: &str,
+    directive_target_lines: &HashSet<u32>,
     lists: &[StatementList],
     switches: &[SwitchLayout],
-    interfaces: &[InterfaceBodyLayout],
+    type_bodies: &[TypeBodyLayout],
     objects: &[ObjectLayout],
     line_breaks: Option<&LineBreakIndex>,
     edits: &mut Vec<Edit>,
 ) -> Result<(), FormatError> {
-    let mut indents = LayoutIndents::new(lists.len(), switches.len(), objects.len(), line_breaks);
-    let directive_target_lines = typescript_directive_target_lines(source, comments)?;
+    let mut indents = LayoutIndents::new(
+        lists.len(),
+        switches.len(),
+        objects.len(),
+        type_bodies,
+        comments,
+        line_breaks,
+    );
     append_list_layout_edits(
         source,
         comments,
         comment_spacing,
         newline,
-        &directive_target_lines,
+        directive_target_lines,
         lists,
         switches,
         objects,
@@ -2695,16 +2789,16 @@ fn append_layout_edits(
         &mut indents,
         edits,
     )?;
-    append_interface_layout_edits(
+    append_type_body_layout_edits(
         source,
         comments,
         comment_spacing,
         newline,
-        &directive_target_lines,
+        directive_target_lines,
         lists,
         switches,
         objects,
-        interfaces,
+        type_bodies,
         &mut indents,
         edits,
     )?;
@@ -2782,11 +2876,11 @@ fn append_list_layout_edits(
             ) else {
                 continue;
             };
-            if spans_share_directive_target_line(
+            if boundary_shares_directive_target_line(
                 source,
-                previous.span,
-                next.span,
+                span,
                 directive_target_lines,
+                indents.line_breaks,
             ) {
                 continue;
             }
@@ -2937,9 +3031,9 @@ fn append_switch_layout_edits(
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "interface boundaries share the collected layout and source context"
+    reason = "type member boundaries share the collected layout and source context"
 )]
-fn append_interface_layout_edits(
+fn append_type_body_layout_edits(
     source: &str,
     comments: &[Comment],
     comment_spacing: &CommentSpacing,
@@ -2948,49 +3042,82 @@ fn append_interface_layout_edits(
     lists: &[StatementList],
     switches: &[SwitchLayout],
     objects: &[ObjectLayout],
-    interfaces: &[InterfaceBodyLayout],
+    type_bodies: &[TypeBodyLayout],
     indents: &mut LayoutIndents<'_>,
     edits: &mut Vec<Edit>,
 ) -> Result<(), FormatError> {
-    for interface in interfaces {
-        let Some(first) = interface.members.first() else {
+    for (body_index, body) in type_bodies.iter().enumerate() {
+        if !body.expanded {
+            continue;
+        }
+        let Some(first) = body.members.first() else {
             continue;
         };
         let base_indent =
-            indents.interface_base_indent(source, lists, switches, objects, interface);
-        let member_indent = format!("{base_indent}  ");
+            indents.type_body_base_indent(source, lists, switches, objects, body_index);
+        let first_indent =
+            indents.type_body_member_indent(source, lists, switches, objects, body_index, 0);
         append_boundary_edit(
             source,
             comments,
             comment_spacing,
-            Span::new(interface.open.end, first.start),
+            Span::new(body.open.end, first.start),
             newline,
-            &member_indent,
+            &first_indent,
             edits,
         )?;
-        for pair in interface.members.windows(2) {
-            if spans_share_directive_target_line(source, pair[0], pair[1], directive_target_lines) {
+        for (index, pair) in body.members.windows(2).enumerate() {
+            let boundary = Span::new(pair[0].end, pair[1].start);
+            if boundary_shares_directive_target_line(
+                source,
+                boundary,
+                directive_target_lines,
+                indents.line_breaks,
+            ) {
                 continue;
             }
+            let member_indent = indents.type_body_member_indent(
+                source,
+                lists,
+                switches,
+                objects,
+                body_index,
+                index + 1,
+            );
             append_boundary_edit(
                 source,
                 comments,
                 comment_spacing,
-                Span::new(pair[0].end, pair[1].start),
+                boundary,
                 newline,
                 &member_indent,
                 edits,
             )?;
         }
-        append_boundary_edit(
+        let last = *body.members.last().unwrap();
+        if !boundary_shares_directive_target_line(
             source,
-            comments,
-            comment_spacing,
-            Span::new(interface.members.last().unwrap().end, interface.close.start),
-            newline,
-            &base_indent,
-            edits,
-        )?;
+            Span::new(last.end, body.close.start),
+            directive_target_lines,
+            indents.line_breaks,
+        ) {
+            let closing_start = if body.preserve_indent {
+                comments_in_span(comments, Span::new(last.end, body.close.start))
+                    .last()
+                    .map_or(last.end, |comment| comment.span.end)
+            } else {
+                last.end
+            };
+            append_boundary_edit(
+                source,
+                comments,
+                comment_spacing,
+                Span::new(closing_start, body.close.start),
+                newline,
+                &base_indent,
+                edits,
+            )?;
+        }
     }
 
     Ok(())
@@ -3160,9 +3287,7 @@ fn typescript_directive_target_lines(
 ) -> Result<HashSet<u32>, FormatError> {
     let mut target_lines = HashSet::new();
     for comment in comments {
-        if comment.kind != CommentKind::Line
-            || !is_line_scoped_typescript_directive(source_slice(source, comment.span)?)
-        {
+        if !is_line_scoped_typescript_directive(source_slice(source, comment.span)?) {
             continue;
         }
         if let Some(line_start) = next_line_start(source, comment.span.end) {
@@ -3173,20 +3298,23 @@ fn typescript_directive_target_lines(
 }
 
 fn is_line_scoped_typescript_directive(comment: &str) -> bool {
-    let Some(comment) = comment.strip_prefix("//") else {
+    let comment = if let Some(comment) = comment.strip_prefix("//") {
+        comment.strip_prefix('/').unwrap_or(comment).trim_start()
+    } else if comment.starts_with("/*") {
+        // TypeScript recognizes block directives only on the comment's final line.
+        comment
+            .rsplit(['\r', '\n'])
+            .next()
+            .unwrap_or(comment)
+            .trim_start()
+            .trim_start_matches(['/', '*'])
+            .trim_start()
+    } else {
         return false;
     };
-    let comment = comment.trim_start_matches(['/', ' ', '\t']);
     ["@ts-ignore", "@ts-expect-error"]
         .into_iter()
-        .any(|directive| {
-            comment.strip_prefix(directive).is_some_and(|suffix| {
-                suffix
-                    .chars()
-                    .next()
-                    .is_none_or(|character| character.is_whitespace() || character == ':')
-            })
-        })
+        .any(|directive| comment.starts_with(directive))
 }
 
 fn next_line_start(source: &str, offset: u32) -> Option<u32> {
@@ -3195,7 +3323,10 @@ fn next_line_start(source: &str, offset: u32) -> Option<u32> {
     u32::try_from(offset.checked_add(relative_newline)?.checked_add(1)?).ok()
 }
 
-fn line_start(source: &str, offset: u32) -> Option<u32> {
+fn line_start(source: &str, offset: u32, line_breaks: Option<&LineBreakIndex>) -> Option<u32> {
+    if let Some(line_breaks) = line_breaks {
+        return Some(line_breaks.line_start(offset));
+    }
     #[cfg(test)]
     RAW_LINE_START_SCANS.set(RAW_LINE_START_SCANS.get() + 1);
     let offset = usize::try_from(offset).ok()?;
@@ -3206,19 +3337,19 @@ fn line_start(source: &str, offset: u32) -> Option<u32> {
     u32::try_from(start).ok()
 }
 
-fn spans_share_directive_target_line(
+fn boundary_shares_directive_target_line(
     source: &str,
-    previous: Span,
-    next: Span,
+    boundary: Span,
     directive_target_lines: &HashSet<u32>,
+    line_breaks: Option<&LineBreakIndex>,
 ) -> bool {
     if directive_target_lines.is_empty() {
         return false;
     }
-    let Some(previous_line) = line_start(source, previous.start) else {
+    let Some(previous_line) = line_start(source, boundary.start, line_breaks) else {
         return false;
     };
-    line_start(source, next.start).is_some_and(|next_line| {
+    line_start(source, boundary.end, line_breaks).is_some_and(|next_line| {
         next_line == previous_line && directive_target_lines.contains(&next_line)
     })
 }
@@ -3386,6 +3517,10 @@ fn existing_boundary_indent(
 }
 
 struct LayoutIndents<'a> {
+    comments: &'a [Comment],
+    type_bodies: &'a [TypeBodyLayout],
+    type_body_bases: Vec<Option<String>>,
+    type_body_members: Vec<Option<Vec<String>>>,
     list_bases: Vec<Option<String>>,
     list_items: Vec<Option<String>>,
     existing_item_indents: Vec<Option<Vec<Option<String>>>>,
@@ -3400,9 +3535,15 @@ impl<'a> LayoutIndents<'a> {
         list_count: usize,
         switch_count: usize,
         object_count: usize,
+        type_bodies: &'a [TypeBodyLayout],
+        comments: &'a [Comment],
         line_breaks: Option<&'a LineBreakIndex>,
     ) -> Self {
         Self {
+            comments,
+            type_bodies,
+            type_body_bases: vec![None; type_bodies.len()],
+            type_body_members: vec![None; type_bodies.len()],
             list_bases: vec![None; list_count],
             list_items: vec![None; list_count],
             existing_item_indents: vec![None; list_count],
@@ -3543,20 +3684,134 @@ impl<'a> LayoutIndents<'a> {
         indent
     }
 
-    fn interface_base_indent(
+    fn type_body_base_indent(
         &mut self,
         source: &str,
         lists: &[StatementList],
         switches: &[SwitchLayout],
         objects: &[ObjectLayout],
-        interface: &InterfaceBodyLayout,
+        body_index: usize,
     ) -> String {
-        indent_resolution();
-        if let Some(parent) = interface.parent_item {
-            self.parent_item_indent(source, lists, switches, objects, parent)
-        } else {
-            line_indent_at(source, interface.open.start)
+        if let Some(indent) = &self.type_body_bases[body_index] {
+            return indent.clone();
         }
+        indent_resolution();
+        let body = &self.type_bodies[body_index];
+        let existing_close = body
+            .preserve_indent
+            .then(|| self.standalone_indent(source, body.close.start))
+            .flatten();
+        let source_indent = self.leading_indent(source, body.open.start);
+        let indent = if let Some(indent) = existing_close {
+            indent
+        } else if let Some(parent) = body.parent_item {
+            let parent_start = match parent {
+                ParentItem::Statement {
+                    list_index,
+                    item_index,
+                } => lists[list_index].items[item_index].span.start,
+                ParentItem::ObjectProperty {
+                    object_index,
+                    item_index,
+                } => objects[object_index].items[item_index].span.start,
+                ParentItem::TypeMember {
+                    body_index,
+                    member_index,
+                } => self.type_bodies[body_index].members[member_index].start,
+                ParentItem::SwitchCaseLabel { switch_index, .. } => {
+                    switches[switch_index].span.start
+                }
+            };
+            let on_parent_line = self.line_breaks.is_none_or(|lines| {
+                lines.line_start(body.open.start) == lines.line_start(parent_start)
+            });
+            if body.preserve_indent && !on_parent_line {
+                source_indent
+            } else {
+                self.parent_item_indent(source, lists, switches, objects, parent)
+            }
+        } else {
+            source_indent
+        };
+        self.type_body_bases[body_index] = Some(indent.clone());
+        indent
+    }
+
+    fn type_body_member_indent(
+        &mut self,
+        source: &str,
+        lists: &[StatementList],
+        switches: &[SwitchLayout],
+        objects: &[ObjectLayout],
+        body_index: usize,
+        member_index: usize,
+    ) -> String {
+        if self.type_body_members[body_index].is_none() {
+            let base = self.type_body_base_indent(source, lists, switches, objects, body_index);
+            let body = &self.type_bodies[body_index];
+            let fallback = if body.expanded {
+                format!("{base}  ")
+            } else {
+                base
+            };
+            let mut indents = body
+                .members
+                .iter()
+                .enumerate()
+                .map(|(index, member)| {
+                    if !body.preserve_indent {
+                        return None;
+                    }
+                    self.standalone_indent(source, member.start).or_else(|| {
+                        let boundary_start = index
+                            .checked_sub(1)
+                            .map_or(body.open.end, |previous| body.members[previous].end);
+                        let leading = comments_in_span(
+                            self.comments,
+                            Span::new(boundary_start, member.start),
+                        )
+                        .iter()
+                        .find(|comment| comment.position == CommentPosition::Leading)?;
+                        self.standalone_indent(source, leading.span.start)
+                    })
+                })
+                .collect::<Vec<_>>();
+            let mut previous = None;
+            for indent in &mut indents {
+                if indent.is_some() {
+                    previous.clone_from(indent);
+                } else {
+                    indent.clone_from(&previous);
+                }
+            }
+            let mut following = None;
+            for indent in indents.iter_mut().rev() {
+                if indent.is_some() {
+                    following.clone_from(indent);
+                } else {
+                    indent.clone_from(&following);
+                }
+            }
+            self.type_body_members[body_index] = Some(
+                indents
+                    .into_iter()
+                    .map(|indent| indent.unwrap_or_else(|| fallback.clone()))
+                    .collect(),
+            );
+        }
+        self.type_body_members[body_index].as_ref().unwrap()[member_index].clone()
+    }
+
+    fn standalone_indent(&self, source: &str, offset: u32) -> Option<String> {
+        self.line_breaks.map_or_else(
+            || line_indent_if_standalone(source, offset),
+            |lines| line_indent_if_standalone_indexed(source, lines, offset),
+        )
+    }
+
+    fn leading_indent(&self, source: &str, offset: u32) -> String {
+        let start = self.line_breaks.map_or(0, |lines| lines.line_start(offset));
+        line_leading_indent_at(&source[start as usize..], offset - start)
     }
 
     fn object_base_indent(
@@ -3630,6 +3885,17 @@ impl<'a> LayoutIndents<'a> {
         parent: ParentItem,
     ) -> String {
         match parent {
+            ParentItem::TypeMember {
+                body_index,
+                member_index,
+            } => self.type_body_member_indent(
+                source,
+                lists,
+                switches,
+                objects,
+                body_index,
+                member_index,
+            ),
             ParentItem::Statement {
                 list_index,
                 item_index,
@@ -4685,6 +4951,9 @@ mod tests {
                 comment_spacing: false,
                 import_layout: false,
                 interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
+                    crate::TypeLiteralLayoutMode::Off,
+                ),
                 object_property_spacing: enabled,
                 quote_style: QuoteStyle::Off,
                 statement_spacing: StatementSpacingConfig {
@@ -5015,6 +5284,28 @@ mod tests {
         assert_eq!(LINE_START_INDEX_QUERIES.get(), (property_count - 1) * 2);
     }
 
+    #[test]
+    fn type_member_directive_boundaries_use_indexed_line_queries() {
+        let member_count = 256;
+        let mut source = String::from("// @ts-ignore\nconst unrelated = 1;\ntype Shape = {");
+        let mut expected = String::from("// @ts-ignore\nconst unrelated = 1;\ntype Shape = {\n");
+        for index in 0..member_count {
+            write!(source, "p{index}: string;").unwrap();
+            writeln!(expected, "  p{index}: string;").unwrap();
+        }
+        source.push('}');
+        expected.push('}');
+        let mut config = object_spacing_config(false);
+        config.rules.type_literal_layout = crate::TypeLiteralLayoutRule::Threshold(0);
+
+        LINE_START_INDEX_QUERIES.set(0);
+        RAW_LINE_START_SCANS.set(0);
+        let output = format_file_with("sample.ts", &source, config);
+        assert_eq!(output, expected);
+        assert_eq!(RAW_LINE_START_SCANS.get(), 0);
+        assert!(LINE_START_INDEX_QUERIES.get() >= member_count * 2);
+    }
+
     fn format_semicolons(file_name: &str, source: &str, semicolons: SemicolonConfig) -> String {
         format_file_with(
             file_name,
@@ -5025,6 +5316,9 @@ mod tests {
                     comment_spacing: false,
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                    type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
+                        crate::TypeLiteralLayoutMode::Off,
+                    ),
                     object_property_spacing: false,
                     quote_style: QuoteStyle::Off,
                     statement_spacing: StatementSpacingConfig {
@@ -5072,6 +5366,9 @@ mod tests {
                 rules: RulesConfig {
                     comment_spacing: false,
                     import_layout,
+                    type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
+                        crate::TypeLiteralLayoutMode::Off,
+                    ),
                     statement_spacing: StatementSpacingConfig {
                         control_flow_statements: StatementSpacingMode::Off,
                         imports,
@@ -5096,6 +5393,9 @@ mod tests {
                     comment_spacing: false,
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                    type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
+                        crate::TypeLiteralLayoutMode::Off,
+                    ),
                     object_property_spacing: false,
                     quote_style: QuoteStyle::Off,
                     statement_spacing: StatementSpacingConfig {
@@ -5126,6 +5426,9 @@ mod tests {
                     comment_spacing: false,
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                    type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
+                        crate::TypeLiteralLayoutMode::Off,
+                    ),
                     object_property_spacing: false,
                     quote_style: QuoteStyle::Off,
                     statement_spacing: StatementSpacingConfig {
@@ -5173,6 +5476,9 @@ mod tests {
                     comment_spacing: false,
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                    type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
+                        crate::TypeLiteralLayoutMode::Off,
+                    ),
                     object_property_spacing: false,
                     quote_style: QuoteStyle::Off,
                     statement_spacing: StatementSpacingConfig {
@@ -5202,6 +5508,9 @@ mod tests {
                     comment_spacing: false,
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                    type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
+                        crate::TypeLiteralLayoutMode::Off,
+                    ),
                     object_property_spacing: false,
                     quote_style: QuoteStyle::Off,
                     statement_spacing: StatementSpacingConfig {
@@ -5236,6 +5545,9 @@ mod tests {
                     comment_spacing: false,
                     import_layout: false,
                     interface_layout,
+                    type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
+                        crate::TypeLiteralLayoutMode::Off,
+                    ),
                     object_property_spacing: false,
                     quote_style: QuoteStyle::Off,
                     statement_spacing: StatementSpacingConfig {
@@ -5311,6 +5623,9 @@ mod tests {
                         comment_spacing: false,
                         import_layout: false,
                         interface_layout: InterfaceLayoutRule::Threshold(0),
+                        type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
+                            crate::TypeLiteralLayoutMode::Off,
+                        ),
                         object_property_spacing: false,
                         quote_style: QuoteStyle::Off,
                         statement_spacing: StatementSpacingConfig {
@@ -5582,6 +5897,9 @@ mod tests {
                 comment_spacing: false,
                 import_layout: false,
                 interface_layout: InterfaceLayoutRule::Threshold(0),
+                type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
+                    crate::TypeLiteralLayoutMode::Off,
+                ),
                 object_property_spacing: false,
                 quote_style: QuoteStyle::Off,
                 statement_spacing: StatementSpacingConfig {
@@ -6309,6 +6627,9 @@ mod tests {
                 comment_spacing: false,
                 import_layout: false,
                 interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
+                    crate::TypeLiteralLayoutMode::Off,
+                ),
                 object_property_spacing: false,
                 quote_style: QuoteStyle::Off,
                 statement_spacing: StatementSpacingConfig {
@@ -6473,6 +6794,9 @@ mod tests {
                 comment_spacing: false,
                 import_layout: true,
                 interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
+                    crate::TypeLiteralLayoutMode::Off,
+                ),
                 object_property_spacing: false,
                 quote_style: QuoteStyle::Off,
                 statement_spacing: StatementSpacingConfig {
@@ -6755,6 +7079,9 @@ mod tests {
                 comment_spacing: false,
                 import_layout: false,
                 interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
+                    crate::TypeLiteralLayoutMode::Off,
+                ),
                 object_property_spacing: false,
                 quote_style: QuoteStyle::Off,
                 statement_spacing: StatementSpacingConfig {
@@ -6792,6 +7119,9 @@ mod tests {
                 comment_spacing: false,
                 import_layout: false,
                 interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
+                    crate::TypeLiteralLayoutMode::Off,
+                ),
                 object_property_spacing: false,
                 quote_style: QuoteStyle::Single,
                 statement_spacing: StatementSpacingConfig {
@@ -7341,6 +7671,9 @@ mod tests {
                     comment_spacing: false,
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                    type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
+                        crate::TypeLiteralLayoutMode::Off,
+                    ),
                     object_property_spacing: false,
                     quote_style: QuoteStyle::Off,
                     statement_spacing: StatementSpacingConfig {
@@ -7427,6 +7760,9 @@ mod tests {
                             comment_spacing: false,
                             import_layout: false,
                             interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                            type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
+                                crate::TypeLiteralLayoutMode::Off
+                            ),
                             object_property_spacing: false,
                             quote_style: QuoteStyle::Off,
                             statement_spacing: StatementSpacingConfig {
@@ -8200,6 +8536,9 @@ mod tests {
                         comment_spacing: false,
                         import_layout: false,
                         interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                        type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
+                            crate::TypeLiteralLayoutMode::Off
+                        ),
                         object_property_spacing: false,
                         quote_style: QuoteStyle::Off,
                         statement_spacing: StatementSpacingConfig {
@@ -8250,6 +8589,9 @@ mod tests {
                         comment_spacing: false,
                         import_layout: false,
                         interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                        type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
+                            crate::TypeLiteralLayoutMode::Off,
+                        ),
                         object_property_spacing: false,
                         quote_style: QuoteStyle::Off,
                         statement_spacing: StatementSpacingConfig {
@@ -8297,6 +8639,9 @@ mod tests {
                         comment_spacing: false,
                         import_layout: false,
                         interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                        type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
+                            crate::TypeLiteralLayoutMode::Off,
+                        ),
                         object_property_spacing: false,
                         quote_style: QuoteStyle::Off,
                         statement_spacing: StatementSpacingConfig {
@@ -8469,6 +8814,9 @@ mod tests {
                     comment_spacing: false,
                     import_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                    type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
+                        crate::TypeLiteralLayoutMode::Off,
+                    ),
                     object_property_spacing: false,
                     quote_style: QuoteStyle::Off,
                     statement_spacing: StatementSpacingConfig {
@@ -8522,6 +8870,9 @@ mod tests {
                         comment_spacing: false,
                         import_layout: false,
                         interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
+                        type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
+                            crate::TypeLiteralLayoutMode::Off,
+                        ),
                         object_property_spacing: false,
                         quote_style: QuoteStyle::Off,
                         statement_spacing: StatementSpacingConfig {

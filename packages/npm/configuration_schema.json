@@ -54,7 +54,8 @@
           "typeAliases": "separate",
           "variableDeclarations": "separate"
         },
-        "trailingCommas": "never"
+        "trailingCommas": "never",
+        "typeLiteralLayout": 0
       }
     },
     "verifyAst": {
@@ -172,6 +173,10 @@
         "trailingCommas": {
           "$ref": "#/$defs/TrailingCommaMode",
           "default": "never"
+        },
+        "typeLiteralLayout": {
+          "$ref": "#/$defs/TypeLiteralLayoutRule",
+          "default": 0
         }
       },
       "additionalProperties": false
@@ -280,6 +285,25 @@
         "always",
         "never",
         "off"
+      ]
+    },
+    "TypeLiteralLayoutMode": {
+      "type": "string",
+      "enum": [
+        "off"
+      ]
+    },
+    "TypeLiteralLayoutRule": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "format": "uint32",
+          "maximum": 4294967295,
+          "minimum": 0
+        },
+        {
+          "$ref": "#/$defs/TypeLiteralLayoutMode"
+        }
       ]
     },
     "TypeMemberSemicolonConfig": {

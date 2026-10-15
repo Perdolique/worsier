@@ -12,6 +12,9 @@ fn isolated(curly: BracketSpacingMode, square: BracketSpacingMode) -> FormatConf
     config.rules.comment_spacing = false;
     config.rules.import_layout = false;
     config.rules.interface_layout = InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off);
+    config.rules.type_literal_layout = worsier_formatter::TypeLiteralLayoutRule::Mode(
+        worsier_formatter::TypeLiteralLayoutMode::Off,
+    );
     config.rules.object_property_spacing = false;
     config.rules.quote_style = QuoteStyle::Off;
     let spacing = &mut config.rules.statement_spacing;

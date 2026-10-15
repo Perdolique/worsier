@@ -43,6 +43,8 @@ await writeFile(join(project, 'package.json'), '{"type":"module","private":true}
 run('npm', ['install', '--ignore-scripts', rootTarball, platformTarball], project)
 const installedPackage = join(project, 'node_modules/worsier')
 const installedSchema = JSON.parse(await readFile(join(installedPackage, 'configuration_schema.json'), 'utf8'))
+assert.equal(installedSchema.properties.rules.default.typeLiteralLayout, 0)
+assert.equal(installedSchema.$defs.RulesConfig.properties.typeLiteralLayout.default, 0)
 assert.equal(installedSchema.properties.rules.default.commentSpacing, true)
 const defaultBrackets = { curly: 'always', square: 'never' }
 assert.deepEqual(installedSchema.properties.rules.default.bracketSpacing, defaultBrackets)
@@ -103,6 +105,7 @@ const expectedInitializedConfig = `{
     "commentSpacing": true,
     "importLayout": true,
     "interfaceLayout": 0,
+    "typeLiteralLayout": 0,
     "objectPropertySpacing": true,
     "quoteStyle": "single",
     "statementSpacing": {
@@ -152,6 +155,7 @@ const expectedMigratedConfig = `{
     // legacy layout
     "importLayout": false,
     "interfaceLayout": 0,
+    "typeLiteralLayout": 0,
     "objectPropertySpacing": true,
     "quoteStyle": "single",
     "statementSpacing": {
@@ -214,11 +218,22 @@ const singleLineTypeMembers = run(
   [
     '--input-type=module',
     '--eval',
-    `import { format } from 'worsier'; console.log(await format('sample.ts', 'function test(): { a: number; b: string; } {}'))`
+    `import { format } from 'worsier'; console.log(await format('sample.ts', 'function test(): { a: number; b: string; } {}', { rules: { typeLiteralLayout: 'off' } }))`
   ],
   project
 )
 assert.equal(singleLineTypeMembers.stdout, 'function test(): { a: number; b: string } {}\n')
+
+const typeLiteralLayout = run(
+  process.execPath,
+  [
+    '--input-type=module',
+    '--eval',
+    `import { format } from 'worsier'; console.log(await format('sample.ts', 'type Shape = { value: string }'))`
+  ],
+  project
+)
+assert.equal(typeLiteralLayout.stdout, 'type Shape = {\n  value: string;\n}\n')
 
 const objectSpacing = run(
   process.execPath,
@@ -311,7 +326,7 @@ const controlFlowSpacing = run(
   [
     '--input-type=module',
     '--eval',
-    `import { format } from 'worsier'; console.log(await format('sample.ts', 'function f(){before();if(ok)work();after();}', { rules: { importLayout: false, interfaceLayout: 'off', objectPropertySpacing: false, statementSpacing: { controlFlowStatements: 'separate', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' }, semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' }, trailingCommas: 'off' } }))`
+    `import { format } from 'worsier'; console.log(await format('sample.ts', 'function f(){before();if(ok)work();after();}', { rules: { importLayout: false, interfaceLayout: 'off', typeLiteralLayout: 'off', objectPropertySpacing: false, statementSpacing: { controlFlowStatements: 'separate', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' }, semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' }, trailingCommas: 'off' } }))`
   ],
   project
 )
@@ -325,7 +340,7 @@ const compactTypeAliases = run(
   [
     '--input-type=module',
     '--eval',
-    `import { format } from 'worsier'; console.log(await format('sample.ts', 'type A=1;type B={\\n value:string\\n};\\n\\n\\nrun();', { rules: { importLayout: false, interfaceLayout: 'off', objectPropertySpacing: false, statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'compact', variableDeclarations: 'off' }, semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' }, trailingCommas: 'off' } }))`
+    `import { format } from 'worsier'; console.log(await format('sample.ts', 'type A=1;type B={\\n value:string\\n};\\n\\n\\nrun();', { rules: { importLayout: false, interfaceLayout: 'off', typeLiteralLayout: 'off', objectPropertySpacing: false, statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'compact', variableDeclarations: 'off' }, semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' }, trailingCommas: 'off' } }))`
   ],
   project
 )
@@ -336,7 +351,7 @@ const trailingAlways = run(
   [
     '--input-type=module',
     '--eval',
-    `import { format } from 'worsier'; console.log(await format('sample.ts', 'const value={\\n  item: true\\n};', { rules: { importLayout: false, interfaceLayout: 'off', objectPropertySpacing: false, statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' }, semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' }, trailingCommas: 'always' } }))`
+    `import { format } from 'worsier'; console.log(await format('sample.ts', 'const value={\\n  item: true\\n};', { rules: { importLayout: false, interfaceLayout: 'off', typeLiteralLayout: 'off', objectPropertySpacing: false, statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' }, semicolons: { statements: 'off', classMembers: 'off', typeMembers: 'off' }, trailingCommas: 'always' } }))`
   ],
   project
 )
@@ -347,7 +362,7 @@ const granularSemicolons = run(
   [
     '--input-type=module',
     '--eval',
-    `import { format } from 'worsier'; console.log(await format('sample.ts', 'const runtime=1;\\nclass Example { field=1; }\\ninterface Shape { value: string; }', { rules: { importLayout: false, interfaceLayout: 'off', objectPropertySpacing: false, statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' }, semicolons: { statements: 'off', classMembers: 'asNeeded', typeMembers: 'always' }, trailingCommas: 'off' } }))`
+    `import { format } from 'worsier'; console.log(await format('sample.ts', 'const runtime=1;\\nclass Example { field=1; }\\ninterface Shape { value: string; }', { rules: { importLayout: false, interfaceLayout: 'off', typeLiteralLayout: 'off', objectPropertySpacing: false, statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' }, semicolons: { statements: 'off', classMembers: 'asNeeded', typeMembers: 'always' }, trailingCommas: 'off' } }))`
   ],
   project
 )
