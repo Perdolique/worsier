@@ -57,7 +57,8 @@
           "variableDeclarations": "separate"
         },
         "trailingCommas": "never",
-        "typeLiteralLayout": 0
+        "typeLiteralLayout": 0,
+        "unionLayout": "auto"
       }
     },
     "verifyAst": {
@@ -196,6 +197,10 @@
         "typeLiteralLayout": {
           "$ref": "#/$defs/TypeLiteralLayoutRule",
           "default": 0
+        },
+        "unionLayout": {
+          "$ref": "#/$defs/UnionLayoutMode",
+          "default": "auto"
         }
       },
       "additionalProperties": false
@@ -347,6 +352,14 @@
         {
           "$ref": "#/$defs/TypeMemberSemicolonConfig"
         }
+      ]
+    },
+    "UnionLayoutMode": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "always",
+        "off"
       ]
     }
   }

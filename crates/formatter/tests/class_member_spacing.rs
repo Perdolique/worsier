@@ -7,7 +7,7 @@ fn isolated(mode: ClassMemberSpacingMode) -> FormatConfig {
         "rules": {
             "bracketSpacing": { "curly": "off", "square": "off" },
             "commentSpacing": false, "importLayout": false, "exportLayout": false,
-            "interfaceLayout": "off", "typeLiteralLayout": "off",
+            "interfaceLayout": "off", "typeLiteralLayout": "off", "unionLayout": "off",
             "objectPropertySpacing": false, "quoteStyle": "off",
             "statementSpacing": {
                 "controlFlowStatements": "off", "imports": "off",

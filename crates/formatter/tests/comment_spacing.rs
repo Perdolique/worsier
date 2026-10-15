@@ -13,6 +13,7 @@ fn comments_only() -> FormatConfig {
     config.rules.import_layout = false;
     config.rules.export_layout = false;
     config.rules.class_member_spacing = worsier_formatter::ClassMemberSpacingMode::Off;
+    config.rules.union_layout = worsier_formatter::UnionLayoutMode::Off;
     config.rules.interface_layout = InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off);
     config.rules.type_literal_layout = worsier_formatter::TypeLiteralLayoutRule::Mode(
         worsier_formatter::TypeLiteralLayoutMode::Off,

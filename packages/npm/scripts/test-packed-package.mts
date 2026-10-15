@@ -96,6 +96,11 @@ assert.match(
 )
 assert.match(installedTypes, /typeMembers\?: SemicolonMode \| TypeMemberSemicolonConfig/)
 
+assert.equal(installedSchema.properties.rules.default.unionLayout, 'auto')
+assert.equal(installedSchema.$defs.RulesConfig.properties.unionLayout.default, 'auto')
+assert.deepEqual(installedSchema.$defs.UnionLayoutMode.enum, ['auto', 'always', 'off'])
+assert.match(installedTypes, /unionLayout\?: 'auto' \| 'always' \| 'off'/)
+
 const executable = join(project, 'node_modules/worsier/bin/worsier.js')
 const version = run(process.execPath, [executable, '--version'], project)
 assert.equal(version.stdout.trim(), `worsier ${rootVersion}`)
@@ -116,6 +121,7 @@ const expectedInitializedConfig = `{
     "exportLayout": true,
     "interfaceLayout": 0,
     "typeLiteralLayout": 0,
+    "unionLayout": "auto",
     "objectPropertySpacing": true,
     "quoteStyle": "single",
     "statementSpacing": {
@@ -168,6 +174,7 @@ const expectedMigratedConfig = `{
     "exportLayout": true,
     "interfaceLayout": 0,
     "typeLiteralLayout": 0,
+    "unionLayout": "auto",
     "objectPropertySpacing": true,
     "quoteStyle": "single",
     "statementSpacing": {
@@ -213,6 +220,24 @@ const api = run(
   project
 )
 assert.equal(api.stdout, "import { packed } from 'pkg'\n\nconst raw=[1,2]\n")
+
+const unionApi = run(
+  process.execPath,
+  [
+    '--input-type=module',
+    '--eval',
+    `import { format } from 'worsier'; const output = await format('sample.ts', 'type U = A | B', { rules: { unionLayout: 'always' } }); process.stdout.write(output)`
+  ],
+  project
+)
+const expandedUnion = 'type U =\n  | A\n  | B'
+assert.equal(unionApi.stdout, expandedUnion)
+const unionPath = join(project, 'union.ts')
+const unionConfigPath = join(project, 'union.jsonc')
+await writeFile(unionPath, 'type U = A | B')
+await writeFile(unionConfigPath, '{"rules":{"unionLayout":"always"}}')
+const unionCli = run(process.execPath, [executable, '--config', unionConfigPath, unionPath], project)
+assert.equal(unionCli.stdout, expandedUnion)
 
 const classMemberSpacing = run(
   process.execPath,

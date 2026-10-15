@@ -44,6 +44,7 @@ pub struct RulesConfig {
     pub export_layout: bool,
     pub interface_layout: InterfaceLayoutRule,
     pub type_literal_layout: TypeLiteralLayoutRule,
+    pub union_layout: UnionLayoutMode,
     pub object_property_spacing: bool,
     pub quote_style: QuoteStyle,
     pub statement_spacing: StatementSpacingConfig,
@@ -61,6 +62,7 @@ impl Default for RulesConfig {
             export_layout: true,
             interface_layout: InterfaceLayoutRule::default(),
             type_literal_layout: TypeLiteralLayoutRule::default(),
+            union_layout: UnionLayoutMode::Auto,
             object_property_spacing: true,
             quote_style: QuoteStyle::default(),
             statement_spacing: StatementSpacingConfig::default(),
@@ -514,6 +516,15 @@ pub enum TrailingCommaMode {
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub enum UnionLayoutMode {
+    #[default]
+    Auto,
+    Always,
+    Off,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub enum QuoteStyle {
     #[default]
     Single,
@@ -527,6 +538,11 @@ pub struct ResolvedConfig {
 }
 
 impl ResolvedConfig {
+    #[must_use]
+    pub const fn union_layout(&self) -> UnionLayoutMode {
+        self.value.rules.union_layout
+    }
+
     #[must_use]
     pub const fn class_member_spacing(&self) -> ClassMemberSpacingMode {
         self.value.rules.class_member_spacing
@@ -673,7 +689,8 @@ mod tests {
     use super::{
         BracketSpacingMode, ClassMemberSpacingMode, FormatConfig, InterfaceLayoutMode,
         InterfaceLayoutRule, QuoteStyle, SemicolonMode, SingleLineCallStatementSpacingConfig,
-        StatementSpacingMode, TrailingCommaMode, TypeMemberSemicolonConfig, resolve_config,
+        StatementSpacingMode, TrailingCommaMode, TypeMemberSemicolonConfig, UnionLayoutMode,
+        resolve_config,
     };
 
     #[test]
@@ -689,6 +706,7 @@ mod tests {
         assert!(config.export_layout_enabled());
         assert_eq!(config.interface_layout_threshold(), Some(0));
         assert_eq!(config.type_literal_layout_threshold(), Some(0));
+        assert_eq!(config.union_layout(), UnionLayoutMode::Auto);
         assert!(config.object_property_spacing_enabled());
         assert_eq!(config.quote_style(), QuoteStyle::Single);
         assert_eq!(
@@ -729,6 +747,39 @@ mod tests {
             ..FormatConfig::default()
         };
         assert!(resolve_config(config).is_err());
+    }
+
+    #[test]
+    fn accepts_union_modes_and_serializes_the_default_schema() {
+        for (value, expected) in [
+            ("auto", UnionLayoutMode::Auto),
+            ("always", UnionLayoutMode::Always),
+            ("off", UnionLayoutMode::Off),
+        ] {
+            let source = format!(r#"{{"rules":{{"unionLayout":"{value}"}}}}"#);
+            let config: FormatConfig = serde_json::from_str(&source).unwrap();
+            assert_eq!(resolve_config(config).unwrap().union_layout(), expected);
+        }
+        for value in ["\"never\"", "true", "1", "null"] {
+            let source = format!(r#"{{"rules":{{"unionLayout":{value}}}}}"#);
+            assert!(
+                serde_json::from_str::<FormatConfig>(&source).is_err(),
+                "{source}"
+            );
+        }
+        let schema = serde_json::to_value(schemars::schema_for!(FormatConfig)).unwrap();
+        assert_eq!(
+            schema["properties"]["rules"]["default"]["unionLayout"],
+            "auto"
+        );
+        assert_eq!(
+            schema["$defs"]["RulesConfig"]["properties"]["unionLayout"]["default"],
+            "auto"
+        );
+        assert_eq!(
+            schema["$defs"]["UnionLayoutMode"]["enum"],
+            serde_json::json!(["auto", "always", "off"])
+        );
     }
 
     #[test]
@@ -816,6 +867,7 @@ mod tests {
         assert!(!config.import_layout_enabled());
         assert_eq!(config.interface_layout_threshold(), Some(0));
         assert_eq!(config.type_literal_layout_threshold(), Some(0));
+        assert_eq!(config.union_layout(), UnionLayoutMode::Auto);
         assert!(config.object_property_spacing_enabled());
         assert_eq!(config.quote_style(), QuoteStyle::Single);
         assert_eq!(

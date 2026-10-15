@@ -11,7 +11,7 @@ pub use config::{
     SemicolonConfig, SemicolonMode, SingleLineCallStatementSpacingConfig,
     SingleLineCallStatementSpacingRule, StatementSpacingConfig, StatementSpacingMode,
     TrailingCommaMode, TypeLiteralLayoutMode, TypeLiteralLayoutRule, TypeMemberSemicolonConfig,
-    TypeMemberSemicolonRule, resolve_config,
+    TypeMemberSemicolonRule, UnionLayoutMode, resolve_config,
 };
 pub use document::{format_text, is_supported_path};
 pub use error::FormatError;
