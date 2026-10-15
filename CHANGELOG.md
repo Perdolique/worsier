@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.8.0](https://github.com/Perdolique/worsier/compare/v3.7.0...v3.8.0) (2026-10-15)
+
+
+### Features
+
+* **formatter:** add named export layout ([acc9fd6](https://github.com/Perdolique/worsier/commit/acc9fd64cfda51270ebaa098db4310323b59a2fc)), closes [#74](https://github.com/Perdolique/worsier/issues/74)
+
 ## [3.7.0](https://github.com/Perdolique/worsier/compare/v3.6.1...v3.7.0) (2026-10-15)
 
 
