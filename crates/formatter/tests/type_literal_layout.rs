@@ -10,6 +10,7 @@ fn isolated(threshold: u32) -> FormatConfig {
             "bracketSpacing": { "curly": "off", "square": "off" },
             "commentSpacing": false,
             "importLayout": false,
+            "exportLayout": false,
             "interfaceLayout": "off",
             "typeLiteralLayout": threshold,
             "objectPropertySpacing": false,

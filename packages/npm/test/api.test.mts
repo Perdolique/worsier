@@ -13,6 +13,7 @@ test('preserves comment groups through the native API independently of other rul
     bracketSpacing: { curly: 'off', square: 'off' },
     commentSpacing: true,
     importLayout: false,
+    exportLayout: false,
     interfaceLayout: 'off',
     typeLiteralLayout: 'off',
     objectPropertySpacing: false,
@@ -46,6 +47,7 @@ test('formats through the asynchronous native API', async () => {
       bracketSpacing: { curly: 'off', square: 'off' },
       commentSpacing: false,
       importLayout: false,
+      exportLayout: false,
       objectPropertySpacing: false,
       quoteStyle: 'off',
       statementSpacing: { imports: 'off' }
@@ -68,6 +70,7 @@ test('formats through the asynchronous native API', async () => {
       bracketSpacing: { curly: 'off', square: 'off' },
       commentSpacing: false,
       importLayout: false,
+      exportLayout: false,
       objectPropertySpacing: false,
       quoteStyle: 'off',
       interfaceLayout: 'off',
@@ -110,6 +113,7 @@ test('formats quote styles through the native API', async () => {
     bracketSpacing: { curly: 'off', square: 'off' },
     commentSpacing: false,
     importLayout: false,
+    exportLayout: false,
     interfaceLayout: 'off',
     typeLiteralLayout: 'off',
     objectPropertySpacing: false,
@@ -131,6 +135,19 @@ test('formats quote styles through the native API', async () => {
   )
 })
 
+test('formats named exports through the native API', async () => {
+  const source = "export {\n  alpha,\n  type Beta\n} from 'pkg'"
+  const flat = "export { alpha, type Beta } from 'pkg'"
+  const output = await format('sample.ts', source)
+  assert.equal(output, flat)
+  const repeated = await format('sample.ts', output)
+  assert.equal(repeated, output)
+  const expanded = await format('sample.ts', flat, { lineWidth: 10 })
+  assert.equal(expanded, source)
+  const preserved = await format('sample.ts', source, { rules: { exportLayout: false } })
+  assert.equal(preserved, source)
+})
+
 test('formats object property spacing through the native API', async () => {
   const source = 'const value={first:1,second:2};'
   assert.equal(
@@ -147,6 +164,7 @@ test('formats object property spacing through the native API', async () => {
         bracketSpacing: { curly: 'off', square: 'off' },
         commentSpacing: false,
         importLayout: false,
+        exportLayout: false,
         interfaceLayout: 'off',
         typeLiteralLayout: 'off',
         objectPropertySpacing: false,
@@ -258,6 +276,7 @@ test('formats interface layouts through the native API', async () => {
   const isolatedRules: RulesConfig = {
     commentSpacing: false,
     importLayout: false,
+    exportLayout: false,
     objectPropertySpacing: false,
     quoteStyle: 'off',
     statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
@@ -314,6 +333,7 @@ test('formats type alias spacing through the native API', async () => {
     rules: {
       commentSpacing: false,
       importLayout: false,
+      exportLayout: false,
       objectPropertySpacing: false,
       quoteStyle: 'off',
       interfaceLayout: 'off',
@@ -332,6 +352,7 @@ test('formats return statement spacing through the native API', async () => {
     rules: {
       commentSpacing: false,
       importLayout: false,
+      exportLayout: false,
       objectPropertySpacing: false,
       quoteStyle: 'off',
       interfaceLayout: 'off',
@@ -350,6 +371,7 @@ test('formats control-flow statement spacing through the native API', async () =
     rules: {
       commentSpacing: false,
       importLayout: false,
+      exportLayout: false,
       objectPropertySpacing: false,
       quoteStyle: 'off',
       interfaceLayout: 'off',
@@ -369,6 +391,7 @@ test('formats granular semicolon groups through the native API', async () => {
     rules: {
       commentSpacing: false,
       importLayout: false,
+      exportLayout: false,
       objectPropertySpacing: false,
       quoteStyle: 'off',
       statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
@@ -393,6 +416,7 @@ test('formats type member semicolons by container layout through the native API'
     rules: {
       commentSpacing: false,
       importLayout: false,
+      exportLayout: false,
       interfaceLayout: 'off',
       typeLiteralLayout: 'off',
       objectPropertySpacing: false,
@@ -415,6 +439,7 @@ test('formats trailing commas through the native API', async () => {
   const disabledRules: RulesConfig = {
     commentSpacing: false,
     importLayout: false,
+    exportLayout: false,
     objectPropertySpacing: false,
     quoteStyle: 'off',
     statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
@@ -451,6 +476,9 @@ test('maps native failures to stable error codes', async () => {
     (error) => isConfigError(error, 'quoteStyle')
   )
   const invalidRules: Array<readonly [unknown, string]> = [
+    [{ exportLayout: 'off' }, 'rules.exportLayout'],
+    [{ exportLayout: 1 }, 'rules.exportLayout'],
+    [{ exportLayout: null }, 'rules.exportLayout'],
     [{ commentSpacing: 'off' }, 'rules.commentSpacing'],
     [{ commentSpacing: 1 }, 'rules.commentSpacing'],
     [{ imports: true }, 'rules.imports'],

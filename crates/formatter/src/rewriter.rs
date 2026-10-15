@@ -64,6 +64,7 @@ thread_local! {
     static LIST_MULTILINE_INDEX_QUERIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static RAW_LIST_MULTILINE_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static STANDALONE_INDENT_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static RAW_INDENT_PREFIX_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static PARENTHESIS_INDEX_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static PARENTHESIS_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static DEFERRED_IMPORT_BOUNDARY_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -249,6 +250,7 @@ fn rewrite_after_quotes(
             bracket_spacing: config.bracket_spacing(),
             comment_spacing: &comment_spacing,
             import_layout: config.import_layout_enabled(),
+            export_layout: config.export_layout_enabled(),
             interface_layout_threshold: config.interface_layout_threshold(),
             type_literal_layout_threshold: config.type_literal_layout_threshold(),
             object_property_spacing: config.object_property_spacing_enabled(),
@@ -311,6 +313,7 @@ fn script_rules_after_quotes_disabled(
         && config.bracket_spacing().square == BracketSpacingMode::Off
         && !config.comment_spacing_enabled()
         && !config.import_layout_enabled()
+        && !config.export_layout_enabled()
         && config.interface_layout_threshold().is_none()
         && config.type_literal_layout_threshold().is_none()
         && !config.object_property_spacing_enabled()
@@ -1516,6 +1519,7 @@ struct RewriteRules<'a> {
     bracket_spacing: BracketSpacingConfig,
     comment_spacing: &'a CommentSpacing,
     import_layout: bool,
+    export_layout: bool,
     interface_layout_threshold: Option<u32>,
     type_literal_layout_threshold: Option<u32>,
     object_property_spacing: bool,
@@ -1652,15 +1656,19 @@ fn rewrite_edits(
     newline: &str,
     rules: RewriteRules,
 ) -> Result<Vec<Edit>, FormatError> {
-    let initial_import_layout = FinalImportLayout::default();
-    let mut import_rewrites = format_import_edits(
+    let declarations = module_declarations(program, tokens, rules);
+    let module_line_breaks = (!declarations.is_empty()).then(|| LineBreakIndex::new(source));
+    let initial_module_layout = FinalModuleLayout::default();
+    let mut module_rewrites = format_module_edits(
         source,
         program,
         tokens,
+        &declarations,
+        module_line_breaks.as_ref(),
         line_width,
         newline,
         rules,
-        &initial_import_layout,
+        &initial_module_layout,
     )?;
     let mut layout_edits = collect_layout_edits(
         source,
@@ -1668,9 +1676,9 @@ fn rewrite_edits(
         tokens,
         newline,
         rules,
-        &import_rewrites.formatted_imports,
+        &module_rewrites.formatted_declarations,
     )?;
-    let final_import_layout = FinalImportLayout {
+    let final_module_layout = FinalModuleLayout {
         line_break_after: if rules.statement_semicolons == SemicolonMode::AsNeeded {
             layout_edits
                 .iter()
@@ -1680,29 +1688,36 @@ fn rewrite_edits(
         } else {
             HashSet::new()
         },
-        base_indents: layout_import_base_indents(&layout_edits, &import_rewrites),
+        base_indents: layout_module_base_indents(&layout_edits, &module_rewrites),
     };
-    let import_indent_changed = final_import_layout
-        .base_indents
-        .iter()
-        .any(|(start, indent)| line_indent_at(source, *start) != *indent);
-    let import_semicolon_changed = import_rewrites
+    let module_indent_changed = module_line_breaks.as_ref().is_some_and(|line_breaks| {
+        final_module_layout
+            .base_indents
+            .iter()
+            .any(|(start, indent)| {
+                line_indent_if_standalone_indexed(source, line_breaks, *start).unwrap_or_default()
+                    != *indent
+            })
+    });
+    let module_semicolon_changed = module_rewrites
         .deferred_semicolon_ends
         .iter()
         .any(|offset| {
-            contains_deferred_import_boundary(&final_import_layout.line_break_after, *offset)
+            contains_deferred_import_boundary(&final_module_layout.line_break_after, *offset)
         });
-    // A layout-added line break can change an import's final indentation or make its semicolon
-    // removable. Recompute both import and layout edits once with that final boundary shape.
-    if import_indent_changed || import_semicolon_changed {
-        import_rewrites = format_import_edits(
+    // Layout-added line breaks can change a module declaration's indentation or make its
+    // semicolon removable. Recompute both sets of edits with that final boundary shape.
+    if module_indent_changed || module_semicolon_changed {
+        module_rewrites = format_module_edits(
             source,
             program,
             tokens,
+            &declarations,
+            module_line_breaks.as_ref(),
             line_width,
             newline,
             rules,
-            &final_import_layout,
+            &final_module_layout,
         )?;
         layout_edits = collect_layout_edits(
             source,
@@ -1710,11 +1725,11 @@ fn rewrite_edits(
             tokens,
             newline,
             rules,
-            &import_rewrites.formatted_imports,
+            &module_rewrites.formatted_declarations,
         )?;
     }
 
-    let mut edits = import_rewrites.edits;
+    let mut edits = module_rewrites.edits;
     edits.extend(layout_edits);
     append_never_comma_edits(source, program, tokens, rules, &mut edits);
     edits.sort_by_key(|edit| (edit.start, edit.end));
@@ -1734,26 +1749,29 @@ fn rewrite_edits(
 }
 
 #[derive(Default)]
-struct ImportRewrites {
+struct ModuleRewrites {
     edits: Vec<Edit>,
-    formatted_imports: HashMap<u32, bool>,
+    formatted_declarations: HashMap<u32, bool>,
     deferred_semicolon_ends: HashSet<u32>,
 }
 
 #[derive(Default)]
-struct FinalImportLayout {
+struct FinalModuleLayout {
     line_break_after: HashSet<u32>,
     base_indents: HashMap<u32, String>,
 }
 
-fn layout_import_base_indents(
+fn layout_module_base_indents(
     layout_edits: &[Edit],
-    import_rewrites: &ImportRewrites,
+    module_rewrites: &ModuleRewrites,
 ) -> HashMap<u32, String> {
     layout_edits
         .iter()
         .filter_map(|edit| {
-            if !import_rewrites.formatted_imports.contains_key(&edit.end) {
+            if !module_rewrites
+                .formatted_declarations
+                .contains_key(&edit.end)
+            {
                 return None;
             }
             let (_, indent) = edit.replacement.rsplit_once('\n')?;
@@ -1765,26 +1783,57 @@ fn layout_import_base_indents(
         .collect()
 }
 
-fn format_import_edits(
+#[allow(
+    clippy::too_many_arguments,
+    reason = "module layout shares declarations and one source line index across both passes"
+)]
+fn format_module_edits(
     source: &str,
     program: &Program<'_>,
     tokens: &[Token],
+    declarations: &[ModuleDeclaration],
+    line_breaks: Option<&LineBreakIndex>,
     line_width: u32,
     newline: &str,
     rules: RewriteRules,
-    final_layout: &FinalImportLayout,
-) -> Result<ImportRewrites, FormatError> {
-    let mut rewrites = ImportRewrites::default();
-    if !rules.import_layout {
+    final_layout: &FinalModuleLayout,
+) -> Result<ModuleRewrites, FormatError> {
+    let mut rewrites = ModuleRewrites::default();
+    let Some(line_breaks) = line_breaks else {
         return Ok(rewrites);
-    }
+    };
 
-    for statement in &program.body {
-        let Statement::ImportDeclaration(declaration) = statement else {
-            continue;
-        };
-        let span = statement_syntax_span(source, tokens, statement.span());
+    let mut directive_lines = typescript_directive_target_lines(source, &program.comments)?;
+    let directive_ends = program
+        .comments
+        .iter()
+        .filter_map(|comment| {
+            source_slice(source, comment.span)
+                .is_ok_and(is_line_scoped_typescript_directive)
+                .then_some(comment.span.end)
+        })
+        .collect::<Vec<_>>();
+    // Also protect a directive's own line: expanding a same-line export could
+    // otherwise move previously unprotected tokens onto its new target line.
+    directive_lines.extend(
+        directive_ends
+            .iter()
+            .map(|end| line_breaks.line_start(*end)),
+    );
+
+    for declaration in declarations {
+        let span = statement_syntax_span(source, tokens, declaration.span);
         let declaration_tokens = tokens_in_span(tokens, span);
+        // A directive applies to the next physical line, including every specifier on it.
+        // Keep that export's layout rather than moving tokens out of the directive's scope.
+        if declaration.is_export
+            && !directive_lines.is_empty()
+            && declaration_tokens
+                .iter()
+                .any(|token| directive_lines.contains(&line_breaks.line_start(token.start())))
+        {
+            continue;
+        }
         let declaration_comments = comments_in_span(&program.comments, span);
         let trailing_semicolon = declaration_tokens
             .last()
@@ -1798,7 +1847,7 @@ fn format_import_edits(
                     && !final_layout.line_break_after.contains(&token.end())
             }),
         };
-        let semicolon_shape = ImportSemicolonShape {
+        let semicolon_shape = ModuleSemicolonShape {
             original: original_semicolon,
             formatted: final_semicolon,
         };
@@ -1813,15 +1862,20 @@ fn format_import_edits(
             .base_indents
             .get(&span.start)
             .cloned()
-            .unwrap_or_else(|| line_indent_at(source, span.start));
-        let formatted = format_import(
-            declaration,
+            .unwrap_or_else(|| {
+                line_indent_if_standalone_indexed(source, line_breaks, span.start)
+                    .unwrap_or_default()
+            });
+        let formatted = format_module_declaration(
+            declaration.named_braces,
+            declaration.attribute_comma,
             span,
             source,
             &base_indent,
             declaration_tokens,
             declaration_comments,
             rules.comment_spacing,
+            declaration.is_export || rules.comment_spacing.enabled(),
             line_width,
             newline,
             rules.trailing_commas,
@@ -1837,11 +1891,94 @@ fn format_import_edits(
             });
         }
         rewrites
-            .formatted_imports
+            .formatted_declarations
             .insert(span.start, formatted.multiline);
     }
 
     Ok(rewrites)
+}
+
+fn module_declarations(
+    program: &Program<'_>,
+    tokens: &[Token],
+    rules: RewriteRules,
+) -> Vec<ModuleDeclaration> {
+    let mut collector = NamedExportCollector {
+        tokens,
+        declarations: Vec::new(),
+    };
+    if rules.import_layout {
+        for statement in &program.body {
+            if let Statement::ImportDeclaration(declaration) = statement {
+                collector.declarations.push(ModuleDeclaration {
+                    span: declaration.span,
+                    named_braces: named_braces(declaration, tokens),
+                    attribute_comma: attribute_trailing_comma(
+                        declaration.with_clause.as_deref(),
+                        tokens,
+                    ),
+                    is_export: false,
+                });
+            }
+        }
+    }
+    if rules.export_layout {
+        collector.visit_program(program);
+    }
+    collector.declarations
+}
+
+struct ModuleDeclaration {
+    span: Span,
+    named_braces: Option<(Span, Span)>,
+    attribute_comma: Option<Span>,
+    is_export: bool,
+}
+
+struct NamedExportCollector<'s> {
+    tokens: &'s [Token],
+    declarations: Vec<ModuleDeclaration>,
+}
+
+impl NamedExportCollector<'_> {
+    fn record(&mut self, span: Span, first: Span, last: Span, attributes: Option<&WithClause<'_>>) {
+        let Some(braces) =
+            surrounding_delimiters(self.tokens, span, Kind::LCurly, Kind::RCurly, first, last)
+        else {
+            return;
+        };
+        self.declarations.push(ModuleDeclaration {
+            span,
+            named_braces: Some(braces),
+            attribute_comma: attribute_trailing_comma(attributes, self.tokens),
+            is_export: true,
+        });
+    }
+}
+
+impl<'a> Visit<'a> for NamedExportCollector<'_> {
+    fn visit_export_named_declaration(&mut self, declaration: &ExportNamedDeclaration<'a>) {
+        if let (Some(first), Some(last)) = (
+            declaration.specifiers.first(),
+            declaration.specifiers.last(),
+        ) {
+            self.record(declaration.span, first.span(), last.span(), None);
+        }
+    }
+
+    fn visit_export_from_declaration(&mut self, declaration: &ExportFromDeclaration<'a>) {
+        if let (Some(first), Some(last)) = (
+            declaration.specifiers.first(),
+            declaration.specifiers.last(),
+        ) {
+            self.record(
+                declaration.span,
+                first.span(),
+                last.span(),
+                declaration.with_clause.as_deref(),
+            );
+        }
+    }
 }
 
 fn collect_layout_edits(
@@ -1850,7 +1987,7 @@ fn collect_layout_edits(
     tokens: &[Token],
     newline: &str,
     rules: RewriteRules,
-    formatted_imports: &HashMap<u32, bool>,
+    formatted_declarations: &HashMap<u32, bool>,
 ) -> Result<Vec<Edit>, FormatError> {
     if rules.import_spacing == StatementSpacingMode::Off
         && rules.control_flow_spacing == StatementSpacingMode::Off
@@ -1877,7 +2014,7 @@ fn collect_layout_edits(
     let mut collector = StatementCollector {
         source,
         tokens,
-        formatted_imports,
+        formatted_declarations,
         line_breaks: line_breaks.as_ref(),
         interface_layout_threshold: rules.interface_layout_threshold,
         type_literal_layout_threshold: rules.type_literal_layout_threshold,
@@ -1934,21 +2071,34 @@ fn append_never_comma_edits(
     if rules.trailing_commas != TrailingCommaMode::Never {
         return;
     }
-    edits.extend(trailing_comma_edits(
+    // Whole module-list replacements already own their optional commas. Keep the separate
+    // comma rule active for declarations whose layout was preserved (including directives).
+    edits.sort_by_key(|edit| (edit.start, edit.end));
+    let additions = trailing_comma_edits(
         source,
         program,
         tokens,
         TrailingCommaMode::Never,
         rules.single_arrow_comma,
         rules.import_layout,
-    ));
+    )
+    .into_iter()
+    .filter(|candidate| {
+        let start = edits.partition_point(|edit| edit.end < candidate.start);
+        !edits[start..]
+            .iter()
+            .take_while(|edit| edit.start <= candidate.end)
+            .any(|edit| bracket_spacing::conflicts(candidate, edit))
+    })
+    .collect::<Vec<_>>();
+    edits.extend(additions);
 }
 
 struct StatementCollector<'s> {
     directive_target_lines: &'s HashSet<u32>,
     source: &'s str,
     tokens: &'s [Token],
-    formatted_imports: &'s HashMap<u32, bool>,
+    formatted_declarations: &'s HashMap<u32, bool>,
     line_breaks: Option<&'s LineBreakIndex>,
     interface_layout_threshold: Option<u32>,
     type_literal_layout_threshold: Option<u32>,
@@ -2024,7 +2174,7 @@ impl StatementCollector<'_> {
         {
             StatementTarget::Import {
                 multiline: self
-                    .formatted_imports
+                    .formatted_declarations
                     .get(&span.start)
                     .copied()
                     .unwrap_or_else(|| import_is_multiline(self.source, span)),
@@ -3938,6 +4088,8 @@ fn line_leading_indent_at(source: &str, offset: u32) -> String {
 fn line_indent_if_standalone(source: &str, offset: u32) -> Option<String> {
     standalone_indent_scan();
     let prefix = source.get(..offset as usize).unwrap_or(source);
+    #[cfg(test)]
+    RAW_INDENT_PREFIX_BYTES.set(RAW_INDENT_PREFIX_BYTES.get() + prefix.len());
     let line = prefix.rsplit_once('\n').map_or(prefix, |(_, line)| line);
     standalone_indent(line)
 }
@@ -4197,18 +4349,18 @@ fn has_blank_line(text: &str) -> bool {
     false
 }
 
-struct FormattedImport {
+struct FormattedModule {
     text: String,
     multiline: bool,
 }
 
 #[derive(Clone, Copy)]
-struct ImportSemicolonShape {
+struct ModuleSemicolonShape {
     original: bool,
     formatted: bool,
 }
 
-impl ImportSemicolonShape {
+impl ModuleSemicolonShape {
     const fn adjust_width(self, width: usize) -> usize {
         match (self.original, self.formatted) {
             (true, false) => width.saturating_sub(1),
@@ -4220,28 +4372,31 @@ impl ImportSemicolonShape {
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "the import formatter needs both AST and effective source-span evidence"
+    reason = "module layout needs list delimiters and effective source-span evidence"
 )]
-fn format_import(
-    declaration: &ImportDeclaration<'_>,
+fn format_module_declaration(
+    named_braces: Option<(Span, Span)>,
+    attribute_comma: Option<Span>,
     span: Span,
     source: &str,
     base_indent: &str,
     tokens: &[Token],
     comments: &[Comment],
     comment_spacing: &CommentSpacing,
+    preserve_comments: bool,
     line_width: u32,
     newline: &str,
     trailing_commas: TrailingCommaMode,
     curly_spacing: BracketSpacingMode,
-    semicolon_shape: ImportSemicolonShape,
-) -> Result<FormattedImport, FormatError> {
-    let omitted_attribute_comma = (trailing_commas == TrailingCommaMode::Never)
-        .then(|| import_attribute_trailing_comma(declaration, tokens))
+    semicolon_shape: ModuleSemicolonShape,
+) -> Result<FormattedModule, FormatError> {
+    // Canonical attributes can collapse to one line. In Always mode the comma pass
+    // restores a comma only if comments keep the final attribute list multiline.
+    let omitted_attribute_comma = (trailing_commas != TrailingCommaMode::Off)
+        .then_some(attribute_comma)
         .flatten();
-    let named_braces = named_braces(declaration, tokens);
     let text = if let Some((left_brace, right_brace)) = named_braces {
-        let flat = format_named_import(
+        let flat = format_named_module(
             span,
             left_brace,
             right_brace,
@@ -4249,6 +4404,7 @@ fn format_import(
             tokens,
             comments,
             comment_spacing,
+            preserve_comments,
             newline,
             false,
             base_indent,
@@ -4260,7 +4416,7 @@ fn format_import(
             .adjust_width(flat.chars().count())
             .saturating_add(base_indent.chars().count());
         if contains_line_break(&flat) || effective_width > line_width as usize {
-            format_named_import(
+            format_named_module(
                 span,
                 left_brace,
                 right_brace,
@@ -4268,6 +4424,7 @@ fn format_import(
                 tokens,
                 comments,
                 comment_spacing,
+                preserve_comments,
                 newline,
                 true,
                 base_indent,
@@ -4285,6 +4442,7 @@ fn format_import(
             tokens,
             comments,
             comment_spacing,
+            preserve_comments,
             newline,
             curly_spacing,
             false,
@@ -4293,17 +4451,14 @@ fn format_import(
         .text
     };
 
-    Ok(FormattedImport {
+    Ok(FormattedModule {
         multiline: contains_line_break(&text),
         text,
     })
 }
 
-fn import_attribute_trailing_comma(
-    declaration: &ImportDeclaration<'_>,
-    tokens: &[Token],
-) -> Option<Span> {
-    let clause = declaration.with_clause.as_ref()?;
+fn attribute_trailing_comma(attributes: Option<&WithClause<'_>>, tokens: &[Token]) -> Option<Span> {
+    let clause = attributes?;
     let first = clause.with_entries.first()?;
     let last = clause.with_entries.last()?;
     let (open, close) = surrounding_delimiters(
@@ -4346,9 +4501,9 @@ fn named_braces(declaration: &ImportDeclaration<'_>, tokens: &[Token]) -> Option
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "the import formatter needs both source ranges and the parser's lexical evidence"
+    reason = "the module formatter needs both source ranges and the parser's lexical evidence"
 )]
-fn format_named_import(
+fn format_named_module(
     declaration_span: Span,
     left_brace: Span,
     right_brace: Span,
@@ -4356,6 +4511,7 @@ fn format_named_import(
     tokens: &[Token],
     comments: &[Comment],
     comment_spacing: &CommentSpacing,
+    preserve_comments: bool,
     newline: &str,
     multiline: bool,
     base_indent: &str,
@@ -4369,6 +4525,7 @@ fn format_named_import(
         tokens,
         comments,
         comment_spacing,
+        preserve_comments,
         newline,
         curly_spacing,
         false,
@@ -4380,6 +4537,7 @@ fn format_named_import(
         tokens,
         comments,
         comment_spacing,
+        preserve_comments,
         newline,
         curly_spacing,
         false,
@@ -4391,12 +4549,17 @@ fn format_named_import(
         tokens,
         source,
         comments,
-        comment_spacing.enabled(),
+        preserve_comments,
     )?;
-    let preserve_trailing_comma = trailing_commas != TrailingCommaMode::Never
-        && tokens_in_span(tokens, Span::new(left_brace.end, right_brace.start))
-            .last()
-            .is_some_and(|token| token.kind() == Kind::Comma);
+    let preserve_trailing_comma = match trailing_commas {
+        TrailingCommaMode::Never => false,
+        TrailingCommaMode::Always => multiline,
+        TrailingCommaMode::Off => {
+            tokens_in_span(tokens, Span::new(left_brace.end, right_brace.start))
+                .last()
+                .is_some_and(|token| token.kind() == Kind::Comma)
+        }
+    };
     let last_token_segment = ranges
         .iter()
         .rposition(|segment| range_has_token(segment.span, tokens));
@@ -4412,6 +4575,7 @@ fn format_named_import(
             tokens,
             comments,
             comment_spacing,
+            preserve_comments,
             newline,
             curly_spacing,
             add_comma,
@@ -4422,7 +4586,7 @@ fn format_named_import(
         }
     }
 
-    Ok(assemble_named_import(
+    Ok(assemble_named_module(
         prefix,
         &suffix,
         &segments,
@@ -4436,9 +4600,9 @@ fn format_named_import(
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "the import renderer needs its segments, layout, and independent spacing rules"
+    reason = "the module renderer needs its segments, layout, and independent spacing rules"
 )]
-fn assemble_named_import(
+fn assemble_named_module(
     prefix: CanonicalText,
     suffix: &CanonicalText,
     segments: &[CanonicalText],
@@ -4449,7 +4613,7 @@ fn assemble_named_import(
     curly_spacing: BracketSpacingMode,
 ) -> String {
     let mut output = prefix.text;
-    push_import_separator(
+    push_module_separator(
         &mut output,
         prefix.trailing_lines,
         prefix.ends_line_comment,
@@ -4493,7 +4657,7 @@ fn assemble_named_import(
                 || curly_spacing != BracketSpacingMode::Never
                 || lines.is_some_and(|lines| lines > 0)
             {
-                push_import_separator(&mut output, lines, line_comment, newline);
+                push_module_separator(&mut output, lines, line_comment, newline);
             }
             output.push_str(&segment.text);
         }
@@ -4502,7 +4666,7 @@ fn assemble_named_import(
             || last.trailing_lines.is_some_and(|lines| lines > 0)
             || last.ends_line_comment
         {
-            push_import_separator(
+            push_module_separator(
                 &mut output,
                 last.trailing_lines,
                 last.ends_line_comment,
@@ -4513,7 +4677,9 @@ fn assemble_named_import(
     }
 
     if !suffix.text.is_empty() {
-        push_import_separator(&mut output, suffix.leading_lines, false, newline);
+        if !suffix.text.starts_with(';') || suffix.leading_lines.is_some_and(|lines| lines > 0) {
+            push_module_separator(&mut output, suffix.leading_lines, false, newline);
+        }
         output.push_str(&suffix.text);
     }
     output
@@ -4612,7 +4778,7 @@ struct CanonicalText {
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "import canonicalization shares source comment policy and punctuation edits"
+    reason = "module canonicalization shares source comment policy and punctuation edits"
 )]
 fn canonicalize_range(
     range: Span,
@@ -4620,6 +4786,7 @@ fn canonicalize_range(
     tokens: &[Token],
     comments: &[Comment],
     comment_spacing: &CommentSpacing,
+    preserve_comments: bool,
     newline: &str,
     curly_spacing: BracketSpacingMode,
     comma_after_last_token: bool,
@@ -4667,7 +4834,7 @@ fn canonicalize_range(
             {
                 output.push_str(&newline.repeat(lines));
             } else {
-                let preserve_inline_comment = comment_spacing.enabled()
+                let preserve_inline_comment = preserve_comments
                     && matches!(previous.kind, LexicalKind::BlockComment)
                     && !contains_line_break(source_slice(
                         source,
@@ -4684,7 +4851,7 @@ fn canonicalize_range(
         }
         let start = u32::try_from(output.len()).unwrap();
         output.push_str(item.text);
-        if matches!(item.kind, LexicalKind::BlockComment) && comment_spacing.enabled() {
+        if matches!(item.kind, LexicalKind::BlockComment) && preserve_comments {
             verbatim_comments.push(Span::new(start, u32::try_from(output.len()).unwrap()));
         }
         if comma_after_last_token && last_token == Some(index) {
@@ -4746,7 +4913,7 @@ fn push_separator_after(output: &mut String, line_comment: bool, newline: &str) 
     }
 }
 
-fn push_import_separator(
+fn push_module_separator(
     output: &mut String,
     lines: Option<usize>,
     line_comment: bool,
@@ -4900,9 +5067,9 @@ mod tests {
         CORRUPT_REWRITE_FOR_TEST, DEFERRED_IMPORT_BOUNDARY_LOOKUPS, IMPORT_MULTILINE_SCANS,
         INDENT_RESOLUTIONS, LINE_BREAK_INDEX_BUILDS, LINE_BREAK_QUERIES, LINE_START_INDEX_QUERIES,
         LIST_MULTILINE_INDEX_QUERIES, NAMED_BRACE_TOKEN_SCANS, PARENTHESIS_INDEX_BUILDS,
-        PARENTHESIS_LOOKUPS, RAW_LINE_START_SCANS, RAW_LIST_MULTILINE_SCANS,
-        SPAN_LOOKUP_COMPARISONS, STANDALONE_INDENT_SCANS, TOKEN_PARSER_RUNS,
-        TYPE_ALIAS_MULTILINE_SCANS, VARIABLE_MULTILINE_SCANS, parse, verify,
+        PARENTHESIS_LOOKUPS, RAW_INDENT_PREFIX_BYTES, RAW_LINE_START_SCANS,
+        RAW_LIST_MULTILINE_SCANS, SPAN_LOOKUP_COMPARISONS, STANDALONE_INDENT_SCANS,
+        TOKEN_PARSER_RUNS, TYPE_ALIAS_MULTILINE_SCANS, VARIABLE_MULTILINE_SCANS, parse, verify,
     };
     use crate::{
         FormatConfig, InterfaceLayoutMode, InterfaceLayoutRule, QuoteStyle, RulesConfig,
@@ -4950,6 +5117,7 @@ mod tests {
                 bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 import_layout: false,
+                export_layout: false,
                 interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                 type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
                     crate::TypeLiteralLayoutMode::Off,
@@ -5315,6 +5483,7 @@ mod tests {
                     bracket_spacing: BRACKET_SPACING_OFF,
                     comment_spacing: false,
                     import_layout: false,
+                    export_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
                         crate::TypeLiteralLayoutMode::Off,
@@ -5392,6 +5561,7 @@ mod tests {
                 rules: RulesConfig {
                     comment_spacing: false,
                     import_layout: false,
+                    export_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
                         crate::TypeLiteralLayoutMode::Off,
@@ -5425,6 +5595,7 @@ mod tests {
                 rules: RulesConfig {
                     comment_spacing: false,
                     import_layout: false,
+                    export_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
                         crate::TypeLiteralLayoutMode::Off,
@@ -5475,6 +5646,7 @@ mod tests {
                     bracket_spacing: BRACKET_SPACING_OFF,
                     comment_spacing: false,
                     import_layout: false,
+                    export_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
                         crate::TypeLiteralLayoutMode::Off,
@@ -5507,6 +5679,7 @@ mod tests {
                     bracket_spacing: BRACKET_SPACING_OFF,
                     comment_spacing: false,
                     import_layout: false,
+                    export_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
                         crate::TypeLiteralLayoutMode::Off,
@@ -5544,6 +5717,7 @@ mod tests {
                     bracket_spacing: BRACKET_SPACING_OFF,
                     comment_spacing: false,
                     import_layout: false,
+                    export_layout: false,
                     interface_layout,
                     type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
                         crate::TypeLiteralLayoutMode::Off,
@@ -5622,6 +5796,7 @@ mod tests {
                         bracket_spacing: BRACKET_SPACING_OFF,
                         comment_spacing: false,
                         import_layout: false,
+                        export_layout: false,
                         interface_layout: InterfaceLayoutRule::Threshold(0),
                         type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
                             crate::TypeLiteralLayoutMode::Off,
@@ -5896,6 +6071,7 @@ mod tests {
                 bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 import_layout: false,
+                export_layout: false,
                 interface_layout: InterfaceLayoutRule::Threshold(0),
                 type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
                     crate::TypeLiteralLayoutMode::Off,
@@ -6626,6 +6802,7 @@ mod tests {
                 bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 import_layout: false,
+                export_layout: false,
                 interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                 type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
                     crate::TypeLiteralLayoutMode::Off,
@@ -6659,7 +6836,7 @@ mod tests {
     }
 
     #[test]
-    fn trailing_commas_use_the_final_import_layout() {
+    fn trailing_commas_use_the_final_module_layout() {
         let expanded = format_with_semicolons_off(
             "import{one,two}from'a-very-long-package-name';",
             FormatConfig {
@@ -6793,6 +6970,7 @@ mod tests {
                 bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 import_layout: true,
+                export_layout: false,
                 interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                 type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
                     crate::TypeLiteralLayoutMode::Off,
@@ -6952,6 +7130,7 @@ mod tests {
                 rules: RulesConfig {
                     comment_spacing: false,
                     import_layout: false,
+                    export_layout: false,
                     statement_spacing: StatementSpacingConfig {
                         control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Separate,
@@ -6978,6 +7157,7 @@ mod tests {
                 rules: RulesConfig {
                     comment_spacing: false,
                     import_layout: true,
+                    export_layout: false,
                     statement_spacing: StatementSpacingConfig {
                         control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Separate,
@@ -7030,6 +7210,7 @@ mod tests {
     fn preserves_every_non_import_byte_and_the_eof_shape() {
         let source = "import{a,b}from\"pkg\";\nconst odd={ untouched :true,nested:[1,  2] };\nexport{odd};\nconst quote=\"double\"";
         let mut config = FormatConfig::default();
+        config.rules.export_layout = false;
         config.rules.object_property_spacing = false;
         let output = format_with_semicolons_off(source, config);
         assert_eq!(
@@ -7078,6 +7259,7 @@ mod tests {
                 bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 import_layout: false,
+                export_layout: false,
                 interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                 type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
                     crate::TypeLiteralLayoutMode::Off,
@@ -7118,6 +7300,7 @@ mod tests {
                 bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 import_layout: false,
+                export_layout: false,
                 interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                 type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
                     crate::TypeLiteralLayoutMode::Off,
@@ -7361,6 +7544,46 @@ mod tests {
     }
 
     #[test]
+    fn module_indent_prefix_scanning_stays_bounded() {
+        let declaration_count = 512;
+        for keyword in ["export", "import"] {
+            let mut source = String::new();
+            let mut expected = String::new();
+            for index in 0..declaration_count {
+                write!(source, "{keyword}{{value as value{index}}}from'pkg';").unwrap();
+                write!(
+                    expected,
+                    "{keyword} {{ value as value{index} }} from 'pkg';"
+                )
+                .unwrap();
+            }
+            let mut config = object_spacing_config(false);
+            config.rules.export_layout = keyword == "export";
+            config.rules.import_layout = keyword == "import";
+            let config = resolve_config(config).unwrap();
+
+            RAW_INDENT_PREFIX_BYTES.set(0);
+            LINE_BREAK_INDEX_BUILDS.set(0);
+            let output = format_text(Path::new("barrel.ts"), &source, &config)
+                .unwrap()
+                .unwrap();
+            assert_eq!(output, expected);
+            assert_eq!(LINE_BREAK_INDEX_BUILDS.get(), 1);
+            let scanned_bytes = RAW_INDENT_PREFIX_BYTES.get();
+            assert!(
+                scanned_bytes <= source.len() * 4,
+                "{keyword} indentation examined {scanned_bytes} prefix bytes for {} source bytes",
+                source.len()
+            );
+            assert!(
+                format_text(Path::new("barrel.ts"), &output, &config)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
     fn named_brace_scans_stay_bounded_without_import_layout() {
         let import_count = 512;
         let mut source = String::new();
@@ -7371,6 +7594,7 @@ mod tests {
             verify_ast: false,
             rules: RulesConfig {
                 import_layout: false,
+                export_layout: false,
                 ..RulesConfig::default()
             },
             ..FormatConfig::default()
@@ -7670,6 +7894,7 @@ mod tests {
                 rules: RulesConfig {
                     comment_spacing: false,
                     import_layout: false,
+                    export_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
                         crate::TypeLiteralLayoutMode::Off,
@@ -7759,6 +7984,7 @@ mod tests {
                             bracket_spacing: BRACKET_SPACING_OFF,
                             comment_spacing: false,
                             import_layout: false,
+                            export_layout: false,
                             interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                             type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
                                 crate::TypeLiteralLayoutMode::Off
@@ -8535,6 +8761,7 @@ mod tests {
                     rules: RulesConfig {
                         comment_spacing: false,
                         import_layout: false,
+                        export_layout: false,
                         interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                         type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
                             crate::TypeLiteralLayoutMode::Off
@@ -8588,6 +8815,7 @@ mod tests {
                     rules: RulesConfig {
                         comment_spacing: false,
                         import_layout: false,
+                        export_layout: false,
                         interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                         type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
                             crate::TypeLiteralLayoutMode::Off,
@@ -8638,6 +8866,7 @@ mod tests {
                     rules: RulesConfig {
                         comment_spacing: false,
                         import_layout: false,
+                        export_layout: false,
                         interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                         type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
                             crate::TypeLiteralLayoutMode::Off,
@@ -8813,6 +9042,7 @@ mod tests {
                 rules: RulesConfig {
                     comment_spacing: false,
                     import_layout: false,
+                    export_layout: false,
                     interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                     type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
                         crate::TypeLiteralLayoutMode::Off,
@@ -8869,6 +9099,7 @@ mod tests {
                     rules: RulesConfig {
                         comment_spacing: false,
                         import_layout: false,
+                        export_layout: false,
                         interface_layout: InterfaceLayoutRule::Mode(InterfaceLayoutMode::Off),
                         type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
                             crate::TypeLiteralLayoutMode::Off,
@@ -9112,6 +9343,7 @@ mod tests {
                 rules: RulesConfig {
                     comment_spacing: false,
                     import_layout: false,
+                    export_layout: false,
                     statement_spacing: StatementSpacingConfig {
                         control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Off,
@@ -9137,6 +9369,7 @@ mod tests {
                 rules: RulesConfig {
                     comment_spacing: false,
                     import_layout: true,
+                    export_layout: false,
                     statement_spacing: StatementSpacingConfig {
                         control_flow_statements: StatementSpacingMode::Off,
                         imports: StatementSpacingMode::Separate,

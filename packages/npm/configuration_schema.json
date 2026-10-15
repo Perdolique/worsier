@@ -30,6 +30,7 @@
           "square": "never"
         },
         "commentSpacing": true,
+        "exportLayout": true,
         "importLayout": true,
         "interfaceLayout": 0,
         "objectPropertySpacing": true,
@@ -125,6 +126,10 @@
           }
         },
         "commentSpacing": {
+          "type": "boolean",
+          "default": true
+        },
+        "exportLayout": {
           "type": "boolean",
           "default": true
         },

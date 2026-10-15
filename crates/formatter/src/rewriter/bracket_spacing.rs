@@ -55,7 +55,7 @@ pub(super) fn append_edits(
     Ok(())
 }
 
-fn conflicts(candidate: &Edit, existing: &Edit) -> bool {
+pub(super) fn conflicts(candidate: &Edit, existing: &Edit) -> bool {
     if candidate.start == candidate.end {
         return if existing.start == existing.end {
             candidate.start == existing.start
