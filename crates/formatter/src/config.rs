@@ -32,10 +32,15 @@ impl Default for FormatConfig {
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
 #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "formatting rules are independent user-configurable switches"
+)]
 pub struct RulesConfig {
     pub bracket_spacing: BracketSpacingConfig,
     pub comment_spacing: bool,
     pub import_layout: bool,
+    pub export_layout: bool,
     pub interface_layout: InterfaceLayoutRule,
     pub type_literal_layout: TypeLiteralLayoutRule,
     pub object_property_spacing: bool,
@@ -51,6 +56,7 @@ impl Default for RulesConfig {
             bracket_spacing: BracketSpacingConfig::default(),
             comment_spacing: true,
             import_layout: true,
+            export_layout: true,
             interface_layout: InterfaceLayoutRule::default(),
             type_literal_layout: TypeLiteralLayoutRule::default(),
             object_property_spacing: true,
@@ -535,6 +541,11 @@ impl ResolvedConfig {
     }
 
     #[must_use]
+    pub const fn export_layout_enabled(&self) -> bool {
+        self.value.rules.export_layout
+    }
+
+    #[must_use]
     pub const fn interface_layout_threshold(&self) -> Option<u32> {
         match self.value.rules.interface_layout {
             InterfaceLayoutRule::Threshold(threshold) => Some(threshold),
@@ -657,6 +668,7 @@ mod tests {
         assert_eq!(config.bracket_spacing().square, BracketSpacingMode::Never);
         assert!(config.comment_spacing_enabled());
         assert!(config.import_layout_enabled());
+        assert!(config.export_layout_enabled());
         assert_eq!(config.interface_layout_threshold(), Some(0));
         assert_eq!(config.type_literal_layout_threshold(), Some(0));
         assert!(config.object_property_spacing_enabled());
@@ -740,6 +752,9 @@ mod tests {
             r#"{"rules":{"commentSpacing":"off"}}"#,
             r#"{"rules":{"commentSpacing":1}}"#,
             r#"{"rules":{"commentSpacing":null}}"#,
+            r#"{"rules":{"exportLayout":"off"}}"#,
+            r#"{"rules":{"exportLayout":1}}"#,
+            r#"{"rules":{"exportLayout":null}}"#,
             r#"{"rules":{"bracketSpacing":true}}"#,
             r#"{"rules":{"bracketSpacing":{"curly":"preserve"}}}"#,
             r#"{"rules":{"bracketSpacing":{"extra":"off"}}}"#,

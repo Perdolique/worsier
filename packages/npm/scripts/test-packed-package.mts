@@ -43,6 +43,9 @@ await writeFile(join(project, 'package.json'), '{"type":"module","private":true}
 run('npm', ['install', '--ignore-scripts', rootTarball, platformTarball], project)
 const installedPackage = join(project, 'node_modules/worsier')
 const installedSchema = JSON.parse(await readFile(join(installedPackage, 'configuration_schema.json'), 'utf8'))
+assert.equal(installedSchema.properties.rules.default.exportLayout, true)
+assert.equal(installedSchema.$defs.RulesConfig.properties.exportLayout.default, true)
+assert.equal(installedSchema.$defs.RulesConfig.properties.exportLayout.type, 'boolean')
 assert.equal(installedSchema.properties.rules.default.typeLiteralLayout, 0)
 assert.equal(installedSchema.$defs.RulesConfig.properties.typeLiteralLayout.default, 0)
 assert.equal(installedSchema.properties.rules.default.commentSpacing, true)
@@ -80,6 +83,7 @@ assert.match(installedTypes, /square\?: 'always' \| 'never' \| 'off'/)
 assert.match(installedTypes, /objectPropertySpacing\?: boolean/)
 assert.match(installedTypes, /quoteStyle\?: 'single' \| 'double' \| 'off'/)
 assert.match(installedTypes, /commentSpacing\?: boolean/)
+assert.match(installedTypes, /exportLayout\?: boolean/)
 assert.match(installedTypes, /multilineCallStatements\?: 'separate' \| 'compact' \| 'off'/)
 assert.match(installedTypes, /singleLineCallStatements\?: StatementSpacingMode \| SingleLineCallStatementSpacingConfig/)
 assert.match(
@@ -104,6 +108,7 @@ const expectedInitializedConfig = `{
     },
     "commentSpacing": true,
     "importLayout": true,
+    "exportLayout": true,
     "interfaceLayout": 0,
     "typeLiteralLayout": 0,
     "objectPropertySpacing": true,
@@ -154,6 +159,7 @@ const expectedMigratedConfig = `{
     "commentSpacing": true,
     // legacy layout
     "importLayout": false,
+    "exportLayout": true,
     "interfaceLayout": 0,
     "typeLiteralLayout": 0,
     "objectPropertySpacing": true,
@@ -201,6 +207,17 @@ const api = run(
   project
 )
 assert.equal(api.stdout, "import { packed } from 'pkg'\n\nconst raw=[1,2]\n")
+
+const exportLayout = run(
+  process.execPath,
+  [
+    '--input-type=module',
+    '--eval',
+    `import { format } from 'worsier'; const output = await format('sample.ts', 'export{alpha,beta}'); process.stdout.write(output)`
+  ],
+  project
+)
+assert.equal(exportLayout.stdout, 'export { alpha, beta }')
 
 const quoteStyle = run(
   process.execPath,

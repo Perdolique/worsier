@@ -12,6 +12,7 @@ export interface FormatConfig {
 export interface RulesConfig {
     bracketSpacing?: BracketSpacingConfig;
     commentSpacing?: boolean;
+    exportLayout?: boolean;
     importLayout?: boolean;
     interfaceLayout?: number | InterfaceLayoutMode;
     objectPropertySpacing?: boolean;
