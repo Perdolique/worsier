@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.7.0](https://github.com/Perdolique/worsier/compare/v3.6.1...v3.7.0) (2026-10-15)
+
+
+### Features
+
+* **formatter:** add type literal layout ([875c952](https://github.com/Perdolique/worsier/commit/875c9523b29a0e4d33b8867cf0cae71f2a693db7)), closes [#73](https://github.com/Perdolique/worsier/issues/73)
+
 ## [3.6.1](https://github.com/Perdolique/worsier/compare/v3.6.0...v3.6.1) (2026-09-28)
 
 
