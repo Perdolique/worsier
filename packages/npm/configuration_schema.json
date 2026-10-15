@@ -29,6 +29,7 @@
           "curly": "always",
           "square": "never"
         },
+        "classMemberSpacing": "smart",
         "commentSpacing": true,
         "exportLayout": true,
         "importLayout": true,
@@ -88,6 +89,15 @@
         "off"
       ]
     },
+    "ClassMemberSpacingMode": {
+      "type": "string",
+      "enum": [
+        "smart",
+        "separate",
+        "compact",
+        "off"
+      ]
+    },
     "InterfaceLayoutMode": {
       "type": "string",
       "enum": [
@@ -124,6 +134,10 @@
             "curly": "always",
             "square": "never"
           }
+        },
+        "classMemberSpacing": {
+          "$ref": "#/$defs/ClassMemberSpacingMode",
+          "default": "smart"
         },
         "commentSpacing": {
           "type": "boolean",

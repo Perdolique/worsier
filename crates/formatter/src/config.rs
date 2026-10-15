@@ -38,6 +38,7 @@ impl Default for FormatConfig {
 )]
 pub struct RulesConfig {
     pub bracket_spacing: BracketSpacingConfig,
+    pub class_member_spacing: ClassMemberSpacingMode,
     pub comment_spacing: bool,
     pub import_layout: bool,
     pub export_layout: bool,
@@ -54,6 +55,7 @@ impl Default for RulesConfig {
     fn default() -> Self {
         Self {
             bracket_spacing: BracketSpacingConfig::default(),
+            class_member_spacing: ClassMemberSpacingMode::default(),
             comment_spacing: true,
             import_layout: true,
             export_layout: true,
@@ -89,6 +91,16 @@ impl Default for BracketSpacingConfig {
 pub enum BracketSpacingMode {
     Always,
     Never,
+    Off,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ClassMemberSpacingMode {
+    #[default]
+    Smart,
+    Separate,
+    Compact,
     Off,
 }
 
@@ -516,6 +528,11 @@ pub struct ResolvedConfig {
 
 impl ResolvedConfig {
     #[must_use]
+    pub const fn class_member_spacing(&self) -> ClassMemberSpacingMode {
+        self.value.rules.class_member_spacing
+    }
+
+    #[must_use]
     pub const fn bracket_spacing(&self) -> BracketSpacingConfig {
         self.value.rules.bracket_spacing
     }
@@ -654,9 +671,9 @@ pub fn resolve_config(config: FormatConfig) -> Result<ResolvedConfig, FormatErro
 #[cfg(test)]
 mod tests {
     use super::{
-        BracketSpacingMode, FormatConfig, InterfaceLayoutMode, InterfaceLayoutRule, QuoteStyle,
-        SemicolonMode, SingleLineCallStatementSpacingConfig, StatementSpacingMode,
-        TrailingCommaMode, TypeMemberSemicolonConfig, resolve_config,
+        BracketSpacingMode, ClassMemberSpacingMode, FormatConfig, InterfaceLayoutMode,
+        InterfaceLayoutRule, QuoteStyle, SemicolonMode, SingleLineCallStatementSpacingConfig,
+        StatementSpacingMode, TrailingCommaMode, TypeMemberSemicolonConfig, resolve_config,
     };
 
     #[test]
@@ -666,6 +683,7 @@ mod tests {
         assert!(config.verify_ast());
         assert_eq!(config.bracket_spacing().curly, BracketSpacingMode::Always);
         assert_eq!(config.bracket_spacing().square, BracketSpacingMode::Never);
+        assert_eq!(config.class_member_spacing(), ClassMemberSpacingMode::Smart);
         assert!(config.comment_spacing_enabled());
         assert!(config.import_layout_enabled());
         assert!(config.export_layout_enabled());
@@ -1041,6 +1059,54 @@ mod tests {
         assert_eq!(
             schema["$defs"]["RulesConfig"]["properties"]["typeLiteralLayout"]["default"],
             0
+        );
+    }
+
+    #[test]
+    fn class_member_spacing_config_and_schema_agree() {
+        for (value, expected) in [
+            ("smart", ClassMemberSpacingMode::Smart),
+            ("separate", ClassMemberSpacingMode::Separate),
+            ("compact", ClassMemberSpacingMode::Compact),
+            ("off", ClassMemberSpacingMode::Off),
+        ] {
+            let source = serde_json::json!({"rules": {"classMemberSpacing": value}});
+            let raw: FormatConfig = serde_json::from_value(source).unwrap();
+            assert_eq!(
+                serde_json::to_value(&raw).unwrap()["rules"]["classMemberSpacing"],
+                value
+            );
+            assert_eq!(
+                resolve_config(raw).unwrap().class_member_spacing(),
+                expected
+            );
+        }
+        for value in [
+            serde_json::json!("always"),
+            serde_json::json!(false),
+            serde_json::json!(1),
+            serde_json::Value::Null,
+            serde_json::json!({}),
+        ] {
+            assert!(
+                serde_json::from_value::<FormatConfig>(
+                    serde_json::json!({"rules": {"classMemberSpacing": value}})
+                )
+                .is_err()
+            );
+        }
+        let schema = serde_json::to_value(schemars::schema_for!(FormatConfig)).unwrap();
+        assert_eq!(
+            schema["properties"]["rules"]["default"]["classMemberSpacing"],
+            "smart"
+        );
+        assert_eq!(
+            schema["$defs"]["RulesConfig"]["properties"]["classMemberSpacing"]["default"],
+            "smart"
+        );
+        assert_eq!(
+            schema["$defs"]["ClassMemberSpacingMode"]["enum"],
+            serde_json::json!(["smart", "separate", "compact", "off"])
         );
     }
 }

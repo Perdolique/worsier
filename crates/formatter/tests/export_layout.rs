@@ -152,6 +152,7 @@ fn disabling_export_layout_preserves_layout_without_disabling_other_rules() {
     let source = "export{\n alpha,\n beta,\n}from\"pkg\";";
     let mut config = isolated();
     config.rules.export_layout = false;
+    config.rules.class_member_spacing = worsier_formatter::ClassMemberSpacingMode::Off;
     assert_format("sample.ts", source, source, &config);
     config.rules.bracket_spacing.curly = BracketSpacingMode::Always;
     config.rules.quote_style = QuoteStyle::Single;

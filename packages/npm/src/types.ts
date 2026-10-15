@@ -14,6 +14,7 @@ export interface FormatConfig {
 }
 export interface RulesConfig {
   bracketSpacing?: BracketSpacingConfig
+  classMemberSpacing?: 'smart' | 'separate' | 'compact' | 'off'
   commentSpacing?: boolean
   exportLayout?: boolean
   importLayout?: boolean

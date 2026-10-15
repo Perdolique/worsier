@@ -1,7 +1,9 @@
 mod bracket_spacing;
+mod class_member_spacing;
 mod comment_spacing;
 mod quote_style;
 
+use class_member_spacing::ClassLayout;
 use comment_spacing::CommentSpacing;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -41,9 +43,9 @@ use oxc_parser::{Kind, ParseOptions, Parser, Token, config::TokensParserConfig};
 use oxc_span::{ContentEq, FileExtension, GetSpan, SourceType, Span};
 
 use crate::{
-    BracketSpacingConfig, BracketSpacingMode, FormatError, QuoteStyle, ResolvedConfig,
-    SemicolonMode, SingleLineCallStatementSpacingConfig, StatementSpacingMode, TrailingCommaMode,
-    TypeMemberSemicolonConfig,
+    BracketSpacingConfig, BracketSpacingMode, ClassMemberSpacingMode, FormatError, QuoteStyle,
+    ResolvedConfig, SemicolonMode, SingleLineCallStatementSpacingConfig, StatementSpacingMode,
+    TrailingCommaMode, TypeMemberSemicolonConfig,
 };
 
 const BOM: char = '\u{feff}';
@@ -248,6 +250,7 @@ fn rewrite_after_quotes(
         newline,
         RewriteRules {
             bracket_spacing: config.bracket_spacing(),
+            class_member_spacing: config.class_member_spacing(),
             comment_spacing: &comment_spacing,
             import_layout: config.import_layout_enabled(),
             export_layout: config.export_layout_enabled(),
@@ -311,6 +314,7 @@ fn script_rules_after_quotes_disabled(
 ) -> bool {
     config.bracket_spacing().curly == BracketSpacingMode::Off
         && config.bracket_spacing().square == BracketSpacingMode::Off
+        && config.class_member_spacing() == ClassMemberSpacingMode::Off
         && !config.comment_spacing_enabled()
         && !config.import_layout_enabled()
         && !config.export_layout_enabled()
@@ -1516,6 +1520,7 @@ enum StatementTarget {
 
 #[derive(Clone, Copy, Debug)]
 struct RewriteRules<'a> {
+    class_member_spacing: ClassMemberSpacingMode,
     bracket_spacing: BracketSpacingConfig,
     comment_spacing: &'a CommentSpacing,
     import_layout: bool,
@@ -1537,6 +1542,10 @@ struct RewriteRules<'a> {
 
 #[derive(Clone, Copy, Debug)]
 enum ParentItem {
+    ClassMember {
+        class_index: usize,
+        member_index: usize,
+    },
     TypeMember {
         body_index: usize,
         member_index: usize,
@@ -1557,6 +1566,7 @@ enum ParentItem {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum ExpandedLayout {
+    Class(usize),
     List(usize),
     Switch(usize),
     TypeBody(usize),
@@ -1999,6 +2009,7 @@ fn collect_layout_edits(
         && rules.interface_layout_threshold.is_none()
         && rules.type_literal_layout_threshold.is_none()
         && !rules.object_property_spacing
+        && rules.class_member_spacing == ClassMemberSpacingMode::Off
     {
         return Ok(Vec::new());
     }
@@ -2006,12 +2017,29 @@ fn collect_layout_edits(
     let call_spacing_enabled = rules.multiline_call_spacing != StatementSpacingMode::Off
         || !rules.single_line_call_spacing.is_off();
     let directive_target_lines = typescript_directive_target_lines(source, &program.comments)?;
-    let line_breaks = (rules.object_property_spacing
+    let line_breaks = (rules.class_member_spacing != ClassMemberSpacingMode::Off
+        || rules.object_property_spacing
         || call_spacing_enabled
         || rules.type_literal_layout_threshold.is_some()
         || !directive_target_lines.is_empty())
     .then(|| LineBreakIndex::new(source));
+    let mut class_directive_lines = directive_target_lines.clone();
+    if rules.class_member_spacing != ClassMemberSpacingMode::Off {
+        let lines = line_breaks.as_ref().unwrap();
+        class_directive_lines.extend(
+            program
+                .comments
+                .iter()
+                .filter(|comment| {
+                    source_slice(source, comment.span)
+                        .is_ok_and(is_line_scoped_typescript_directive)
+                })
+                .map(|comment| lines.line_start(comment.span.end)),
+        );
+    }
     let mut collector = StatementCollector {
+        class_member_spacing: rules.class_member_spacing,
+        class_directive_lines: &class_directive_lines,
         source,
         tokens,
         formatted_declarations,
@@ -2036,6 +2064,7 @@ fn collect_layout_edits(
         switches: Vec::new(),
         type_bodies: Vec::new(),
         objects: Vec::new(),
+        classes: Vec::new(),
     };
     collector.visit_program(program);
     mark_expanded_layouts(
@@ -2043,6 +2072,7 @@ fn collect_layout_edits(
         &mut collector.switches,
         &collector.type_bodies,
         &mut collector.objects,
+        &mut collector.classes,
     );
     let mut edits = Vec::new();
     append_layout_edits(
@@ -2055,6 +2085,8 @@ fn collect_layout_edits(
         &collector.switches,
         &collector.type_bodies,
         &collector.objects,
+        &collector.classes,
+        rules.class_member_spacing,
         line_breaks.as_ref(),
         &mut edits,
     )?;
@@ -2095,6 +2127,9 @@ fn append_never_comma_edits(
 }
 
 struct StatementCollector<'s> {
+    class_member_spacing: ClassMemberSpacingMode,
+    class_directive_lines: &'s HashSet<u32>,
+    classes: Vec<ClassLayout>,
     directive_target_lines: &'s HashSet<u32>,
     source: &'s str,
     tokens: &'s [Token],
@@ -2310,6 +2345,39 @@ fn statement_syntax_span(source: &str, tokens: &[Token], span: Span) -> Span {
 }
 
 impl<'a> Visit<'a> for StatementCollector<'_> {
+    fn visit_class_body(&mut self, body: &ClassBody<'a>) {
+        if self.class_member_spacing == ClassMemberSpacingMode::Off || body.body.is_empty() {
+            walk_class_body(self, body);
+            return;
+        }
+        let Some(class) = ClassLayout::collect(
+            self.source,
+            self.tokens,
+            self.line_breaks.unwrap(),
+            self.class_directive_lines,
+            body,
+            self.current_layout,
+            self.current_item,
+        ) else {
+            walk_class_body(self, body);
+            return;
+        };
+        let class_index = self.classes.len();
+        self.classes.push(class);
+        let previous_layout = self
+            .current_layout
+            .replace(ExpandedLayout::Class(class_index));
+        for (member_index, member) in body.body.iter().enumerate() {
+            let previous_item = self.current_item.replace(ParentItem::ClassMember {
+                class_index,
+                member_index,
+            });
+            self.visit_class_element(member);
+            self.current_item = previous_item;
+        }
+        self.current_layout = previous_layout;
+    }
+
     fn visit_program(&mut self, program: &Program<'a>) {
         let span = sequence_span(&program.directives, &program.body).unwrap_or(program.span);
         let previous_list = self.current_list;
@@ -2660,6 +2728,7 @@ fn mark_expanded_layouts(
     switches: &mut [SwitchLayout],
     type_bodies: &[TypeBodyLayout],
     objects: &mut [ObjectLayout],
+    classes: &mut [ClassLayout],
 ) {
     let mut pending = VecDeque::new();
     let mut queued = HashSet::new();
@@ -2697,8 +2766,22 @@ fn mark_expanded_layouts(
         }
     }
 
+    for (class_index, class) in classes.iter().enumerate() {
+        if class.expanded {
+            enqueue_layout_expansion(
+                &mut pending,
+                &mut queued,
+                ExpandedLayout::Class(class_index),
+                LayoutExpansionCause::Cascading,
+            );
+        }
+    }
+
     while let Some((layout, cause)) = pending.pop_front() {
         let (parent, parent_item) = match layout {
+            ExpandedLayout::Class(index) => {
+                (classes[index].layout_parent, classes[index].parent_item)
+            }
             ExpandedLayout::List(list_index) => (
                 lists[list_index].layout_parent,
                 lists[list_index].parent_item,
@@ -2717,7 +2800,7 @@ fn mark_expanded_layouts(
             ),
         };
         if let Some(parent_item) = parent_item {
-            mark_parent_item_multiline(lists, objects, parent_item);
+            mark_parent_item_multiline(lists, objects, classes, parent_item);
             if let ParentItem::SwitchCaseLabel {
                 list_index: Some(list_index),
                 ..
@@ -2734,6 +2817,14 @@ fn mark_expanded_layouts(
             }
         }
         match parent {
+            Some(ExpandedLayout::Class(class_index)) => {
+                enqueue_layout_expansion(
+                    &mut pending,
+                    &mut queued,
+                    ExpandedLayout::Class(class_index),
+                    LayoutExpansionCause::Cascading,
+                );
+            }
             Some(ExpandedLayout::List(list_index)) => {
                 let parent_list = &mut lists[list_index];
                 if cause == LayoutExpansionCause::DirectStatementSpacing
@@ -2805,9 +2896,16 @@ fn mark_expanded_layouts(
 fn mark_parent_item_multiline(
     lists: &mut [StatementList],
     objects: &mut [ObjectLayout],
+    classes: &mut [ClassLayout],
     parent: ParentItem,
 ) {
     match parent {
+        ParentItem::ClassMember {
+            class_index,
+            member_index,
+        } => {
+            classes[class_index].members[member_index].multiline = true;
+        }
         ParentItem::Statement {
             list_index,
             item_index,
@@ -2905,6 +3003,8 @@ fn append_layout_edits(
     switches: &[SwitchLayout],
     type_bodies: &[TypeBodyLayout],
     objects: &[ObjectLayout],
+    classes: &[ClassLayout],
+    class_spacing: ClassMemberSpacingMode,
     line_breaks: Option<&LineBreakIndex>,
     edits: &mut Vec<Edit>,
 ) -> Result<(), FormatError> {
@@ -2913,6 +3013,7 @@ fn append_layout_edits(
         switches.len(),
         objects.len(),
         type_bodies,
+        classes,
         comments,
         line_breaks,
     );
@@ -2949,6 +3050,18 @@ fn append_layout_edits(
         switches,
         objects,
         type_bodies,
+        &mut indents,
+        edits,
+    )?;
+    class_member_spacing::append_edits(
+        source,
+        comments,
+        comment_spacing,
+        newline,
+        lists,
+        switches,
+        objects,
+        class_spacing,
         &mut indents,
         edits,
     )?;
@@ -3667,6 +3780,9 @@ fn existing_boundary_indent(
 }
 
 struct LayoutIndents<'a> {
+    classes: &'a [ClassLayout],
+    class_bases: Vec<Option<String>>,
+    class_members: Vec<Option<Vec<String>>>,
     comments: &'a [Comment],
     type_bodies: &'a [TypeBodyLayout],
     type_body_bases: Vec<Option<String>>,
@@ -3686,12 +3802,16 @@ impl<'a> LayoutIndents<'a> {
         switch_count: usize,
         object_count: usize,
         type_bodies: &'a [TypeBodyLayout],
+        classes: &'a [ClassLayout],
         comments: &'a [Comment],
         line_breaks: Option<&'a LineBreakIndex>,
     ) -> Self {
         Self {
             comments,
             type_bodies,
+            classes,
+            class_bases: vec![None; classes.len()],
+            class_members: vec![None; classes.len()],
             type_body_bases: vec![None; type_bodies.len()],
             type_body_members: vec![None; type_bodies.len()],
             list_bases: vec![None; list_count],
@@ -3856,6 +3976,10 @@ impl<'a> LayoutIndents<'a> {
             indent
         } else if let Some(parent) = body.parent_item {
             let parent_start = match parent {
+                ParentItem::ClassMember {
+                    class_index,
+                    member_index,
+                } => self.classes[class_index].members[member_index].span.start,
                 ParentItem::Statement {
                     list_index,
                     item_index,
@@ -3984,9 +4108,9 @@ impl<'a> LayoutIndents<'a> {
         } else {
             let source_indent = line_leading_indent_at(source, object.open.start);
             match object.parent_item {
-                Some(parent @ ParentItem::ObjectProperty { .. }) => {
-                    self.parent_item_indent(source, lists, switches, objects, parent)
-                }
+                Some(
+                    parent @ (ParentItem::ObjectProperty { .. } | ParentItem::ClassMember { .. }),
+                ) => self.parent_item_indent(source, lists, switches, objects, parent),
                 Some(parent) if source_indent.is_empty() => {
                     self.parent_item_indent(source, lists, switches, objects, parent)
                 }
@@ -4035,6 +4159,17 @@ impl<'a> LayoutIndents<'a> {
         parent: ParentItem,
     ) -> String {
         match parent {
+            ParentItem::ClassMember {
+                class_index,
+                member_index,
+            } => self.class_member_indent(
+                source,
+                lists,
+                switches,
+                objects,
+                class_index,
+                member_index,
+            ),
             ParentItem::TypeMember {
                 body_index,
                 member_index,
@@ -5072,8 +5207,8 @@ mod tests {
         TOKEN_PARSER_RUNS, TYPE_ALIAS_MULTILINE_SCANS, VARIABLE_MULTILINE_SCANS, parse, verify,
     };
     use crate::{
-        FormatConfig, InterfaceLayoutMode, InterfaceLayoutRule, QuoteStyle, RulesConfig,
-        SemicolonConfig, SemicolonMode, SingleLineCallStatementSpacingConfig,
+        ClassMemberSpacingMode, FormatConfig, InterfaceLayoutMode, InterfaceLayoutRule, QuoteStyle,
+        RulesConfig, SemicolonConfig, SemicolonMode, SingleLineCallStatementSpacingConfig,
         SingleLineCallStatementSpacingRule, StatementSpacingConfig, StatementSpacingMode,
         TrailingCommaMode, TypeMemberSemicolonConfig, TypeMemberSemicolonRule, format_text,
         resolve_config,
@@ -5096,7 +5231,8 @@ mod tests {
         format_file_with("sample.ts", source, config)
     }
 
-    fn format_file_with(file_name: &str, source: &str, config: FormatConfig) -> String {
+    fn format_file_with(file_name: &str, source: &str, mut config: FormatConfig) -> String {
+        config.rules.class_member_spacing = ClassMemberSpacingMode::Off;
         let config = resolve_config(config).unwrap();
         format_text(Path::new(file_name), source, &config)
             .unwrap()
@@ -5114,6 +5250,7 @@ mod tests {
     fn object_spacing_config(enabled: bool) -> FormatConfig {
         FormatConfig {
             rules: RulesConfig {
+                class_member_spacing: ClassMemberSpacingMode::Off,
                 bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 import_layout: false,
@@ -5480,6 +5617,7 @@ mod tests {
             source,
             FormatConfig {
                 rules: RulesConfig {
+                    class_member_spacing: ClassMemberSpacingMode::Off,
                     bracket_spacing: BRACKET_SPACING_OFF,
                     comment_spacing: false,
                     import_layout: false,
@@ -5533,6 +5671,7 @@ mod tests {
             source,
             FormatConfig {
                 rules: RulesConfig {
+                    class_member_spacing: ClassMemberSpacingMode::Off,
                     comment_spacing: false,
                     import_layout,
                     type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
@@ -5559,6 +5698,7 @@ mod tests {
             source,
             FormatConfig {
                 rules: RulesConfig {
+                    class_member_spacing: ClassMemberSpacingMode::Off,
                     comment_spacing: false,
                     import_layout: false,
                     export_layout: false,
@@ -5593,6 +5733,7 @@ mod tests {
             source,
             FormatConfig {
                 rules: RulesConfig {
+                    class_member_spacing: ClassMemberSpacingMode::Off,
                     comment_spacing: false,
                     import_layout: false,
                     export_layout: false,
@@ -5643,6 +5784,7 @@ mod tests {
             source,
             FormatConfig {
                 rules: RulesConfig {
+                    class_member_spacing: ClassMemberSpacingMode::Off,
                     bracket_spacing: BRACKET_SPACING_OFF,
                     comment_spacing: false,
                     import_layout: false,
@@ -5676,6 +5818,7 @@ mod tests {
             source,
             FormatConfig {
                 rules: RulesConfig {
+                    class_member_spacing: ClassMemberSpacingMode::Off,
                     bracket_spacing: BRACKET_SPACING_OFF,
                     comment_spacing: false,
                     import_layout: false,
@@ -5714,6 +5857,7 @@ mod tests {
             source,
             FormatConfig {
                 rules: RulesConfig {
+                    class_member_spacing: ClassMemberSpacingMode::Off,
                     bracket_spacing: BRACKET_SPACING_OFF,
                     comment_spacing: false,
                     import_layout: false,
@@ -5793,6 +5937,7 @@ mod tests {
                 FormatConfig {
                     line_width,
                     rules: RulesConfig {
+                        class_member_spacing: ClassMemberSpacingMode::Off,
                         bracket_spacing: BRACKET_SPACING_OFF,
                         comment_spacing: false,
                         import_layout: false,
@@ -6068,6 +6213,7 @@ mod tests {
         let source = "\u{feff}interface Shape { /** value */ value: [\r\n    string,\r\n  ]; // run\r\nrun(): void; }";
         let raw_config = FormatConfig {
             rules: RulesConfig {
+                class_member_spacing: ClassMemberSpacingMode::Off,
                 bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 import_layout: false,
@@ -6613,6 +6759,7 @@ mod tests {
         ] {
             let config = FormatConfig {
                 rules: RulesConfig {
+                    class_member_spacing: ClassMemberSpacingMode::Off,
                     comment_spacing: false,
                     trailing_commas: mode,
                     ..RulesConfig::default()
@@ -6785,6 +6932,7 @@ mod tests {
             FormatConfig {
                 line_width: 20,
                 rules: RulesConfig {
+                    class_member_spacing: ClassMemberSpacingMode::Off,
                     comment_spacing: false,
                     trailing_commas: TrailingCommaMode::Off,
                     ..RulesConfig::default()
@@ -6799,6 +6947,7 @@ mod tests {
 
         let config = resolve_config(FormatConfig {
             rules: RulesConfig {
+                class_member_spacing: ClassMemberSpacingMode::Off,
                 bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 import_layout: false,
@@ -6842,6 +6991,7 @@ mod tests {
             FormatConfig {
                 line_width: 20,
                 rules: RulesConfig {
+                    class_member_spacing: ClassMemberSpacingMode::Off,
                     comment_spacing: false,
                     trailing_commas: TrailingCommaMode::Always,
                     ..RulesConfig::default()
@@ -6858,6 +7008,7 @@ mod tests {
             "import {\n  one,\n  two,\n} from 'pkg';",
             FormatConfig {
                 rules: RulesConfig {
+                    class_member_spacing: ClassMemberSpacingMode::Off,
                     comment_spacing: false,
                     trailing_commas: TrailingCommaMode::Always,
                     ..RulesConfig::default()
@@ -6967,6 +7118,7 @@ mod tests {
         let config = resolve_config(FormatConfig {
             line_width: u32::try_from(expected.chars().count()).unwrap(),
             rules: RulesConfig {
+                class_member_spacing: ClassMemberSpacingMode::Off,
                 bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 import_layout: true,
@@ -7042,6 +7194,7 @@ mod tests {
         let config = || FormatConfig {
             line_width: 120,
             rules: RulesConfig {
+                class_member_spacing: ClassMemberSpacingMode::Off,
                 bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 semicolons: SemicolonConfig {
@@ -7128,6 +7281,7 @@ mod tests {
             FormatConfig {
                 line_width: 20,
                 rules: RulesConfig {
+                    class_member_spacing: ClassMemberSpacingMode::Off,
                     comment_spacing: false,
                     import_layout: false,
                     export_layout: false,
@@ -7155,6 +7309,7 @@ mod tests {
             FormatConfig {
                 line_width: 20,
                 rules: RulesConfig {
+                    class_member_spacing: ClassMemberSpacingMode::Off,
                     comment_spacing: false,
                     import_layout: true,
                     export_layout: false,
@@ -7256,6 +7411,7 @@ mod tests {
         let source = "import{a,b}from'x';interface Shape { value: string; }type Value={raw:true};const value={raw:true};function f(){work();return value;}";
         let config = resolve_config(FormatConfig {
             rules: RulesConfig {
+                class_member_spacing: ClassMemberSpacingMode::Off,
                 bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 import_layout: false,
@@ -7297,6 +7453,7 @@ mod tests {
         let config = resolve_config(FormatConfig {
             verify_ast: false,
             rules: RulesConfig {
+                class_member_spacing: ClassMemberSpacingMode::Off,
                 bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 import_layout: false,
@@ -7342,6 +7499,7 @@ mod tests {
         let output = format(source);
         let config = resolve_config(FormatConfig {
             rules: RulesConfig {
+                class_member_spacing: ClassMemberSpacingMode::Off,
                 bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 semicolons: semicolons_off(),
@@ -7362,6 +7520,7 @@ mod tests {
         let config = resolve_config(FormatConfig {
             verify_ast: false,
             rules: RulesConfig {
+                class_member_spacing: ClassMemberSpacingMode::Off,
                 bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 semicolons: semicolons_off(),
@@ -7388,6 +7547,7 @@ mod tests {
         let config = resolve_config(FormatConfig {
             verify_ast: false,
             rules: RulesConfig {
+                class_member_spacing: ClassMemberSpacingMode::Off,
                 bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 semicolons: semicolons_off(),
@@ -7593,6 +7753,7 @@ mod tests {
         let config = resolve_config(FormatConfig {
             verify_ast: false,
             rules: RulesConfig {
+                class_member_spacing: ClassMemberSpacingMode::Off,
                 import_layout: false,
                 export_layout: false,
                 ..RulesConfig::default()
@@ -7629,6 +7790,7 @@ mod tests {
         let config = resolve_config(FormatConfig {
             verify_ast: false,
             rules: RulesConfig {
+                class_member_spacing: ClassMemberSpacingMode::Off,
                 bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 statement_spacing: StatementSpacingConfig {
@@ -7892,6 +8054,7 @@ mod tests {
             FormatConfig {
                 line_width: 1,
                 rules: RulesConfig {
+                    class_member_spacing: ClassMemberSpacingMode::Off,
                     comment_spacing: false,
                     import_layout: false,
                     export_layout: false,
@@ -7981,6 +8144,7 @@ mod tests {
                     definition,
                     FormatConfig {
                         rules: RulesConfig {
+                            class_member_spacing: ClassMemberSpacingMode::Off,
                             bracket_spacing: BRACKET_SPACING_OFF,
                             comment_spacing: false,
                             import_layout: false,
@@ -8759,6 +8923,7 @@ mod tests {
                 cascading,
                 FormatConfig {
                     rules: RulesConfig {
+                        class_member_spacing: ClassMemberSpacingMode::Off,
                         comment_spacing: false,
                         import_layout: false,
                         export_layout: false,
@@ -8813,6 +8978,7 @@ mod tests {
                 source,
                 FormatConfig {
                     rules: RulesConfig {
+                        class_member_spacing: ClassMemberSpacingMode::Off,
                         comment_spacing: false,
                         import_layout: false,
                         export_layout: false,
@@ -8864,6 +9030,7 @@ mod tests {
                 source,
                 FormatConfig {
                     rules: RulesConfig {
+                        class_member_spacing: ClassMemberSpacingMode::Off,
                         comment_spacing: false,
                         import_layout: false,
                         export_layout: false,
@@ -9040,6 +9207,7 @@ mod tests {
             source,
             FormatConfig {
                 rules: RulesConfig {
+                    class_member_spacing: ClassMemberSpacingMode::Off,
                     comment_spacing: false,
                     import_layout: false,
                     export_layout: false,
@@ -9097,6 +9265,7 @@ mod tests {
                 source,
                 FormatConfig {
                     rules: RulesConfig {
+                        class_member_spacing: ClassMemberSpacingMode::Off,
                         comment_spacing: false,
                         import_layout: false,
                         export_layout: false,
@@ -9341,6 +9510,7 @@ mod tests {
             source,
             FormatConfig {
                 rules: RulesConfig {
+                    class_member_spacing: ClassMemberSpacingMode::Off,
                     comment_spacing: false,
                     import_layout: false,
                     export_layout: false,
@@ -9367,6 +9537,7 @@ mod tests {
             source,
             FormatConfig {
                 rules: RulesConfig {
+                    class_member_spacing: ClassMemberSpacingMode::Off,
                     comment_spacing: false,
                     import_layout: true,
                     export_layout: false,
@@ -9572,6 +9743,7 @@ mod tests {
                     definition,
                     FormatConfig {
                         rules: RulesConfig {
+                            class_member_spacing: ClassMemberSpacingMode::Off,
                             bracket_spacing: BRACKET_SPACING_OFF,
                             comment_spacing: false,
                             semicolons: semicolons_off(),
@@ -9594,6 +9766,7 @@ mod tests {
                 declaration,
                 FormatConfig {
                     rules: RulesConfig {
+                        class_member_spacing: ClassMemberSpacingMode::Off,
                         bracket_spacing: BRACKET_SPACING_OFF,
                         comment_spacing: false,
                         semicolons: semicolons_off(),
@@ -9612,6 +9785,7 @@ mod tests {
             &source,
             FormatConfig {
                 rules: RulesConfig {
+                    class_member_spacing: ClassMemberSpacingMode::Off,
                     bracket_spacing: BRACKET_SPACING_OFF,
                     comment_spacing: false,
                     semicolons: semicolons_off(),
@@ -9627,6 +9801,7 @@ mod tests {
                 &output,
                 FormatConfig {
                     rules: RulesConfig {
+                        class_member_spacing: ClassMemberSpacingMode::Off,
                         bracket_spacing: BRACKET_SPACING_OFF,
                         comment_spacing: false,
                         semicolons: semicolons_off(),
