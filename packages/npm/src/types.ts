@@ -25,6 +25,7 @@ export interface RulesConfig {
   statementSpacing?: StatementSpacingConfig
   trailingCommas?: 'always' | 'never' | 'off'
   typeLiteralLayout?: number | TypeLiteralLayoutMode
+  unionLayout?: 'auto' | 'always' | 'off'
 }
 export interface BracketSpacingConfig {
   curly?: 'always' | 'never' | 'off'

@@ -15,6 +15,7 @@ test('preserves comment groups through the native API independently of other rul
     importLayout: false,
     exportLayout: false,
     classMemberSpacing: 'off',
+    unionLayout: 'off',
     interfaceLayout: 'off',
     typeLiteralLayout: 'off',
     objectPropertySpacing: false,
@@ -37,6 +38,23 @@ test('preserves comment groups through the native API independently of other rul
   }
 })
 
+test('formats union layouts through native configuration and keeps off independent', async () => {
+  const source = 'type U = "one" | "two";'
+  const expanded = "type U =\n  | 'one'\n  | 'two'"
+  for (const unionLayout of ['auto', 'always', 'off'] as const) {
+    const output = await format('sample.ts', source, { rules: { unionLayout } })
+    const expected = unionLayout === 'always' ? expanded : "type U = 'one' | 'two'"
+    assert.equal(output, expected)
+    const repeated = await format('sample.ts', output, { rules: { unionLayout } })
+    assert.equal(repeated, output)
+  }
+  const defaultOutput = await format('sample.ts', expanded)
+  assert.equal(defaultOutput, "type U = 'one' | 'two'")
+  const invalidConfig = { rules: { unionLayout: 'never' } } as unknown as FormatConfig
+  const invalidResult = format('sample.ts', source, invalidConfig)
+  await assert.rejects(invalidResult, (error: unknown) => isConfigError(error, 'rules.unionLayout'))
+})
+
 test('formats through the asynchronous native API', async () => {
   const source = "import{one,type Two}from'pkg';const value={items:[1,2]};"
   const output = await format('sample.ts', source)
@@ -50,6 +68,7 @@ test('formats through the asynchronous native API', async () => {
       importLayout: false,
       exportLayout: false,
       classMemberSpacing: 'off',
+      unionLayout: 'off',
       objectPropertySpacing: false,
       quoteStyle: 'off',
       statementSpacing: { imports: 'off' }
@@ -74,6 +93,7 @@ test('formats through the asynchronous native API', async () => {
       importLayout: false,
       exportLayout: false,
       classMemberSpacing: 'off',
+      unionLayout: 'off',
       objectPropertySpacing: false,
       quoteStyle: 'off',
       interfaceLayout: 'off',
@@ -118,6 +138,7 @@ test('formats quote styles through the native API', async () => {
     importLayout: false,
     exportLayout: false,
     classMemberSpacing: 'off',
+    unionLayout: 'off',
     interfaceLayout: 'off',
     typeLiteralLayout: 'off',
     objectPropertySpacing: false,
@@ -170,6 +191,7 @@ test('formats object property spacing through the native API', async () => {
         importLayout: false,
         exportLayout: false,
         classMemberSpacing: 'off',
+        unionLayout: 'off',
         interfaceLayout: 'off',
         typeLiteralLayout: 'off',
         objectPropertySpacing: false,
@@ -283,6 +305,7 @@ test('formats interface layouts through the native API', async () => {
     importLayout: false,
     exportLayout: false,
     classMemberSpacing: 'off',
+    unionLayout: 'off',
     objectPropertySpacing: false,
     quoteStyle: 'off',
     statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
@@ -341,6 +364,7 @@ test('formats type alias spacing through the native API', async () => {
       importLayout: false,
       exportLayout: false,
       classMemberSpacing: 'off',
+      unionLayout: 'off',
       objectPropertySpacing: false,
       quoteStyle: 'off',
       interfaceLayout: 'off',
@@ -361,6 +385,7 @@ test('formats return statement spacing through the native API', async () => {
       importLayout: false,
       exportLayout: false,
       classMemberSpacing: 'off',
+      unionLayout: 'off',
       objectPropertySpacing: false,
       quoteStyle: 'off',
       interfaceLayout: 'off',
@@ -381,6 +406,7 @@ test('formats control-flow statement spacing through the native API', async () =
       importLayout: false,
       exportLayout: false,
       classMemberSpacing: 'off',
+      unionLayout: 'off',
       objectPropertySpacing: false,
       quoteStyle: 'off',
       interfaceLayout: 'off',
@@ -402,6 +428,7 @@ test('formats granular semicolon groups through the native API', async () => {
       importLayout: false,
       exportLayout: false,
       classMemberSpacing: 'off',
+      unionLayout: 'off',
       objectPropertySpacing: false,
       quoteStyle: 'off',
       statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
@@ -428,6 +455,7 @@ test('formats type member semicolons by container layout through the native API'
       importLayout: false,
       exportLayout: false,
       classMemberSpacing: 'off',
+      unionLayout: 'off',
       interfaceLayout: 'off',
       typeLiteralLayout: 'off',
       objectPropertySpacing: false,
@@ -452,6 +480,7 @@ test('formats trailing commas through the native API', async () => {
     importLayout: false,
     exportLayout: false,
     classMemberSpacing: 'off',
+    unionLayout: 'off',
     objectPropertySpacing: false,
     quoteStyle: 'off',
     statementSpacing: { controlFlowStatements: 'off', imports: 'off', multilineCallStatements: 'off', singleLineCallStatements: 'off', returnStatements: 'off', typeAliases: 'off', variableDeclarations: 'off' },
@@ -488,6 +517,9 @@ test('maps native failures to stable error codes', async () => {
     (error) => isConfigError(error, 'quoteStyle')
   )
   const invalidRules: Array<readonly [unknown, string]> = [
+    [{ unionLayout: true }, 'rules.unionLayout'],
+    [{ unionLayout: 1 }, 'rules.unionLayout'],
+    [{ unionLayout: null }, 'rules.unionLayout'],
     [{ classMemberSpacing: 'always' }, 'rules.classMemberSpacing'],
     [{ classMemberSpacing: false }, 'rules.classMemberSpacing'],
     [{ classMemberSpacing: 1 }, 'rules.classMemberSpacing'],

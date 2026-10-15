@@ -2,9 +2,11 @@ mod bracket_spacing;
 mod class_member_spacing;
 mod comment_spacing;
 mod quote_style;
+mod union_layout;
 
 use class_member_spacing::ClassLayout;
 use comment_spacing::CommentSpacing;
+use union_layout::UnionLayout;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
@@ -18,7 +20,8 @@ use oxc_ast::ast::{
     NewExpression, ObjectAssignmentTarget, ObjectExpression, ObjectPattern, Program, Statement,
     StaticBlock, SwitchCase, SwitchStatement, TSEnumBody, TSExternalModuleDeclaration,
     TSGlobalDeclaration, TSInterfaceBody, TSModuleBlock, TSNamespaceDeclaration, TSTupleElement,
-    TSTupleType, TSTypeLiteral, TSTypeParameterDeclaration, VariableDeclarationKind, WithClause,
+    TSTupleType, TSTypeLiteral, TSTypeParameterDeclaration, TSUnionType, VariableDeclarationKind,
+    WithClause,
 };
 use oxc_ast_visit::{
     Visit,
@@ -36,7 +39,7 @@ use oxc_ast_visit::{
         walk_ts_interface_body, walk_ts_mapped_type, walk_ts_method_signature,
         walk_ts_module_block, walk_ts_namespace_declaration, walk_ts_property_signature,
         walk_ts_tuple_type, walk_ts_type_literal, walk_ts_type_parameter_declaration,
-        walk_with_clause,
+        walk_ts_union_type, walk_with_clause,
     },
 };
 use oxc_parser::{Kind, ParseOptions, Parser, Token, config::TokensParserConfig};
@@ -45,7 +48,7 @@ use oxc_span::{ContentEq, FileExtension, GetSpan, SourceType, Span};
 use crate::{
     BracketSpacingConfig, BracketSpacingMode, ClassMemberSpacingMode, FormatError, QuoteStyle,
     ResolvedConfig, SemicolonMode, SingleLineCallStatementSpacingConfig, StatementSpacingMode,
-    TrailingCommaMode, TypeMemberSemicolonConfig,
+    TrailingCommaMode, TypeMemberSemicolonConfig, UnionLayoutMode,
 };
 
 const BOM: char = '\u{feff}';
@@ -178,7 +181,7 @@ pub(crate) fn format_script(
         } else {
             let quote_allocator = Allocator::default();
             let quote_parsed = parse_tokens(&quote_allocator, quote_source, source_type)?;
-            rewrite_after_quotes(
+            union_layout::rewrite(
                 quote_source,
                 &quote_parsed,
                 source_type,
@@ -188,7 +191,7 @@ pub(crate) fn format_script(
             )?
         }
     } else {
-        rewrite_after_quotes(
+        union_layout::rewrite(
             source,
             &parsed,
             source_type,
@@ -234,6 +237,7 @@ fn rewrite_after_quotes(
     newline_hint: Option<&'static str>,
     config: &ResolvedConfig,
     type_member_semicolons: TypeMemberSemicolonConfig,
+    union_expansions: Option<&HashSet<u32>>,
 ) -> Result<Option<String>, FormatError> {
     let newline = detect_newline(source, newline_hint);
     let comment_spacing = if config.comment_spacing_enabled() {
@@ -271,6 +275,7 @@ fn rewrite_after_quotes(
             statement_semicolons: config.statement_semicolons(),
             trailing_commas: config.trailing_commas(),
             single_arrow_comma,
+            union_expansions,
         },
     )?;
     let mut rewritten = if edits.is_empty() {
@@ -314,6 +319,7 @@ fn script_rules_after_quotes_disabled(
 ) -> bool {
     config.bracket_spacing().curly == BracketSpacingMode::Off
         && config.bracket_spacing().square == BracketSpacingMode::Off
+        && config.union_layout() == UnionLayoutMode::Off
         && config.class_member_spacing() == ClassMemberSpacingMode::Off
         && !config.comment_spacing_enabled()
         && !config.import_layout_enabled()
@@ -1520,6 +1526,7 @@ enum StatementTarget {
 
 #[derive(Clone, Copy, Debug)]
 struct RewriteRules<'a> {
+    union_expansions: Option<&'a HashSet<u32>>,
     class_member_spacing: ClassMemberSpacingMode,
     bracket_spacing: BracketSpacingConfig,
     comment_spacing: &'a CommentSpacing,
@@ -1542,6 +1549,10 @@ struct RewriteRules<'a> {
 
 #[derive(Clone, Copy, Debug)]
 enum ParentItem {
+    UnionVariant {
+        union_index: usize,
+        variant_index: usize,
+    },
     ClassMember {
         class_index: usize,
         member_index: usize,
@@ -1566,6 +1577,7 @@ enum ParentItem {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum ExpandedLayout {
+    Union(usize),
     Class(usize),
     List(usize),
     Switch(usize),
@@ -2010,6 +2022,7 @@ fn collect_layout_edits(
         && rules.type_literal_layout_threshold.is_none()
         && !rules.object_property_spacing
         && rules.class_member_spacing == ClassMemberSpacingMode::Off
+        && rules.union_expansions.is_none_or(HashSet::is_empty)
     {
         return Ok(Vec::new());
     }
@@ -2021,6 +2034,9 @@ fn collect_layout_edits(
         || rules.object_property_spacing
         || call_spacing_enabled
         || rules.type_literal_layout_threshold.is_some()
+        || rules
+            .union_expansions
+            .is_some_and(|unions| !unions.is_empty())
         || !directive_target_lines.is_empty())
     .then(|| LineBreakIndex::new(source));
     let mut class_directive_lines = directive_target_lines.clone();
@@ -2038,6 +2054,8 @@ fn collect_layout_edits(
         );
     }
     let mut collector = StatementCollector {
+        union_expansions: rules.union_expansions,
+        unions: Vec::new(),
         class_member_spacing: rules.class_member_spacing,
         class_directive_lines: &class_directive_lines,
         source,
@@ -2073,6 +2091,7 @@ fn collect_layout_edits(
         &collector.type_bodies,
         &mut collector.objects,
         &mut collector.classes,
+        &collector.unions,
     );
     let mut edits = Vec::new();
     append_layout_edits(
@@ -2086,6 +2105,7 @@ fn collect_layout_edits(
         &collector.type_bodies,
         &collector.objects,
         &collector.classes,
+        &collector.unions,
         rules.class_member_spacing,
         line_breaks.as_ref(),
         &mut edits,
@@ -2127,6 +2147,8 @@ fn append_never_comma_edits(
 }
 
 struct StatementCollector<'s> {
+    union_expansions: Option<&'s HashSet<u32>>,
+    unions: Vec<UnionLayout>,
     class_member_spacing: ClassMemberSpacingMode,
     class_directive_lines: &'s HashSet<u32>,
     classes: Vec<ClassLayout>,
@@ -2345,6 +2367,35 @@ fn statement_syntax_span(source: &str, tokens: &[Token], span: Span) -> Span {
 }
 
 impl<'a> Visit<'a> for StatementCollector<'_> {
+    fn visit_ts_union_type(&mut self, union: &TSUnionType<'a>) {
+        if !self
+            .union_expansions
+            .is_some_and(|selected| selected.contains(&union.span.start))
+        {
+            walk_ts_union_type(self, union);
+            return;
+        }
+        let union_index = self.unions.len();
+        self.unions.push(UnionLayout::collect(
+            self.tokens,
+            union,
+            self.current_layout,
+            self.current_item,
+        ));
+        let previous_layout = self
+            .current_layout
+            .replace(ExpandedLayout::Union(union_index));
+        for (variant_index, variant) in union.types.iter().enumerate() {
+            let previous_item = self.current_item.replace(ParentItem::UnionVariant {
+                union_index,
+                variant_index,
+            });
+            self.visit_ts_type(variant);
+            self.current_item = previous_item;
+        }
+        self.current_layout = previous_layout;
+    }
+
     fn visit_class_body(&mut self, body: &ClassBody<'a>) {
         if self.class_member_spacing == ClassMemberSpacingMode::Off || body.body.is_empty() {
             walk_class_body(self, body);
@@ -2729,6 +2780,7 @@ fn mark_expanded_layouts(
     type_bodies: &[TypeBodyLayout],
     objects: &mut [ObjectLayout],
     classes: &mut [ClassLayout],
+    unions: &[UnionLayout],
 ) {
     let mut pending = VecDeque::new();
     let mut queued = HashSet::new();
@@ -2777,8 +2829,20 @@ fn mark_expanded_layouts(
         }
     }
 
+    for union_index in 0..unions.len() {
+        enqueue_layout_expansion(
+            &mut pending,
+            &mut queued,
+            ExpandedLayout::Union(union_index),
+            LayoutExpansionCause::Cascading,
+        );
+    }
+
     while let Some((layout, cause)) = pending.pop_front() {
         let (parent, parent_item) = match layout {
+            ExpandedLayout::Union(index) => {
+                (unions[index].layout_parent, unions[index].parent_item)
+            }
             ExpandedLayout::Class(index) => {
                 (classes[index].layout_parent, classes[index].parent_item)
             }
@@ -2817,6 +2881,14 @@ fn mark_expanded_layouts(
             }
         }
         match parent {
+            Some(ExpandedLayout::Union(index)) => {
+                enqueue_layout_expansion(
+                    &mut pending,
+                    &mut queued,
+                    ExpandedLayout::Union(index),
+                    LayoutExpansionCause::Cascading,
+                );
+            }
             Some(ExpandedLayout::Class(class_index)) => {
                 enqueue_layout_expansion(
                     &mut pending,
@@ -2922,7 +2994,9 @@ fn mark_parent_item_multiline(
             object_index,
             item_index,
         } => objects[object_index].items[item_index].multiline = true,
-        ParentItem::TypeMember { .. } | ParentItem::SwitchCaseLabel { .. } => {}
+        ParentItem::UnionVariant { .. }
+        | ParentItem::TypeMember { .. }
+        | ParentItem::SwitchCaseLabel { .. } => {}
     }
 }
 
@@ -3004,6 +3078,7 @@ fn append_layout_edits(
     type_bodies: &[TypeBodyLayout],
     objects: &[ObjectLayout],
     classes: &[ClassLayout],
+    unions: &[UnionLayout],
     class_spacing: ClassMemberSpacingMode,
     line_breaks: Option<&LineBreakIndex>,
     edits: &mut Vec<Edit>,
@@ -3014,6 +3089,7 @@ fn append_layout_edits(
         objects.len(),
         type_bodies,
         classes,
+        unions,
         comments,
         line_breaks,
     );
@@ -3074,6 +3150,16 @@ fn append_layout_edits(
         switches,
         objects,
         line_breaks,
+        &mut indents,
+        edits,
+    )?;
+    union_layout::append_edits(
+        source,
+        comments,
+        newline,
+        lists,
+        switches,
+        objects,
         &mut indents,
         edits,
     )
@@ -3780,6 +3866,8 @@ fn existing_boundary_indent(
 }
 
 struct LayoutIndents<'a> {
+    unions: &'a [UnionLayout],
+    union_bases: Vec<Option<String>>,
     classes: &'a [ClassLayout],
     class_bases: Vec<Option<String>>,
     class_members: Vec<Option<Vec<String>>>,
@@ -3797,16 +3885,23 @@ struct LayoutIndents<'a> {
 }
 
 impl<'a> LayoutIndents<'a> {
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "indent caches share every collected layout kind"
+    )]
     fn new(
         list_count: usize,
         switch_count: usize,
         object_count: usize,
         type_bodies: &'a [TypeBodyLayout],
         classes: &'a [ClassLayout],
+        unions: &'a [UnionLayout],
         comments: &'a [Comment],
         line_breaks: Option<&'a LineBreakIndex>,
     ) -> Self {
         Self {
+            unions,
+            union_bases: vec![None; unions.len()],
             comments,
             type_bodies,
             classes,
@@ -3967,39 +4062,19 @@ impl<'a> LayoutIndents<'a> {
         }
         indent_resolution();
         let body = &self.type_bodies[body_index];
-        let existing_close = body
-            .preserve_indent
+        let union_parent = matches!(body.parent_item, Some(ParentItem::UnionVariant { .. }));
+        let existing_close = (body.preserve_indent && !union_parent)
             .then(|| self.standalone_indent(source, body.close.start))
             .flatten();
         let source_indent = self.leading_indent(source, body.open.start);
         let indent = if let Some(indent) = existing_close {
             indent
         } else if let Some(parent) = body.parent_item {
-            let parent_start = match parent {
-                ParentItem::ClassMember {
-                    class_index,
-                    member_index,
-                } => self.classes[class_index].members[member_index].span.start,
-                ParentItem::Statement {
-                    list_index,
-                    item_index,
-                } => lists[list_index].items[item_index].span.start,
-                ParentItem::ObjectProperty {
-                    object_index,
-                    item_index,
-                } => objects[object_index].items[item_index].span.start,
-                ParentItem::TypeMember {
-                    body_index,
-                    member_index,
-                } => self.type_bodies[body_index].members[member_index].start,
-                ParentItem::SwitchCaseLabel { switch_index, .. } => {
-                    switches[switch_index].span.start
-                }
-            };
+            let parent_start = self.parent_item_start(lists, switches, objects, parent);
             let on_parent_line = self.line_breaks.is_none_or(|lines| {
                 lines.line_start(body.open.start) == lines.line_start(parent_start)
             });
-            if body.preserve_indent && !on_parent_line {
+            if body.preserve_indent && !on_parent_line && !union_parent {
                 source_indent
             } else {
                 self.parent_item_indent(source, lists, switches, objects, parent)
@@ -4026,7 +4101,7 @@ impl<'a> LayoutIndents<'a> {
             let fallback = if body.expanded {
                 format!("{base}  ")
             } else {
-                base
+                base.clone()
             };
             let mut indents = body
                 .members
@@ -4050,6 +4125,16 @@ impl<'a> LayoutIndents<'a> {
                     })
                 })
                 .collect::<Vec<_>>();
+            if matches!(body.parent_item, Some(ParentItem::UnionVariant { .. })) {
+                let old_base = self
+                    .standalone_indent(source, body.close.start)
+                    .unwrap_or_else(|| self.leading_indent(source, body.open.start));
+                for indent in indents.iter_mut().flatten() {
+                    if let Some(relative) = indent.strip_prefix(&old_base) {
+                        *indent = format!("{base}{relative}");
+                    }
+                }
+            }
             let mut previous = None;
             for indent in &mut indents {
                 if indent.is_some() {
@@ -4150,6 +4235,65 @@ impl<'a> LayoutIndents<'a> {
         indent
     }
 
+    fn union_base_indent(
+        &mut self,
+        source: &str,
+        lists: &[StatementList],
+        switches: &[SwitchLayout],
+        objects: &[ObjectLayout],
+        union_index: usize,
+    ) -> String {
+        if let Some(indent) = &self.union_bases[union_index] {
+            return indent.clone();
+        }
+        let union = &self.unions[union_index];
+        let parent = union.parent_item.filter(|parent| {
+            let parent_start = self.parent_item_start(lists, switches, objects, *parent);
+            self.line_breaks.is_none_or(|lines| {
+                lines.line_start(union.prefix.start) == lines.line_start(parent_start)
+            })
+        });
+        let indent = if let Some(parent) = parent {
+            self.parent_item_indent(source, lists, switches, objects, parent)
+        } else {
+            self.leading_indent(source, union.prefix.start)
+        };
+        self.union_bases[union_index] = Some(indent.clone());
+        indent
+    }
+
+    fn parent_item_start(
+        &self,
+        lists: &[StatementList],
+        switches: &[SwitchLayout],
+        objects: &[ObjectLayout],
+        parent: ParentItem,
+    ) -> u32 {
+        match parent {
+            ParentItem::UnionVariant {
+                union_index,
+                variant_index,
+            } => self.unions[union_index].variants[variant_index].start,
+            ParentItem::ClassMember {
+                class_index,
+                member_index,
+            } => self.classes[class_index].members[member_index].span.start,
+            ParentItem::Statement {
+                list_index,
+                item_index,
+            } => lists[list_index].items[item_index].span.start,
+            ParentItem::ObjectProperty {
+                object_index,
+                item_index,
+            } => objects[object_index].items[item_index].span.start,
+            ParentItem::TypeMember {
+                body_index,
+                member_index,
+            } => self.type_bodies[body_index].members[member_index].start,
+            ParentItem::SwitchCaseLabel { switch_index, .. } => switches[switch_index].span.start,
+        }
+    }
+
     fn parent_item_indent(
         &mut self,
         source: &str,
@@ -4159,6 +4303,10 @@ impl<'a> LayoutIndents<'a> {
         parent: ParentItem,
     ) -> String {
         match parent {
+            ParentItem::UnionVariant { union_index, .. } => {
+                let base = self.union_base_indent(source, lists, switches, objects, union_index);
+                format!("{base}  ")
+            }
             ParentItem::ClassMember {
                 class_index,
                 member_index,
@@ -5193,6 +5341,7 @@ pub fn benchmark_verify(file_name: &Path, source: &str) -> Result<(), FormatErro
 
 #[cfg(test)]
 mod tests {
+    use crate::UnionLayoutMode;
     use std::fmt::Write as _;
     use std::path::Path;
 
@@ -5251,6 +5400,7 @@ mod tests {
         FormatConfig {
             rules: RulesConfig {
                 class_member_spacing: ClassMemberSpacingMode::Off,
+                union_layout: UnionLayoutMode::Off,
                 bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 import_layout: false,
@@ -5618,6 +5768,7 @@ mod tests {
             FormatConfig {
                 rules: RulesConfig {
                     class_member_spacing: ClassMemberSpacingMode::Off,
+                    union_layout: UnionLayoutMode::Off,
                     bracket_spacing: BRACKET_SPACING_OFF,
                     comment_spacing: false,
                     import_layout: false,
@@ -5672,6 +5823,7 @@ mod tests {
             FormatConfig {
                 rules: RulesConfig {
                     class_member_spacing: ClassMemberSpacingMode::Off,
+                    union_layout: UnionLayoutMode::Off,
                     comment_spacing: false,
                     import_layout,
                     type_literal_layout: crate::TypeLiteralLayoutRule::Mode(
@@ -5699,6 +5851,7 @@ mod tests {
             FormatConfig {
                 rules: RulesConfig {
                     class_member_spacing: ClassMemberSpacingMode::Off,
+                    union_layout: UnionLayoutMode::Off,
                     comment_spacing: false,
                     import_layout: false,
                     export_layout: false,
@@ -5734,6 +5887,7 @@ mod tests {
             FormatConfig {
                 rules: RulesConfig {
                     class_member_spacing: ClassMemberSpacingMode::Off,
+                    union_layout: UnionLayoutMode::Off,
                     comment_spacing: false,
                     import_layout: false,
                     export_layout: false,
@@ -5785,6 +5939,7 @@ mod tests {
             FormatConfig {
                 rules: RulesConfig {
                     class_member_spacing: ClassMemberSpacingMode::Off,
+                    union_layout: UnionLayoutMode::Off,
                     bracket_spacing: BRACKET_SPACING_OFF,
                     comment_spacing: false,
                     import_layout: false,
@@ -5819,6 +5974,7 @@ mod tests {
             FormatConfig {
                 rules: RulesConfig {
                     class_member_spacing: ClassMemberSpacingMode::Off,
+                    union_layout: UnionLayoutMode::Off,
                     bracket_spacing: BRACKET_SPACING_OFF,
                     comment_spacing: false,
                     import_layout: false,
@@ -5858,6 +6014,7 @@ mod tests {
             FormatConfig {
                 rules: RulesConfig {
                     class_member_spacing: ClassMemberSpacingMode::Off,
+                    union_layout: UnionLayoutMode::Off,
                     bracket_spacing: BRACKET_SPACING_OFF,
                     comment_spacing: false,
                     import_layout: false,
@@ -5938,6 +6095,7 @@ mod tests {
                     line_width,
                     rules: RulesConfig {
                         class_member_spacing: ClassMemberSpacingMode::Off,
+                        union_layout: UnionLayoutMode::Off,
                         bracket_spacing: BRACKET_SPACING_OFF,
                         comment_spacing: false,
                         import_layout: false,
@@ -6214,6 +6372,7 @@ mod tests {
         let raw_config = FormatConfig {
             rules: RulesConfig {
                 class_member_spacing: ClassMemberSpacingMode::Off,
+                union_layout: UnionLayoutMode::Off,
                 bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 import_layout: false,
@@ -6760,6 +6919,7 @@ mod tests {
             let config = FormatConfig {
                 rules: RulesConfig {
                     class_member_spacing: ClassMemberSpacingMode::Off,
+                    union_layout: UnionLayoutMode::Off,
                     comment_spacing: false,
                     trailing_commas: mode,
                     ..RulesConfig::default()
@@ -6933,6 +7093,7 @@ mod tests {
                 line_width: 20,
                 rules: RulesConfig {
                     class_member_spacing: ClassMemberSpacingMode::Off,
+                    union_layout: UnionLayoutMode::Off,
                     comment_spacing: false,
                     trailing_commas: TrailingCommaMode::Off,
                     ..RulesConfig::default()
@@ -6948,6 +7109,7 @@ mod tests {
         let config = resolve_config(FormatConfig {
             rules: RulesConfig {
                 class_member_spacing: ClassMemberSpacingMode::Off,
+                union_layout: UnionLayoutMode::Off,
                 bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 import_layout: false,
@@ -6992,6 +7154,7 @@ mod tests {
                 line_width: 20,
                 rules: RulesConfig {
                     class_member_spacing: ClassMemberSpacingMode::Off,
+                    union_layout: UnionLayoutMode::Off,
                     comment_spacing: false,
                     trailing_commas: TrailingCommaMode::Always,
                     ..RulesConfig::default()
@@ -7009,6 +7172,7 @@ mod tests {
             FormatConfig {
                 rules: RulesConfig {
                     class_member_spacing: ClassMemberSpacingMode::Off,
+                    union_layout: UnionLayoutMode::Off,
                     comment_spacing: false,
                     trailing_commas: TrailingCommaMode::Always,
                     ..RulesConfig::default()
@@ -7119,6 +7283,7 @@ mod tests {
             line_width: u32::try_from(expected.chars().count()).unwrap(),
             rules: RulesConfig {
                 class_member_spacing: ClassMemberSpacingMode::Off,
+                union_layout: UnionLayoutMode::Off,
                 bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 import_layout: true,
@@ -7195,6 +7360,7 @@ mod tests {
             line_width: 120,
             rules: RulesConfig {
                 class_member_spacing: ClassMemberSpacingMode::Off,
+                union_layout: UnionLayoutMode::Off,
                 bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 semicolons: SemicolonConfig {
@@ -7282,6 +7448,7 @@ mod tests {
                 line_width: 20,
                 rules: RulesConfig {
                     class_member_spacing: ClassMemberSpacingMode::Off,
+                    union_layout: UnionLayoutMode::Off,
                     comment_spacing: false,
                     import_layout: false,
                     export_layout: false,
@@ -7310,6 +7477,7 @@ mod tests {
                 line_width: 20,
                 rules: RulesConfig {
                     class_member_spacing: ClassMemberSpacingMode::Off,
+                    union_layout: UnionLayoutMode::Off,
                     comment_spacing: false,
                     import_layout: true,
                     export_layout: false,
@@ -7412,6 +7580,7 @@ mod tests {
         let config = resolve_config(FormatConfig {
             rules: RulesConfig {
                 class_member_spacing: ClassMemberSpacingMode::Off,
+                union_layout: UnionLayoutMode::Off,
                 bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 import_layout: false,
@@ -7454,6 +7623,7 @@ mod tests {
             verify_ast: false,
             rules: RulesConfig {
                 class_member_spacing: ClassMemberSpacingMode::Off,
+                union_layout: UnionLayoutMode::Off,
                 bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 import_layout: false,
@@ -7500,6 +7670,7 @@ mod tests {
         let config = resolve_config(FormatConfig {
             rules: RulesConfig {
                 class_member_spacing: ClassMemberSpacingMode::Off,
+                union_layout: UnionLayoutMode::Off,
                 bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 semicolons: semicolons_off(),
@@ -7521,6 +7692,7 @@ mod tests {
             verify_ast: false,
             rules: RulesConfig {
                 class_member_spacing: ClassMemberSpacingMode::Off,
+                union_layout: UnionLayoutMode::Off,
                 bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 semicolons: semicolons_off(),
@@ -7548,6 +7720,7 @@ mod tests {
             verify_ast: false,
             rules: RulesConfig {
                 class_member_spacing: ClassMemberSpacingMode::Off,
+                union_layout: UnionLayoutMode::Off,
                 bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 semicolons: semicolons_off(),
@@ -7754,6 +7927,7 @@ mod tests {
             verify_ast: false,
             rules: RulesConfig {
                 class_member_spacing: ClassMemberSpacingMode::Off,
+                union_layout: UnionLayoutMode::Off,
                 import_layout: false,
                 export_layout: false,
                 ..RulesConfig::default()
@@ -7791,6 +7965,7 @@ mod tests {
             verify_ast: false,
             rules: RulesConfig {
                 class_member_spacing: ClassMemberSpacingMode::Off,
+                union_layout: UnionLayoutMode::Off,
                 bracket_spacing: BRACKET_SPACING_OFF,
                 comment_spacing: false,
                 statement_spacing: StatementSpacingConfig {
@@ -8055,6 +8230,7 @@ mod tests {
                 line_width: 1,
                 rules: RulesConfig {
                     class_member_spacing: ClassMemberSpacingMode::Off,
+                    union_layout: UnionLayoutMode::Off,
                     comment_spacing: false,
                     import_layout: false,
                     export_layout: false,
@@ -8145,6 +8321,7 @@ mod tests {
                     FormatConfig {
                         rules: RulesConfig {
                             class_member_spacing: ClassMemberSpacingMode::Off,
+                            union_layout: UnionLayoutMode::Off,
                             bracket_spacing: BRACKET_SPACING_OFF,
                             comment_spacing: false,
                             import_layout: false,
@@ -8924,6 +9101,7 @@ mod tests {
                 FormatConfig {
                     rules: RulesConfig {
                         class_member_spacing: ClassMemberSpacingMode::Off,
+                        union_layout: UnionLayoutMode::Off,
                         comment_spacing: false,
                         import_layout: false,
                         export_layout: false,
@@ -8972,6 +9150,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the spacing priority matrix includes isolated configurations"
+    )]
     fn combines_control_flow_with_other_spacing_by_priority() {
         let format = |source, control_flow_statements, return_statements, variable_declarations| {
             format_with_semicolons_off(
@@ -8979,6 +9161,7 @@ mod tests {
                 FormatConfig {
                     rules: RulesConfig {
                         class_member_spacing: ClassMemberSpacingMode::Off,
+                        union_layout: UnionLayoutMode::Off,
                         comment_spacing: false,
                         import_layout: false,
                         export_layout: false,
@@ -9031,6 +9214,7 @@ mod tests {
                 FormatConfig {
                     rules: RulesConfig {
                         class_member_spacing: ClassMemberSpacingMode::Off,
+                        union_layout: UnionLayoutMode::Off,
                         comment_spacing: false,
                         import_layout: false,
                         export_layout: false,
@@ -9208,6 +9392,7 @@ mod tests {
             FormatConfig {
                 rules: RulesConfig {
                     class_member_spacing: ClassMemberSpacingMode::Off,
+                    union_layout: UnionLayoutMode::Off,
                     comment_spacing: false,
                     import_layout: false,
                     export_layout: false,
@@ -9266,6 +9451,7 @@ mod tests {
                 FormatConfig {
                     rules: RulesConfig {
                         class_member_spacing: ClassMemberSpacingMode::Off,
+                        union_layout: UnionLayoutMode::Off,
                         comment_spacing: false,
                         import_layout: false,
                         export_layout: false,
@@ -9511,6 +9697,7 @@ mod tests {
             FormatConfig {
                 rules: RulesConfig {
                     class_member_spacing: ClassMemberSpacingMode::Off,
+                    union_layout: UnionLayoutMode::Off,
                     comment_spacing: false,
                     import_layout: false,
                     export_layout: false,
@@ -9538,6 +9725,7 @@ mod tests {
             FormatConfig {
                 rules: RulesConfig {
                     class_member_spacing: ClassMemberSpacingMode::Off,
+                    union_layout: UnionLayoutMode::Off,
                     comment_spacing: false,
                     import_layout: true,
                     export_layout: false,
@@ -9744,6 +9932,7 @@ mod tests {
                     FormatConfig {
                         rules: RulesConfig {
                             class_member_spacing: ClassMemberSpacingMode::Off,
+                            union_layout: UnionLayoutMode::Off,
                             bracket_spacing: BRACKET_SPACING_OFF,
                             comment_spacing: false,
                             semicolons: semicolons_off(),
@@ -9767,6 +9956,7 @@ mod tests {
                 FormatConfig {
                     rules: RulesConfig {
                         class_member_spacing: ClassMemberSpacingMode::Off,
+                        union_layout: UnionLayoutMode::Off,
                         bracket_spacing: BRACKET_SPACING_OFF,
                         comment_spacing: false,
                         semicolons: semicolons_off(),
@@ -9786,6 +9976,7 @@ mod tests {
             FormatConfig {
                 rules: RulesConfig {
                     class_member_spacing: ClassMemberSpacingMode::Off,
+                    union_layout: UnionLayoutMode::Off,
                     bracket_spacing: BRACKET_SPACING_OFF,
                     comment_spacing: false,
                     semicolons: semicolons_off(),
@@ -9802,6 +9993,7 @@ mod tests {
                 FormatConfig {
                     rules: RulesConfig {
                         class_member_spacing: ClassMemberSpacingMode::Off,
+                        union_layout: UnionLayoutMode::Off,
                         bracket_spacing: BRACKET_SPACING_OFF,
                         comment_spacing: false,
                         semicolons: semicolons_off(),

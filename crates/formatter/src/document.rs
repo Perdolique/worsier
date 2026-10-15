@@ -229,6 +229,7 @@ mod tests {
                 "importLayout": false,
                 "exportLayout": false,
                 "classMemberSpacing": "off",
+                "unionLayout": "off",
                 "interfaceLayout": "off",
                 "statementSpacing": {
                     "controlFlowStatements": "off",

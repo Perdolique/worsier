@@ -1,5 +1,6 @@
 node_modules/
 benchmark/node_modules/
+benchmark/.work/
 packages/npm/node_modules/
 target/
 fuzz/target/

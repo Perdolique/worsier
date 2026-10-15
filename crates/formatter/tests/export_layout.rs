@@ -13,7 +13,7 @@ fn isolated() -> FormatConfig {
             "importLayout": false,
             "exportLayout": true,
             "interfaceLayout": "off",
-            "typeLiteralLayout": "off",
+            "typeLiteralLayout": "off", "unionLayout": "off",
             "objectPropertySpacing": false,
             "quoteStyle": "off",
             "statementSpacing": {

@@ -262,27 +262,7 @@ impl LayoutIndents<'_> {
         let indent = if let Some(indent) = existing_close {
             indent
         } else if let Some(parent) = class.parent_item {
-            let parent_start = match parent {
-                ParentItem::ClassMember {
-                    class_index,
-                    member_index,
-                } => self.classes[class_index].members[member_index].span.start,
-                ParentItem::Statement {
-                    list_index,
-                    item_index,
-                } => lists[list_index].items[item_index].span.start,
-                ParentItem::ObjectProperty {
-                    object_index,
-                    item_index,
-                } => objects[object_index].items[item_index].span.start,
-                ParentItem::TypeMember {
-                    body_index,
-                    member_index,
-                } => self.type_bodies[body_index].members[member_index].start,
-                ParentItem::SwitchCaseLabel { switch_index, .. } => {
-                    switches[switch_index].span.start
-                }
-            };
+            let parent_start = self.parent_item_start(lists, switches, objects, parent);
             let lines = self.line_breaks.unwrap();
             if lines.line_start(class.open.start) == lines.line_start(parent_start) {
                 self.parent_item_indent(source, lists, switches, objects, parent)
