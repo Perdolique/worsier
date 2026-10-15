@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.10.0](https://github.com/Perdolique/worsier/compare/v3.9.0...v3.10.0) (2026-10-15)
+
+
+### Features
+
+* **formatter:** add configurable union layout ([77aac3e](https://github.com/Perdolique/worsier/commit/77aac3e423c417bea2a14532cd47df0a7c1e8049)), closes [#76](https://github.com/Perdolique/worsier/issues/76)
+
 ## [3.9.0](https://github.com/Perdolique/worsier/compare/v3.8.0...v3.9.0) (2026-10-15)
 
 
