@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.10.1](https://github.com/Perdolique/worsier/compare/v3.10.0...v3.10.1) (2026-10-17)
+
+
+### Bug Fixes
+
+* **formatter:** limit type layout to declarations ([f1140c6](https://github.com/Perdolique/worsier/commit/f1140c69ae35f3fc610c647cc1719004cd931f1d))
+* **formatter:** limit type layout to declarations ([f208809](https://github.com/Perdolique/worsier/commit/f208809b54bc5831e1d359b4351c45c0dd8d7179)), closes [#85](https://github.com/Perdolique/worsier/issues/85)
+
 ## [3.10.0](https://github.com/Perdolique/worsier/compare/v3.9.0...v3.10.0) (2026-10-15)
 
 
