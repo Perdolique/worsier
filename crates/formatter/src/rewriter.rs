@@ -19,9 +19,9 @@ use oxc_ast::ast::{
     ExportNamedDeclaration, Expression, FormalParameters, FunctionBody, ImportDeclaration,
     NewExpression, ObjectAssignmentTarget, ObjectExpression, ObjectPattern, Program, Statement,
     StaticBlock, SwitchCase, SwitchStatement, TSEnumBody, TSExternalModuleDeclaration,
-    TSGlobalDeclaration, TSInterfaceBody, TSModuleBlock, TSNamespaceDeclaration, TSTupleElement,
-    TSTupleType, TSTypeLiteral, TSTypeParameterDeclaration, TSUnionType, VariableDeclarationKind,
-    WithClause,
+    TSGlobalDeclaration, TSInterfaceBody, TSInterfaceDeclaration, TSModuleBlock,
+    TSNamespaceDeclaration, TSTupleElement, TSTupleType, TSTypeAliasDeclaration, TSTypeLiteral,
+    TSTypeParameterDeclaration, TSUnionType, VariableDeclarationKind, WithClause,
 };
 use oxc_ast_visit::{
     Visit,
@@ -36,10 +36,11 @@ use oxc_ast_visit::{
         walk_switch_statement, walk_ts_call_signature_declaration,
         walk_ts_construct_signature_declaration, walk_ts_enum_body,
         walk_ts_external_module_declaration, walk_ts_global_declaration, walk_ts_index_signature,
-        walk_ts_interface_body, walk_ts_mapped_type, walk_ts_method_signature,
-        walk_ts_module_block, walk_ts_namespace_declaration, walk_ts_property_signature,
-        walk_ts_tuple_type, walk_ts_type_literal, walk_ts_type_parameter_declaration,
-        walk_ts_union_type, walk_with_clause,
+        walk_ts_interface_body, walk_ts_interface_declaration, walk_ts_mapped_type,
+        walk_ts_method_signature, walk_ts_module_block, walk_ts_namespace_declaration,
+        walk_ts_property_signature, walk_ts_tuple_type, walk_ts_type_alias_declaration,
+        walk_ts_type_literal, walk_ts_type_parameter_declaration, walk_ts_union_type,
+        walk_with_clause,
     },
 };
 use oxc_parser::{Kind, ParseOptions, Parser, Token, config::TokensParserConfig};
@@ -70,6 +71,7 @@ thread_local! {
     static RAW_LIST_MULTILINE_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static STANDALONE_INDENT_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static RAW_INDENT_PREFIX_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static LEADING_INDENT_PREFIX_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static PARENTHESIS_INDEX_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static PARENTHESIS_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static DEFERRED_IMPORT_BOUNDARY_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -2074,6 +2076,7 @@ fn collect_layout_edits(
         type_alias_spacing: rules.type_alias_spacing,
         variable_spacing: rules.variable_spacing,
         ambient_depth: 0,
+        type_declaration_depth: 0,
         current_list: None,
         current_layout: None,
         current_item: None,
@@ -2168,6 +2171,7 @@ struct StatementCollector<'s> {
     type_alias_spacing: StatementSpacingMode,
     variable_spacing: StatementSpacingMode,
     ambient_depth: usize,
+    type_declaration_depth: usize,
     current_list: Option<usize>,
     current_layout: Option<ExpandedLayout>,
     current_item: Option<ParentItem>,
@@ -2367,6 +2371,18 @@ fn statement_syntax_span(source: &str, tokens: &[Token], span: Span) -> Span {
 }
 
 impl<'a> Visit<'a> for StatementCollector<'_> {
+    fn visit_ts_type_alias_declaration(&mut self, declaration: &TSTypeAliasDeclaration<'a>) {
+        self.type_declaration_depth += 1;
+        walk_ts_type_alias_declaration(self, declaration);
+        self.type_declaration_depth -= 1;
+    }
+
+    fn visit_ts_interface_declaration(&mut self, declaration: &TSInterfaceDeclaration<'a>) {
+        self.type_declaration_depth += 1;
+        walk_ts_interface_declaration(self, declaration);
+        self.type_declaration_depth -= 1;
+    }
+
     fn visit_ts_union_type(&mut self, union: &TSUnionType<'a>) {
         if !self
             .union_expansions
@@ -2664,6 +2680,10 @@ impl<'a> Visit<'a> for StatementCollector<'_> {
     }
 
     fn visit_ts_type_literal(&mut self, literal: &TSTypeLiteral<'a>) {
+        if self.type_declaration_depth == 0 {
+            walk_ts_type_literal(self, literal);
+            return;
+        }
         let Some(threshold) = self.type_literal_layout_threshold else {
             walk_ts_type_literal(self, literal);
             return;
@@ -4361,6 +4381,8 @@ fn line_indent_at(source: &str, offset: u32) -> String {
 
 fn line_leading_indent_at(source: &str, offset: u32) -> String {
     let prefix = source.get(..offset as usize).unwrap_or(source);
+    #[cfg(test)]
+    LEADING_INDENT_PREFIX_BYTES.set(LEADING_INDENT_PREFIX_BYTES.get() + prefix.len());
     let line = prefix.rsplit_once('\n').map_or(prefix, |(_, line)| line);
     line.chars()
         .take_while(|character| matches!(character, ' ' | '\t' | '\r'))

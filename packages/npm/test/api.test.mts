@@ -50,6 +50,12 @@ test('formats union layouts through native configuration and keeps off independe
   }
   const defaultOutput = await format('sample.ts', expanded)
   assert.equal(defaultOutput, "type U = 'one' | 'two'")
+  const objectSource = 'type U = { customName: string } | { inventoryId: string }'
+  const objectOutput = await format('sample.ts', objectSource)
+  assert.equal(objectOutput, 'type U = {\n  customName: string;\n} | {\n  inventoryId: string;\n}')
+  const signature = 'function read(value: { id: string }): A | B { throw 0 }'
+  const signatureOutput = await format('sample.ts', signature, { rules: { unionLayout: 'always', typeLiteralLayout: 0 } })
+  assert.equal(signatureOutput, signature)
   const invalidConfig = { rules: { unionLayout: 'never' } } as unknown as FormatConfig
   const invalidResult = format('sample.ts', source, invalidConfig)
   await assert.rejects(invalidResult, (error: unknown) => isConfigError(error, 'rules.unionLayout'))

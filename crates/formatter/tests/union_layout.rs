@@ -104,10 +104,10 @@ fn uses_default_auto_and_preserves_other_rules_when_off() {
 fn covers_type_positions_and_preserves_precedence_and_parentheses() {
     let config = isolated(UnionLayoutMode::Always);
     for (source, expected) in [
-        ("let value: A | B", "let value:\n  | A\n  | B"),
+        ("let value: A | B", "let value: A | B"),
         (
             "declare function f(value: A | B): C | D;",
-            "declare function f(value:\n  | A\n  | B):\n  | C\n  | D;",
+            "declare function f(value: A | B): C | D;",
         ),
         ("type U = (A | B)[]", "type U = (\n  | A\n  | B)[]"),
         ("type U = (A | B) & C", "type U = (\n  | A\n  | B) & C"),
@@ -159,18 +159,18 @@ fn measures_the_complete_final_line_including_quotes_semicolons_and_neighbors() 
     config.line_width = u32::try_from(source.chars().count()).unwrap();
     assert_format("sample.ts", source, source, &config);
     let mut config = isolated(UnionLayoutMode::Auto);
-    let source = "let first: A | B; let second: C | D";
+    let source = "type First = A | B; type Second = C | D";
     config.line_width = 25;
     assert_format(
         "sample.ts",
         source,
-        "let first: A | B;\nlet second: C | D",
+        "type First = A | B;\ntype Second = C | D",
         &config,
     );
 }
 
 #[test]
-fn accounts_for_parent_indentation_and_cascades_to_class_fields() {
+fn keeps_class_layout_independent_from_union_layout() {
     let mut config = isolated(UnionLayoutMode::Auto);
     config.rules.class_member_spacing = ClassMemberSpacingMode::Smart;
     config.line_width = 16;
@@ -184,14 +184,14 @@ fn accounts_for_parent_indentation_and_cascades_to_class_fields() {
     assert_format(
         "sample.ts",
         "class C { a: A | B; b: C | D; }",
-        "class C {\n  a:\n    | A\n    | B;\n\n  b:\n    | C\n    | D;\n}",
+        "class C {\n  a: A | B;\n  b: C | D;\n}",
         &config,
     );
     config.line_width = 120;
     assert_format(
         "sample.ts",
         "class C {\n  a:\n    | A\n    | B;\n\n  b: C;\n}",
-        "class C {\n  a: A | B;\n  b: C;\n}",
+        "class C {\n  a:\n    | A\n    | B;\n\n  b: C;\n}",
         &config,
     );
 }
@@ -202,7 +202,7 @@ fn preserves_containing_line_indentation_when_parent_layout_is_disabled() {
     for (source, expected) in [
         (
             "function f(\n    a: A | B\n) {}",
-            "function f(\n    a:\n      | A\n      | B\n) {}",
+            "function f(\n    a: A | B\n) {}",
         ),
         (
             "type U = {\n    value: A | B\n}",
@@ -210,7 +210,7 @@ fn preserves_containing_line_indentation_when_parent_layout_is_disabled() {
         ),
         (
             "class C {\n    value: A | B\n}",
-            "class C {\n    value:\n      | A\n      | B\n}",
+            "class C {\n    value: A | B\n}",
         ),
         (
             "type U = {\n    value: A | B\n} | C",
@@ -228,13 +228,13 @@ fn preserves_containing_line_indentation_when_parent_layout_is_disabled() {
     assert_format(
         "sample.ts",
         "function f(\n    a: A | B\n) {}",
-        "function f(\n    a:\n      | A\n      | B\n) {}",
+        "function f(\n    a: A | B\n) {}",
         &config,
     );
     assert_format(
         "component.vue",
         "<script setup lang=\"ts\">\n  function f(\n      a: A | B\n  ) {}\n</script>",
-        "<script setup lang=\"ts\">\n  function f(\n      a:\n        | A\n        | B\n  ) {}\n</script>",
+        "<script setup lang=\"ts\">\n  function f(\n      a: A | B\n  ) {}\n</script>",
         &config,
     );
 }
@@ -254,14 +254,174 @@ fn cascades_type_layouts_calls_objects_and_statement_boundaries() {
     assert_format(
         "sample.ts",
         source,
-        "function f(){\n  before()\n\n  use<\n    | A\n    | B>()\n\n  after()\n}",
+        "function f(){\n  before()\n  use<A | B>()\n  after()\n}",
         &config,
     );
     let source = "const x = { a: value as A | B, b: 1 }";
     assert_format(
         "sample.ts",
         source,
-        "const x = {\n  a: value as\n    | A\n    | B,\n\n  b: 1\n}",
+        "const x = {\n  a: value as A | B,\n  b: 1\n}",
+        &config,
+    );
+}
+
+#[test]
+fn preserves_union_layout_outside_type_and_interface_declarations() {
+    for mode in [UnionLayoutMode::Auto, UnionLayoutMode::Always] {
+        let mut config = isolated(mode);
+        config.line_width = 1;
+        for source in [
+            "let value: A | B",
+            "let value:\n  | A\n  | B",
+            "declare function f(value: A | B): C | D;",
+            "const f = (value: A | B): C | D => value",
+            "function applyEquipmentPropertyAssignments(sources: EquipmentPropertySource[], targets: MappingProperty[], assignments: EquipmentPropertyAssignments): Record<number, boolean | string> | null { return null }",
+            "function f():\n  | A\n  | B { throw 0 }",
+            "use<A | B>()",
+            "use<\n  | A\n  | B>()",
+            "class C { value: A | B; run(value: A | B): C | D {} }",
+            "const value = input as A | B",
+            "const value = input satisfies A | B",
+        ] {
+            assert_format("sample.ts", source, source, &config);
+        }
+    }
+}
+
+#[test]
+fn keeps_object_union_boundaries_inline_in_auto_mode() {
+    let mut config = FormatConfig::default();
+    let source =
+        "type PackingListEntryCreateBody = { customName: string; } | { inventoryId: string; }";
+    let expected = "type PackingListEntryCreateBody = {\n  customName: string;\n} | {\n  inventoryId: string;\n}";
+    for width in [1, 120, 1_000] {
+        config.line_width = width;
+        assert_format("sample.ts", source, expected, &config);
+        assert_format("sample.ts", expected, expected, &config);
+    }
+    assert_format(
+        "sample.ts",
+        "interface Request { body: { decision: 'publish'; makePrimary: boolean; } | { decision: 'reject'; rejectionReason: string; } }",
+        "interface Request {\n  body: {\n    decision: 'publish';\n    makePrimary: boolean;\n  } | {\n    decision: 'reject';\n    rejectionReason: string;\n  };\n}",
+        &config,
+    );
+    assert_format(
+        "sample.ts",
+        "type U =\n  | {\n    first: {\n      value: string;\n    };\n  }\n  | {\n    second: number;\n  }",
+        "type U = {\n  first: {\n    value: string;\n  };\n} | {\n  second: number;\n}",
+        &config,
+    );
+    let flat = "type U = ({ a: string }) | ({ b: number })";
+    let mut config = isolated(UnionLayoutMode::Auto);
+    config.line_width = 1;
+    assert_format("sample.ts", flat, flat, &config);
+    assert_format(
+        "sample.ts",
+        "namespace N { type U = { a: A } | { b: B }; }",
+        "namespace N { type U = { a: A } | { b: B }; }",
+        &config,
+    );
+    config.rules.union_layout = UnionLayoutMode::Always;
+    assert_format(
+        "sample.ts",
+        "type U = { a: A } | { b: B }",
+        "type U =\n  | { a: A }\n  | { b: B }",
+        &config,
+    );
+    config.rules.union_layout = UnionLayoutMode::Off;
+    let source = "type U =\n  | { a: A }\n  | { b: B }";
+    assert_format("sample.ts", source, source, &config);
+}
+
+#[test]
+fn object_chain_rebase_respects_comment_retained_boundaries() {
+    let mut config = FormatConfig::default();
+    config.rules.comment_spacing = false;
+    for (source, expected) in [
+        (
+            "type U =\n  // first variant\n  | {\n    a: A;\n  }\n  | {\n    b: B;\n  }",
+            "type U =\n  // first variant\n  | {\n    a: A;\n  } | {\n    b: B;\n  }",
+        ),
+        (
+            "type U =\n  | {\n    a: A;\n  }\n  // second variant\n  | {\n    b: B;\n  }",
+            "type U = {\n  a: A;\n}\n  // second variant\n  | {\n    b: B;\n  }",
+        ),
+    ] {
+        assert_format("sample.ts", source, expected, &config);
+    }
+}
+
+#[test]
+fn object_chain_rebase_is_independent_from_type_body_expansion() {
+    let source = "type U =\n  | {\n    a: A;\n  }\n  | {\n    b: B;\n  }";
+    let expected = "type U = {\n  a: A;\n} | {\n  b: B;\n}";
+    for rule in [
+        TypeLiteralLayoutRule::Threshold(1),
+        TypeLiteralLayoutRule::Threshold(u32::MAX),
+        TypeLiteralLayoutRule::Mode(worsier_formatter::TypeLiteralLayoutMode::Off),
+    ] {
+        let mut config = isolated(UnionLayoutMode::Auto);
+        config.rules.type_literal_layout = rule;
+        assert_format("sample.ts", source, expected, &config);
+    }
+    let config = isolated(UnionLayoutMode::Auto);
+    assert_format(
+        "sample.ts",
+        "type U =\n  | {\n    nested: {\n      value: A;\n    };\n  }\n  | {\n    b: B;\n  }",
+        "type U = {\n  nested: {\n    value: A;\n  };\n} | {\n  b: B;\n}",
+        &config,
+    );
+    assert_format(
+        "sample.ts",
+        "type U =\n  | {\n    text: `first\n    keep text\n  last`;\n    /* first\n     * keep comment\n     */\n    a: A;\n  }\n  | {\n    b: B;\n  }",
+        "type U = {\n  text: `first\n    keep text\n  last`;\n  /* first\n     * keep comment\n     */\n  a: A;\n} | {\n  b: B;\n}",
+        &config,
+    );
+    assert_format(
+        "sample.ts",
+        "type U =\n  | {\n    nested:\n      | {\n        a: A;\n      }\n      | {\n        b: B;\n      };\n  }\n  | {\n    c: C;\n  }",
+        "type U = {\n  nested: {\n    a: A;\n  } | {\n    b: B;\n  };\n} | {\n  c: C;\n}",
+        &config,
+    );
+    assert_format(
+        "sample.ts",
+        "type U =\n  | {\n    nested:\n      // first inner variant\n      | {\n        a: A;\n      }\n      | {\n        b: B;\n      };\n  }\n  | {\n    c: C;\n  }",
+        "type U = {\n  nested:\n    // first inner variant\n    | {\n      a: A;\n    } | {\n      b: B;\n    };\n} | {\n  c: C;\n}",
+        &config,
+    );
+    assert_format(
+        "component.vue",
+        "<template>keep</template>\n<script setup lang=\"ts\">\n    type U =\n      | {\n        a: A;\n      }\n      | {\n        b: B;\n      }\n</script>\n<style>keep</style>",
+        "<template>keep</template>\n<script setup lang=\"ts\">\n    type U = {\n      a: A;\n    } | {\n      b: B;\n    }\n</script>\n<style>keep</style>",
+        &config,
+    );
+}
+
+#[test]
+fn formats_named_declarations_inside_functions_and_namespaces() {
+    let mut config = isolated(UnionLayoutMode::Always);
+    for (source, expected) in [
+        (
+            "function f(value: A | B) { type U = A | B; }",
+            "function f(value: A | B) {\n  type U =\n    | A\n    | B;\n}",
+        ),
+        (
+            "declare namespace N { export type U = A | B; }",
+            "declare namespace N {\n  export type U =\n    | A\n    | B;\n}",
+        ),
+        (
+            "interface I { run(value: A | B): C | D; }",
+            "interface I { run(value:\n  | A\n  | B):\n  | C\n  | D; }",
+        ),
+    ] {
+        assert_format("sample.ts", source, expected, &config);
+    }
+    config.rules.union_layout = UnionLayoutMode::Auto;
+    assert_format(
+        "sample.ts",
+        "type U = { value: A } | null",
+        "type U = { value: A } | null",
         &config,
     );
 }
@@ -311,6 +471,36 @@ fn preserves_comment_connections_text_and_protected_gaps() {
 }
 
 #[test]
+fn preserves_object_union_comments_and_directive_targets() {
+    let mut config = isolated(UnionLayoutMode::Auto);
+    for source in [
+        "type U = /* first | object */ { a: A } | { b: B }",
+        "type U = { a: A } /* previous */ | /* next */ { b: B }",
+        "type U = { a: A } // previous\n  | { b: B }",
+        "type U = { a: A }\n\n\n  // next\n\n\n  | { b: B }",
+    ] {
+        assert_format("sample.ts", source, source, &config);
+    }
+    for comment_spacing in [false, true] {
+        config.rules.comment_spacing = comment_spacing;
+        for directive in ["@ts-ignore", "@ts-expect-error"] {
+            for source in [
+                format!("// {directive}\ntype U =\n  | {{ a: A }}\n  | {{ b: B }}"),
+                format!("type U = {{ a: A }} |\n// {directive}\n  {{ b: B }}"),
+                format!("/* {directive} */ type U = {{ a: A }} | {{ b: B }}"),
+            ] {
+                let expected = if comment_spacing {
+                    source.replace("|\n//", "|\n\n//")
+                } else {
+                    source.clone()
+                };
+                assert_format("sample.ts", &source, &expected, &config);
+            }
+        }
+    }
+}
+
+#[test]
 fn preserves_typescript_directive_target_lines_with_comment_spacing_on_and_off() {
     for enabled in [false, true] {
         let mut config = isolated(UnionLayoutMode::Always);
@@ -318,6 +508,7 @@ fn preserves_typescript_directive_target_lines_with_comment_spacing_on_and_off()
         for directive in ["@ts-ignore", "@ts-expect-error"] {
             for source in [
                 format!("// {directive}\ntype U = A | B"),
+                format!("// {directive}\ntype U =\n  | A\n  | B"),
                 format!("/* {directive} */\ntype U = A | B"),
                 format!("type U = A |\n// {directive}\n B | C"),
                 format!("/* {directive} */ type U = A | B\nuse()"),
@@ -337,13 +528,24 @@ fn preserves_typescript_directive_target_lines_with_comment_spacing_on_and_off()
 fn preserves_bom_eof_and_non_script_vue_content() {
     let mut config = isolated(UnionLayoutMode::Auto);
     config.line_width = 20;
-    for final_newline in ["", "\n"] {
-        let source = format!(
-            "\u{feff}<template> intact </template>\n<script setup lang=\"ts\">\n    type U = A | B | C\n</script>\n<style> untouched </style>{final_newline}"
-        );
-        let expected = format!(
-            "\u{feff}<template> intact </template>\n<script setup lang=\"ts\">\n    type U =\n      | A\n      | B\n      | C\n</script>\n<style> untouched </style>{final_newline}"
-        );
-        assert_format("component.vue", &source, &expected, &config);
+    for (script, formatted_script) in [
+        (
+            "    type U = A | B | C",
+            "    type U =\n      | A\n      | B\n      | C",
+        ),
+        (
+            "    type U =\n      | { a: A }\n      | { b: B }\n    use<A | B>()",
+            "    type U = { a: A } | { b: B }\n    use<A | B>()",
+        ),
+    ] {
+        for final_newline in ["", "\n"] {
+            let source = format!(
+                "\u{feff}<template> intact </template>\n<script setup lang=\"ts\">\n{script}\n</script>\n<style> untouched </style>{final_newline}"
+            );
+            let expected = format!(
+                "\u{feff}<template> intact </template>\n<script setup lang=\"ts\">\n{formatted_script}\n</script>\n<style> untouched </style>{final_newline}"
+            );
+            assert_format("component.vue", &source, &expected, &config);
+        }
     }
 }
