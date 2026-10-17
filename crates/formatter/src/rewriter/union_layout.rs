@@ -1,7 +1,12 @@
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use oxc_ast::ast::{CommentPosition, TSUnionType};
-use oxc_ast_visit::{Visit, walk::walk_ts_union_type};
+use oxc_ast::ast::{
+    CommentPosition, TSInterfaceDeclaration, TSType, TSTypeAliasDeclaration, TSUnionType,
+};
+use oxc_ast_visit::{
+    Visit,
+    walk::{walk_ts_interface_declaration, walk_ts_type_alias_declaration, walk_ts_union_type},
+};
 use oxc_parser::Kind;
 use oxc_span::{GetSpan, SourceType, Span};
 
@@ -20,6 +25,7 @@ pub(super) struct UnionLayout {
     pub variants: Vec<Span>,
     pub layout_parent: Option<ExpandedLayout>,
     pub parent_item: Option<ParentItem>,
+    object_variants: bool,
 }
 
 impl UnionLayout {
@@ -61,6 +67,10 @@ impl UnionLayout {
             variants,
             layout_parent,
             parent_item,
+            object_variants: union
+                .types
+                .iter()
+                .all(|variant| matches!(variant, TSType::TSTypeLiteral(_))),
         }
     }
 
@@ -76,13 +86,26 @@ impl UnionLayout {
 struct SyntaxCollector<'s> {
     tokens: &'s [Token],
     unions: Vec<UnionLayout>,
+    declaration_depth: usize,
 }
 
 impl<'a> Visit<'a> for SyntaxCollector<'_> {
+    fn visit_ts_type_alias_declaration(&mut self, declaration: &TSTypeAliasDeclaration<'a>) {
+        self.declaration_depth += 1;
+        walk_ts_type_alias_declaration(self, declaration);
+        self.declaration_depth -= 1;
+    }
+
+    fn visit_ts_interface_declaration(&mut self, declaration: &TSInterfaceDeclaration<'a>) {
+        self.declaration_depth += 1;
+        walk_ts_interface_declaration(self, declaration);
+        self.declaration_depth -= 1;
+    }
+
     fn visit_ts_union_type(&mut self, union: &TSUnionType<'a>) {
         // Children come first so their final multiline shape is known to their parent.
         walk_ts_union_type(self, union);
-        if union.types.len() >= 2 {
+        if self.declaration_depth > 0 && union.types.len() >= 2 {
             self.unions
                 .push(UnionLayout::collect(self.tokens, union, None, None));
         }
@@ -93,6 +116,7 @@ fn syntax(parsed: &oxc_parser::ParserReturn<'_>) -> Vec<UnionLayout> {
     let mut collector = SyntaxCollector {
         tokens: &parsed.tokens,
         unions: Vec::new(),
+        declaration_depth: 0,
     };
     collector.visit_program(&parsed.program);
     collector.unions
@@ -117,7 +141,7 @@ fn protected_lines(
     Ok(protected)
 }
 
-fn protected_token_starts(
+fn protected_token_boundaries(
     source: &str,
     parsed: &oxc_parser::ParserReturn<'_>,
     lines: &LineBreakIndex,
@@ -126,17 +150,20 @@ fn protected_token_starts(
         .into_iter()
         .collect::<Vec<_>>();
     protected.sort_unstable();
-    let mut starts = Vec::new();
+    let mut boundaries = Vec::new();
     for line in protected {
         let first = parsed.tokens.partition_point(|token| token.start() < line);
         for token in &parsed.tokens[first..] {
             if lines.line_start(token.start()) != line {
                 break;
             }
-            starts.push(token.start());
+            boundaries.push(token.start());
+            // A union prefix starts at the previous token's end. Protect that
+            // boundary too, so a union cannot move onto a directive's target line.
+            boundaries.push(token.end());
         }
     }
-    Ok(starts)
+    Ok(boundaries)
 }
 
 fn is_protected(union: &UnionLayout, protected: &[u32]) -> bool {
@@ -152,9 +179,10 @@ fn flat_edits(
     source: &str,
     parsed: &oxc_parser::ParserReturn<'_>,
     unions: &[UnionLayout],
+    mode: UnionLayoutMode,
 ) -> Result<Vec<Edit>, FormatError> {
     let lines = LineBreakIndex::new(source);
-    let protected = protected_token_starts(source, parsed, &lines)?;
+    let protected = protected_token_boundaries(source, parsed, &lines)?;
     let mut edits = Vec::new();
     let mut breaks = source
         .char_indices()
@@ -162,7 +190,8 @@ fn flat_edits(
         .map(|(index, _)| u32::try_from(index).unwrap())
         .collect::<BTreeSet<_>>();
     for union in unions {
-        if is_protected(union, &protected)
+        if (mode == UnionLayoutMode::Auto && union.object_variants)
+            || is_protected(union, &protected)
             || union
                 .boundaries()
                 .any(|span| !comments_in_span(&parsed.program.comments, span).is_empty())
@@ -178,20 +207,7 @@ fn flat_edits(
         }
         for (index, boundary) in union.boundaries().enumerate() {
             let original = source_slice(source, boundary)?;
-            let replacement = if index > 0 {
-                " | "
-            } else if !contains_line_break(original) && !original.contains('|') {
-                original
-            } else {
-                let previous = source
-                    .get(..boundary.start as usize)
-                    .and_then(|prefix| prefix.chars().next_back());
-                if matches!(previous, Some('(' | '[' | '<')) {
-                    ""
-                } else {
-                    " "
-                }
-            };
+            let replacement = inline_boundary(source, boundary, index)?;
             if original != replacement {
                 let removed = breaks
                     .range(boundary.start..boundary.end)
@@ -212,6 +228,165 @@ fn flat_edits(
     Ok(edits)
 }
 
+fn inline_boundary(source: &str, boundary: Span, index: usize) -> Result<&str, FormatError> {
+    let original = source_slice(source, boundary)?;
+    if index > 0 {
+        return Ok(" | ");
+    }
+    if !contains_line_break(original) && !original.contains('|') {
+        return Ok(original);
+    }
+    let previous = source
+        .get(..boundary.start as usize)
+        .and_then(|prefix| prefix.chars().next_back());
+    Ok(if matches!(previous, Some('(' | '[' | '<')) {
+        ""
+    } else {
+        " "
+    })
+}
+
+fn rewrite_object_chains(
+    source: &str,
+    parsed: &oxc_parser::ParserReturn<'_>,
+) -> Result<Option<String>, FormatError> {
+    let lines = LineBreakIndex::new(source);
+    let protected = protected_token_boundaries(source, parsed, &lines)?;
+    let comments = &parsed.program.comments;
+    let mut edits = Vec::new();
+    let mut indents = BTreeMap::new();
+    // Outer variants move first; inner chains then compose their relative shift
+    // with that move instead of producing overlapping indentation edits.
+    for union in syntax(parsed).into_iter().rev() {
+        if !union.object_variants || is_protected(&union, &protected) {
+            continue;
+        }
+        for (index, boundary) in union.boundaries().enumerate() {
+            let commented = !comments_in_span(comments, boundary).is_empty();
+            let base_at = if commented && lines.contains(boundary) {
+                union.variants[index].start
+            } else {
+                boundary.start
+            };
+            let base = effective_indent(source, &lines, &mut indents, base_at);
+            rebase_variant(
+                source,
+                parsed,
+                &lines,
+                &mut indents,
+                union.variants[index],
+                &base,
+            );
+            if !commented {
+                let replacement = inline_boundary(source, boundary, index)?;
+                if source_slice(source, boundary)? != replacement {
+                    edits.push(Edit {
+                        start: boundary.start,
+                        end: boundary.end,
+                        replacement: replacement.to_owned(),
+                    });
+                }
+            }
+        }
+    }
+    edits.sort_by_key(|edit| edit.start);
+    let mut indent_edits = Vec::new();
+    for (start, replacement) in indents {
+        let original = source[start as usize..].trim_start_matches([' ', '\t']);
+        let end = u32::try_from(source.len() - original.len()).unwrap();
+        if source_slice(source, Span::new(start, end))? == replacement {
+            continue;
+        }
+        // A joined boundary already owns any indentation on the line it removes.
+        let next = edits.partition_point(|edit| edit.end < start);
+        if edits.get(next).is_some_and(|edit| edit.start <= end) {
+            continue;
+        }
+        indent_edits.push(Edit {
+            start,
+            end,
+            replacement,
+        });
+    }
+    edits.extend(indent_edits);
+    edits.sort_by_key(|edit| edit.start);
+    if edits.is_empty() {
+        Ok(None)
+    } else {
+        apply_edits(source, &edits).map(Some)
+    }
+}
+
+fn effective_indent(
+    source: &str,
+    lines: &LineBreakIndex,
+    indents: &mut BTreeMap<u32, String>,
+    offset: u32,
+) -> String {
+    let start = lines.line_start(offset);
+    indents
+        .entry(start)
+        .or_insert_with(|| {
+            source[start as usize..]
+                .chars()
+                .take_while(|character| matches!(character, ' ' | '\t'))
+                .collect()
+        })
+        .clone()
+}
+
+fn rebase_variant(
+    source: &str,
+    parsed: &oxc_parser::ParserReturn<'_>,
+    lines: &LineBreakIndex,
+    indents: &mut BTreeMap<u32, String>,
+    variant: Span,
+    base: &str,
+) {
+    let previous = effective_indent(source, lines, indents, variant.start);
+    if previous == base {
+        return;
+    }
+    let first = lines
+        .offsets
+        .partition_point(|offset| *offset < variant.start);
+    for &offset in &lines.offsets[first..] {
+        let start = offset + 1;
+        if start >= variant.end {
+            break;
+        }
+        if source
+            .as_bytes()
+            .get(start as usize)
+            .is_some_and(|byte| matches!(byte, b'\r' | b'\n'))
+        {
+            continue;
+        }
+        let token = parsed.tokens.partition_point(|token| token.end() <= start);
+        let comment = parsed
+            .program
+            .comments
+            .partition_point(|comment| comment.span.end <= start);
+        if parsed
+            .tokens
+            .get(token)
+            .is_some_and(|token| token.start() < start)
+            || parsed
+                .program
+                .comments
+                .get(comment)
+                .is_some_and(|comment| comment.span.start < start)
+        {
+            continue;
+        }
+        let indent = effective_indent(source, lines, indents, start);
+        if let Some(relative) = indent.strip_prefix(&previous) {
+            indents.insert(start, format!("{base}{relative}"));
+        }
+    }
+    indents.insert(lines.line_start(variant.start), base.to_owned());
+}
+
 fn expansions(
     source: &str,
     parsed: &oxc_parser::ParserReturn<'_>,
@@ -219,11 +394,14 @@ fn expansions(
     width: u32,
 ) -> Result<HashSet<u32>, FormatError> {
     let lines = LineBreakIndex::new(source);
-    let protected = protected_token_starts(source, parsed, &lines)?;
+    let protected = protected_token_boundaries(source, parsed, &lines)?;
     let mut widths = HashMap::new();
     let mut selected = BTreeSet::new();
     for union in syntax(parsed) {
         if is_protected(&union, &protected) {
+            continue;
+        }
+        if mode == UnionLayoutMode::Auto && union.object_variants {
             continue;
         }
         let start = lines.line_start(union.prefix.start);
@@ -253,7 +431,8 @@ fn expansions(
 }
 
 // A layout transaction first removes collapsible union breaks, then measures the text
-// produced by the other rules. Selected unions participate in the ordinary layout cascade.
+// produced by the other rules. Object chains join before width-based unions are selected
+// to participate in the ordinary layout cascade.
 // If that cascade unfolds a containing list, repeat the transaction using its final position;
 // this lets auto collapse a union that fits after the parent moved to its own line.
 pub(super) fn rewrite(
@@ -331,7 +510,7 @@ fn transaction(
     config: &ResolvedConfig,
     type_semicolons: TypeMemberSemicolonConfig,
 ) -> Result<String, FormatError> {
-    let edits = flat_edits(source, parsed, unions)?;
+    let edits = flat_edits(source, parsed, unions, config.union_layout())?;
     let flat = if edits.is_empty() {
         None
     } else {
@@ -364,25 +543,39 @@ fn transaction(
     } else {
         flat_parse
     };
+    let joined = if config.union_layout() == UnionLayoutMode::Auto {
+        rewrite_object_chains(base_source, base_parse)?
+    } else {
+        None
+    };
+    let joined_source = joined.as_deref().unwrap_or(base_source);
+    let joined_allocator = Allocator::default();
+    let joined_parsed;
+    let joined_parse = if joined.is_some() {
+        joined_parsed = parse_tokens(&joined_allocator, joined_source, source_type)?;
+        &joined_parsed
+    } else {
+        base_parse
+    };
     let selected = expansions(
-        base_source,
-        base_parse,
+        joined_source,
+        joined_parse,
         config.union_layout(),
         config.line_width(),
     )?;
     if selected.is_empty() {
-        return Ok(base_source.to_owned());
+        return Ok(joined_source.to_owned());
     }
     let output = rewrite_after_quotes(
-        base_source,
-        base_parse,
+        joined_source,
+        joined_parse,
         source_type,
         newline_hint,
         config,
         type_semicolons,
         Some(&selected),
     )?;
-    Ok(output.unwrap_or_else(|| base_source.to_owned()))
+    Ok(output.unwrap_or_else(|| joined_source.to_owned()))
 }
 
 #[allow(
@@ -503,7 +696,40 @@ mod tests {
     use std::fmt::Write as _;
 
     use super::*;
-    use crate::rewriter::LINE_START_INDEX_QUERIES;
+    use crate::rewriter::{
+        LEADING_INDENT_PREFIX_BYTES, LINE_START_INDEX_QUERIES, RAW_INDENT_PREFIX_BYTES,
+    };
+
+    #[test]
+    fn object_chain_indentation_work_is_bounded() {
+        for count in [8, 256] {
+            let source = format!(
+                "type U =\n [{}]",
+                vec!["{ a: A } | { b: B }"; count].join(", ")
+            );
+            let config = crate::resolve_config(
+                serde_json::from_value(serde_json::json!({
+                    "lineWidth": source.len() * 2,
+                    "rules": { "typeLiteralLayout": "off" }
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            LEADING_INDENT_PREFIX_BYTES.set(0);
+            RAW_INDENT_PREFIX_BYTES.set(0);
+            assert!(
+                crate::format_text(std::path::Path::new("sample.ts"), &source, &config)
+                    .unwrap()
+                    .is_none()
+            );
+            let scanned = LEADING_INDENT_PREFIX_BYTES.get() + RAW_INDENT_PREFIX_BYTES.get();
+            assert!(
+                scanned <= source.len() * 4,
+                "read {scanned} prefix bytes for {} source bytes",
+                source.len()
+            );
+        }
+    }
 
     #[test]
     fn directive_protection_queries_stay_linear_for_nested_unions() {
@@ -523,7 +749,11 @@ mod tests {
         let query_budget = parsed.tokens.len() * 2;
 
         LINE_START_INDEX_QUERIES.set(0);
-        assert!(flat_edits(&source, &parsed, &unions).unwrap().is_empty());
+        assert!(
+            flat_edits(&source, &parsed, &unions, UnionLayoutMode::Auto)
+                .unwrap()
+                .is_empty()
+        );
         let queries = LINE_START_INDEX_QUERIES.get();
         assert!(
             queries <= query_budget,

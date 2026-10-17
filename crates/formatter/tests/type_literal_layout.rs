@@ -129,7 +129,7 @@ fn nests_type_bodies_without_forcing_a_below_threshold_parent() {
 }
 
 #[test]
-fn supports_annotations_parameters_returns_generics_and_definition_files() {
+fn supports_declaration_types_and_preserves_annotations_in_definition_files() {
     for file in [
         "sample.ts",
         "sample.tsx",
@@ -140,11 +140,11 @@ fn supports_annotations_parameters_returns_generics_and_definition_files() {
         for (source, expected) in [
             (
                 "declare const value: { id: string };",
-                "declare const value: {\n  id: string\n};",
+                "declare const value: { id: string };",
             ),
             (
                 "declare function read(value: { id: string }): { name: string };",
-                "declare function read(value: {\n  id: string\n}): {\n  name: string\n};",
+                "declare function read(value: { id: string }): { name: string };",
             ),
             (
                 "type Box = Array<{ id: string }>;",
@@ -161,6 +161,36 @@ fn supports_annotations_parameters_returns_generics_and_definition_files() {
         ] {
             assert_format(file, source, expected, &isolated(0));
         }
+    }
+}
+
+#[test]
+fn preserves_object_type_layout_outside_named_declarations() {
+    for source in [
+        "let value: { id: string; nested: { name: string } }",
+        "let value: {\n    id: string; other: number;\n  }",
+        "declare function f(value: { id: string }): { name: string };",
+        "const f = (value: { id: string }): { name: string } => value",
+        "use<{ id: string }>()",
+        "new Box<{ id: string }>()",
+        "class C { value: { id: string }; run(value: { id: string }): { name: string } {} }",
+        "const value = input as { id: string }",
+        "const value = input satisfies { id: string }",
+        "export default defineEventHandler(async (event: ApiRequestEvent<{ body: InferInput<typeof passkeyNameSchema>; }>): Promise<PasskeyRegistrationOptions> => {})",
+    ] {
+        assert_format("sample.ts", source, source, &isolated(0));
+    }
+    for (source, expected) in [
+        (
+            "type Handler = (value: { id: string }) => { name: string };",
+            "type Handler = (value: {\n  id: string\n}) => {\n  name: string\n};",
+        ),
+        (
+            "declare namespace N { export type Shape = { id: string }; }",
+            "declare namespace N {\n  export type Shape = {\n    id: string\n  };\n}",
+        ),
+    ] {
+        assert_format("sample.ts", source, expected, &isolated(0));
     }
 }
 
@@ -315,13 +345,13 @@ fn cascades_into_object_properties_calls_and_inline_statement_lists() {
     assert_format(
         "sample.ts",
         "before()\nuse<{ id: string }>()\nafter()",
-        "before()\n\nuse<{\n  id: string;\n}>()\n\nafter()",
+        "before()\nuse<{ id: string }>()\nafter()",
         &config,
     );
     assert_format(
         "sample.ts",
         "const options = { first: 1, nested: value as { id: string }, last: 2 }",
-        "const options = {\n  first: 1,\n\n  nested: value as {\n    id: string;\n  },\n\n  last: 2\n}",
+        "const options = {\n  first: 1,\n  nested: value as { id: string },\n  last: 2\n}",
         &config,
     );
     assert_format(
@@ -337,7 +367,7 @@ fn resolves_type_indents_from_final_parent_positions() {
     assert_format(
         "sample.ts",
         "function run() {\n  const options = { first: value as { id: string }, second: 2 }\n}",
-        "function run() {\n  const options = {\n    first: value as {\n      id: string;\n    },\n\n    second: 2\n  }\n}",
+        "function run() {\n  const options = {\n    first: value as { id: string },\n    second: 2\n  }\n}",
         &FormatConfig::default(),
     );
     assert_format(
@@ -349,7 +379,7 @@ fn resolves_type_indents_from_final_parent_positions() {
     assert_format(
         "sample.ts",
         "declare function run(\n    value: { id: string }\n): void;",
-        "declare function run(\n    value: {\n      id: string\n    }\n): void;",
+        "declare function run(\n    value: { id: string }\n): void;",
         &isolated(0),
     );
 }

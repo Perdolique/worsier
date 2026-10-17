@@ -205,7 +205,7 @@ fn fields_use_final_nested_layout_in_the_first_pass() {
     assert_format(
         "sample.ts",
         "class C { before=0; value: { a: string; b: number; }; after=3; }",
-        "class C {\n  before=0;\n\n  value: {\n    a: string;\n    b: number;\n  };\n\n  after=3;\n}",
+        "class C {\n  before=0;\n  value: { a: string; b: number; };\n  after=3;\n}",
         &config,
     );
 }
