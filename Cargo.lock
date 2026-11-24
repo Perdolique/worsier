@@ -1649,7 +1649,7 @@ dependencies = [
 
 [[package]]
 name = "worsier-benchmark"
-version = "3.10.1"
+version = "3.10.2"
 dependencies = [
  "criterion",
  "worsier-formatter",
@@ -1657,7 +1657,7 @@ dependencies = [
 
 [[package]]
 name = "worsier-cli"
-version = "3.10.1"
+version = "3.10.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -1676,7 +1676,7 @@ dependencies = [
 
 [[package]]
 name = "worsier-formatter"
-version = "3.10.1"
+version = "3.10.2"
 dependencies = [
  "memchr",
  "oxc_allocator",
@@ -1692,7 +1692,7 @@ dependencies = [
 
 [[package]]
 name = "worsier-napi"
-version = "3.10.1"
+version = "3.10.2"
 dependencies = [
  "napi",
  "napi-build",
