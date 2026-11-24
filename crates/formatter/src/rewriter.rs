@@ -546,7 +546,7 @@ fn directives_match_after_quote_rewrite(
         return Ok(false);
     }
     for (input, output) in input_directives.iter().zip(&output_directives) {
-        if input.value != output.value || input.lone_surrogates != output.lone_surrogates {
+        if input.value != output.value {
             return Ok(false);
         }
         let expected = quote_style::canonical_span(input_source, input.span, quote_style)?;
@@ -572,23 +572,21 @@ fn directives_match_after_quote_rewrite(
     Ok(masked_input.program.content_eq(&masked_output.program))
 }
 
-struct DirectiveInfo {
+struct DirectiveInfo<'a> {
     span: Span,
-    value: String,
-    lone_surrogates: bool,
+    value: &'a [u8],
 }
 
-fn collect_directives(program: &Program<'_>) -> Vec<DirectiveInfo> {
-    struct Collector {
-        directives: Vec<DirectiveInfo>,
+fn collect_directives<'a>(program: &Program<'a>) -> Vec<DirectiveInfo<'a>> {
+    struct Collector<'a> {
+        directives: Vec<DirectiveInfo<'a>>,
     }
 
-    impl<'a> Visit<'a> for Collector {
+    impl<'a> Visit<'a> for Collector<'a> {
         fn visit_directive(&mut self, directive: &Directive<'a>) {
             self.directives.push(DirectiveInfo {
                 span: directive.expression.span,
-                value: directive.expression.value.to_string(),
-                lone_surrogates: directive.expression.lone_surrogates,
+                value: directive.expression.value.as_bytes(),
             });
             walk_directive(self, directive);
         }
@@ -601,7 +599,7 @@ fn collect_directives(program: &Program<'_>) -> Vec<DirectiveInfo> {
     collector.directives
 }
 
-fn mask_directives(source: &str, directives: &[DirectiveInfo]) -> Result<String, FormatError> {
+fn mask_directives(source: &str, directives: &[DirectiveInfo<'_>]) -> Result<String, FormatError> {
     let edits = directives
         .iter()
         .map(|directive| Edit {
@@ -5368,6 +5366,7 @@ mod tests {
     use std::path::Path;
 
     use oxc_allocator::Allocator;
+    use oxc_span::ContentEq;
 
     use super::{
         CORRUPT_REWRITE_FOR_TEST, DEFERRED_IMPORT_BOUNDARY_LOOKUPS, IMPORT_MULTILINE_SCANS,
@@ -7801,6 +7800,45 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(error.code(), "VERIFICATION_ERROR");
+    }
+
+    #[test]
+    fn verification_distinguishes_lone_surrogates_from_literal_escape_text() {
+        let file_name = Path::new("sample.js");
+        let source_type = super::SourceType::mjs();
+        let input = r#""use 'client' \uD800"; const one = 1;"#;
+        let canonical = r"'use \'client\' \uD800'; const one = 1;";
+        let literal_escape = r"'use \'client\' \\uD800'; const one = 1;";
+        let allocator = Allocator::default();
+        let parsed = parse(&allocator, input, source_type).unwrap();
+        let canonical_ast = parse(&allocator, canonical, source_type).unwrap();
+        let literal_escape_ast = parse(&allocator, literal_escape, source_type).unwrap();
+        assert!(parsed.program.content_ne(&canonical_ast.program));
+
+        let input_directives = super::collect_directives(&parsed.program);
+        let literal_directives = super::collect_directives(&literal_escape_ast.program);
+        assert_eq!(input_directives[0].value, b"use 'client' \xed\xa0\x80");
+        assert_eq!(literal_directives[0].value, b"use 'client' \\uD800");
+
+        verify(
+            file_name,
+            source_type,
+            input,
+            &parsed.program,
+            canonical,
+            QuoteStyle::Single,
+        )
+        .unwrap();
+        let error = verify(
+            file_name,
+            source_type,
+            input,
+            &parsed.program,
+            literal_escape,
+            QuoteStyle::Single,
+        )
+        .unwrap_err();
+        assert!(matches!(error, crate::FormatError::Verification { .. }));
     }
 
     #[test]

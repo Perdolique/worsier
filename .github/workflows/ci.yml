@@ -47,4 +47,9 @@ jobs:
       - run: pnpm --filter worsier test:packed
       - run: pnpm --filter worsier-benchmark test
       - run: pnpm --filter worsier-benchmark smoke
+      - name: Fetch the benchmark source commit
+        run: |
+          sha=$(node -p "require('./benchmark/results/latest.json').source.worsierSha")
+          [[ "${sha}" =~ ^[0-9a-f]{40}$ ]]
+          git cat-file -e "${sha}^{commit}" || git fetch --no-tags --depth=1 origin "${sha}"
       - run: pnpm --filter worsier-benchmark benchmark:verify

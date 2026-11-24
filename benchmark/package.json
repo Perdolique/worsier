@@ -10,8 +10,8 @@
     "test": "node --test test/*.test.mts"
   },
   "devDependencies": {
-    "oxfmt": "0.71.0",
-    "prettier": "3.9.9",
+    "oxfmt": "0.80.0",
+    "prettier": "3.10.1",
     "worsier": "workspace:*"
   }
 }

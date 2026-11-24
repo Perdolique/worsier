@@ -535,8 +535,7 @@ fn apply_deferred_comments(
             .previous_siblings()
             .next()
             .and_then(|node| node.as_whitespace())
-            .map(|whitespace| whitespace.value())
-            .unwrap_or_default();
+            .map_or_default(|whitespace| whitespace.value());
         let prefix = deferred.comments.join(&format!("{newline}{indent}"));
         let name = deferred
             .target

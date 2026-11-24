@@ -102,7 +102,7 @@ assert.deepEqual(installedSchema.$defs.UnionLayoutMode.enum, ['auto', 'always', 
 assert.match(installedTypes, /unionLayout\?: 'auto' \| 'always' \| 'off'/)
 
 const executable = join(project, 'node_modules/worsier/bin/worsier.js')
-const version = run(process.execPath, [executable, '--version'], project)
+const version = installedCliVersion(project)
 assert.equal(version.stdout.trim(), `worsier ${rootVersion}`)
 run(process.execPath, [executable, '--init'], project)
 const initializedConfig = await readFile(join(project, 'worsier.jsonc'), 'utf8')
@@ -460,6 +460,16 @@ function assertTarballIncludesPublicConfig(tarball: string): void {
   const listing = run('tar', ['-tzf', tarball])
   assert.ok(tarListingContains(listing.stdout, 'package/configuration_schema.json'))
   assert.ok(tarListingContains(listing.stdout, 'package/dist/types.d.ts'))
+}
+
+function installedCliVersion(project: string): SpawnSyncReturns<string> {
+  if (process.platform === 'win32') {
+    const shell = process.env.ComSpec ?? 'cmd.exe'
+    return run(shell, ['/d', '/s', '/c', 'node_modules\\.bin\\worsier.cmd', '--version'], project)
+  }
+
+  const shim = join(project, 'node_modules/.bin/worsier')
+  return run(shim, ['--version'], project)
 }
 
 function run(command: string, args: string[], cwd = root): SpawnSyncReturns<string> {

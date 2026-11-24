@@ -15,7 +15,6 @@ import {
   hashFile,
   normalizeLineEndings,
   parseHyperfineJson,
-  parsePeakRss,
   replaceGeneratedBlock,
   shellQuote
 } from './lib.mts'
@@ -68,20 +67,20 @@ const runnerPath = join(benchmarkDirectory, 'src/cli.mts')
 const configDirectory = join(benchmarkDirectory, 'config')
 const ignorePath = join(configDirectory, 'empty-ignore')
 const sourceExtensions = new Set(['.js', '.jsx', '.ts', '.tsx'])
-const benchmarkPackage = JSON.parse(readFileSync(join(benchmarkDirectory, 'package.json'), 'utf8')) as BenchmarkPackage
+const benchmarkPackage = readFileSync(join(benchmarkDirectory, 'package.json'), 'utf8')
 
-export const pinnedToolVersions = Object.freeze({
-  prettier: exactDependencyVersion('prettier'),
-  oxfmt: exactDependencyVersion('oxfmt')
-})
+const currentToolVersions = competitorVersions(benchmarkPackage)
+export const pinnedToolVersions = Object.freeze(currentToolVersions)
 
 const criterionMeasurements = ['single_parse', 'format_no_verify_default', 'format_no_verify_semicolons_off', 'format_no_verify_trailing_commas_off', 'parse_and_verify'] as const
 const criterionInputs = new Map<string, number>([['small', 512], ['50kb', 50 * 1024], ['1mb', 1024 * 1024]])
 
+const measuredRuns = 10
+
 export const measurementSettings = Object.freeze({
   warmups: 3,
-  runs: 10,
-  rssRuns: 5
+  runs: measuredRuns,
+  rssRuns: measuredRuns
 }) satisfies MeasurementSettings
 
 export const fixturePins = {
@@ -153,6 +152,13 @@ export async function runBenchmark({ publish = false }: RunBenchmarkOptions = {}
     requireCleanWorktree()
   }
 
+  const tools = collectToolVersions()
+  assertCompetitorVersions(tools, pinnedToolVersions)
+  const environment = collectEnvironment()
+  if (Number.parseInt(environment.hyperfine, 10) !== 2) {
+    throw new Error(`The benchmark requires Hyperfine 2.x, found ${environment.hyperfine}`)
+  }
+
   await mkdir(workDirectory, { recursive: true })
   await prepareFixtures()
   const fixtures = await collectFixtureMetadata()
@@ -172,8 +178,8 @@ export async function runBenchmark({ publish = false }: RunBenchmarkOptions = {}
     schemaVersion: 2,
     generatedAt: new Date().toISOString(),
     source: { worsierSha: capture('git', ['rev-parse', 'HEAD']) },
-    environment: collectEnvironment(),
-    tools: collectToolVersions(),
+    environment,
+    tools,
     fixtures,
     settings,
     validation,
@@ -181,6 +187,7 @@ export async function runBenchmark({ publish = false }: RunBenchmarkOptions = {}
     microbenchmarks
   }
 
+  validateReport(report, pinnedToolVersions)
   const json = `${JSON.stringify(report, null, 2)}\n`
   const markdown = `${buildDetailedReport(report)}\n`
   if (publish) {
@@ -199,7 +206,17 @@ export async function runBenchmark({ publish = false }: RunBenchmarkOptions = {}
 export async function verifyPublishedResults(): Promise<void> {
   const jsonPath = join(resultDirectory, 'latest.json')
   const report = JSON.parse(await readFile(jsonPath, 'utf8')) as BenchmarkReport
-  validateReport(report)
+  const sha = report.source?.worsierSha
+  if (typeof sha !== 'string' || !/^[0-9a-f]{40}$/.test(sha)) {
+    throw new Error('Published benchmark report must record its full Worsier commit SHA')
+  }
+  const sourceType = capture('git', ['cat-file', '-t', sha])
+  if (sourceType !== 'commit') {
+    throw new Error(`Published benchmark source ${sha} is a Git ${sourceType}, expected a commit`)
+  }
+  const sourceManifest = capture('git', ['show', `${sha}:benchmark/package.json`])
+  const sourceVersions = competitorVersions(sourceManifest)
+  validateReport(report, sourceVersions)
   const expectedMarkdown = `${buildDetailedReport(report)}\n`
   const actualMarkdown = await readFile(join(resultDirectory, 'latest.md'), 'utf8')
   if (actualMarkdown !== expectedMarkdown) {
@@ -292,7 +309,8 @@ export function buildCommands(): BenchmarkCommands {
     stdin(tool, input, output) {
       const base = `${binaries[tool]} --config ${shellQuote(configs[tool])}`
       const ignore = tool === 'worsier' ? '' : ` --ignore-path ${shellQuote(ignorePath)}`
-      return `${base}${ignore} --stdin-filepath ${shellQuote(input)} < ${shellQuote(input)} > ${shellQuote(output)}`
+      const command = `${base}${ignore} --stdin-filepath ${shellQuote(input)}`
+      return output === undefined ? command : redirectStdin(command, input, output)
     },
     write(tool, directory) {
       const base = `${binaries[tool]} --config ${shellQuote(configs[tool])}`
@@ -307,6 +325,10 @@ export function buildCommands(): BenchmarkCommands {
       return `${base}${ignore}${nested} --check ${shellQuote(projectTarget(tool, directory))}`
     }
   }
+}
+
+function redirectStdin(command: string, input: string, output: string): string {
+  return `${command} < ${shellQuote(input)} > ${shellQuote(output)}`
 }
 
 async function validateTools(commands: BenchmarkCommands, fixtures: BenchmarkFixtures): Promise<BenchmarkValidation> {
@@ -377,12 +399,7 @@ function scenarioDefinitions(
       displayName: 'Outline project write',
       bytes: fixtures.outline.bytes,
       prepareCommand: `${shellQuote(process.execPath)} ${shellQuote(runnerPath)} restore-project`,
-      commands: Object.fromEntries(toolNames.map((tool) => [tool, commands.write(tool, project(tool))])) as ToolRecord<string>,
-      prepareRss: async (tool) => {
-        const destination = project(tool)
-        await rm(destination, { recursive: true, force: true })
-        await cp(join(fixtureWorkDirectory, 'outline'), destination, { recursive: true })
-      }
+      commands: Object.fromEntries(toolNames.map((tool) => [tool, commands.write(tool, project(tool))])) as ToolRecord<string>
     },
     {
       name: 'projectCheck',
@@ -401,13 +418,46 @@ function stdinScenario(
   commands: BenchmarkCommands
 ): ScenarioDefinition {
   const outputDirectory = join(workDirectory, 'timed-output', name)
+  const entries = toolNames.map((tool) => {
+    const command = commands.stdin(tool, input)
+    return [tool, command] as const
+  })
   return {
     name,
     displayName,
     bytes,
-    commands: Object.fromEntries(toolNames.map((tool) => [tool, commands.stdin(tool, input, join(outputDirectory, `${tool}.ts`))])) as ToolRecord<string>,
+    commands: Object.fromEntries(entries) as ToolRecord<string>,
+    input,
+    outputDirectory,
     before: () => mkdir(outputDirectory, { recursive: true })
   }
+}
+
+export function buildHyperfineArgs(
+  definition: ScenarioDefinition,
+  settings: MeasurementSettings,
+  hyperfinePath: string
+): string[] {
+  const warmups = String(settings.warmups)
+  const runs = String(settings.runs)
+  const args = [
+    '--shell=none', '--metrics', 'time_wall_clock,memory_peak_resident', '--warmup', warmups,
+    '--runs', runs, '--export-json', hyperfinePath
+  ]
+  if (definition.input !== undefined) {
+    args.push('--input', definition.input)
+  }
+  if (definition.prepareCommand) {
+    args.push('--prepare', definition.prepareCommand)
+  }
+  for (const tool of toolNames) {
+    if (definition.outputDirectory !== undefined) {
+      const output = join(definition.outputDirectory, `${tool}.ts`)
+      args.push('--output', output)
+    }
+    args.push('--command-name', tool, definition.commands[tool])
+  }
+  return args
 }
 
 async function measureScenario(
@@ -416,32 +466,33 @@ async function measureScenario(
 ): Promise<BenchmarkScenario> {
   await definition.before?.()
   const hyperfinePath = join(workDirectory, 'hyperfine', `${definition.name}.json`)
-  await mkdir(dirname(hyperfinePath), { recursive: true })
-  const args = ['--warmup', String(settings.warmups), '--runs', String(settings.runs), '--export-json', hyperfinePath]
-  if (definition.prepareCommand) {
-    args.push('--prepare', definition.prepareCommand)
-  }
-  for (const tool of toolNames) {
-    args.push('--command-name', tool, definition.commands[tool])
-  }
+  const hyperfineDirectory = dirname(hyperfinePath)
+  await mkdir(hyperfineDirectory, { recursive: true })
+  const args = buildHyperfineArgs(definition, settings, hyperfinePath)
   run('hyperfine', args, { label: `Hyperfine ${definition.name}`, inherit: true })
-  const hyperfine = parseHyperfineJson(await readFile(hyperfinePath, 'utf8'))
+  const rawResults = await readFile(hyperfinePath, 'utf8')
+  const hyperfine = parseHyperfineJson(rawResults)
   const results = {} as ToolRecord<BenchmarkResult>
 
   for (const tool of toolNames) {
-    const rssSamples = []
-    for (let index = 0; index < settings.rssRuns; index += 1) {
-      await definition.prepareRss?.(tool)
-      rssSamples.push(measurePeakRss(definition.commands[tool]))
+    const measurement = hyperfine.get(tool)
+    if (!measurement || measurement.timing.samples.length !== settings.runs) {
+      throw new Error(`Hyperfine did not record the expected samples for ${definition.name}/${tool}`)
     }
-    const timing = hyperfine[tool]
-    const rss = calculateStatistics(rssSamples)
+    const { timing, rss } = measurement
+    let command = definition.commands[tool]
+    if (definition.input !== undefined && definition.outputDirectory !== undefined) {
+      const output = join(definition.outputDirectory, `${tool}.ts`)
+      command = redirectStdin(command, definition.input, output)
+    }
+    const reportedCommand = displayCommand(command)
     const inputBytes = definition.bytesByTool?.[tool] ?? definition.bytes
     if (inputBytes === undefined) {
       throw new Error(`${definition.name}/${tool} does not define input bytes`)
     }
+    const throughputMibPerSecond = inputBytes === 0 ? null : inputBytes / timing.median / 1024 / 1024
     results[tool] = {
-      command: displayCommand(definition.commands[tool]),
+      command: reportedCommand,
       inputBytes,
       samplesSeconds: timing.samples,
       medianSeconds: timing.median,
@@ -449,7 +500,7 @@ async function measureScenario(
       maxSeconds: timing.max,
       meanSeconds: timing.mean,
       stddevSeconds: timing.stddev,
-      throughputMibPerSecond: inputBytes === 0 ? null : inputBytes / timing.median / 1024 / 1024,
+      throughputMibPerSecond,
       peakRssSamplesBytes: rss.samples,
       peakRssBytes: rss.median
     }
@@ -463,20 +514,15 @@ async function measureScenario(
   }
 }
 
-export function displayCommand(command: string): string {
+export function displayCommand(command: string, workspace = root, node = process.execPath): string {
+  const quotedNode = shellQuote(node)
+  const quotedWorkspace = shellQuote(workspace)
+  // Command paths are already shell-quoted. Match their escaped content, without the outer quotes.
+  const workspacePrefix = quotedWorkspace.slice(1, -1)
   return command
-    .replaceAll(process.execPath, '<node>')
-    .replaceAll(root, '<repo>')
+    .replaceAll(quotedNode, "'<node>'")
+    .replaceAll(workspacePrefix, '<repo>')
     .replaceAll('/tmp/worsier-benchmark-', '<tmp>/worsier-benchmark-')
-}
-
-function measurePeakRss(command: string): number {
-  const timeArgs = process.platform === 'darwin' ? ['-l', '/bin/sh', '-c', command] : ['-v', '/bin/sh', '-c', command]
-  const result = spawnSync('/usr/bin/time', timeArgs, { cwd: root, encoding: 'utf8', maxBuffer: 100 * 1024 * 1024 })
-  if (result.status !== 0) {
-    throw commandFailure('Peak RSS measurement', '/usr/bin/time', timeArgs, result)
-  }
-  return parsePeakRss(result.stderr)
 }
 
 async function runCriterionBenchmarks(): Promise<MicrobenchmarkResult[]> {
@@ -585,12 +631,14 @@ async function updateRootReadme(report: BenchmarkReport): Promise<void> {
   await writeFile(path, updated)
 }
 
-export function validateReport(report: BenchmarkReport): void {
+export function validateReport(report: BenchmarkReport, versions: typeof pinnedToolVersions): void {
   if (report.schemaVersion !== 2) {
     throw new Error(`Unsupported benchmark schema version: ${report.schemaVersion}`)
   }
-  if (report.tools.prettier.version !== pinnedToolVersions.prettier || report.tools.oxfmt.version !== pinnedToolVersions.oxfmt) {
-    throw new Error('Published benchmark tool versions do not match pinned dependencies')
+  assertCompetitorVersions(report.tools, versions)
+  const hyperfineMajor = Number.parseInt(report.environment.hyperfine, 10)
+  if (hyperfineMajor >= 2 && report.settings.runs !== report.settings.rssRuns) {
+    throw new Error('Hyperfine 2 reports must pair each wall time sample with a peak RSS sample')
   }
   if (report.fixtures?.parser?.lineEndings !== 'lf' && report.fixtures?.parser?.lineEndings !== 'crlf') {
     throw new Error('Published parser fixture does not record its line endings')
@@ -656,12 +704,26 @@ function assertDerivedValue(actual: number | null, expected: number, label: stri
   }
 }
 
-function exactDependencyVersion(name: string): string {
-  const version = benchmarkPackage.devDependencies?.[name]
-  if (typeof version !== 'string' || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
-    throw new Error(`benchmark/package.json must pin ${name} to one exact version`)
+function assertCompetitorVersions(tools: ToolRecord<ToolInfo>, versions: typeof pinnedToolVersions): void {
+  for (const tool of ['prettier', 'oxfmt'] as const) {
+    if (tools[tool].version !== versions[tool]) {
+      throw new Error(`Benchmark ${tool} version ${tools[tool].version} does not match its pin ${versions[tool]}`)
+    }
   }
-  return version
+}
+
+function competitorVersions(manifest: string): { prettier: string; oxfmt: string } {
+  const pkg = JSON.parse(manifest) as BenchmarkPackage
+  const exactVersion = (name: string): string => {
+    const version = pkg.devDependencies?.[name]
+    if (typeof version !== 'string' || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
+      throw new Error(`benchmark/package.json must pin ${name} to one exact version`)
+    }
+    return version
+  }
+  const prettier = exactVersion('prettier')
+  const oxfmt = exactVersion('oxfmt')
+  return { prettier, oxfmt }
 }
 
 function requireCleanWorktree(): void {
