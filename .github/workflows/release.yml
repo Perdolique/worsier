@@ -146,11 +146,11 @@ jobs:
       - uses: mlugg/setup-zig@v2
         if: matrix.musl
         with:
-          version: 0.16.0
+          version: 0.17.1
       - uses: taiki-e/install-action@v2
         if: matrix.musl
         with:
-          tool: cargo-zigbuild
+          tool: cargo-zigbuild@0.24.1
       - name: Build addon
         if: runner.os != 'Windows'
         working-directory: packages/npm
@@ -192,11 +192,13 @@ jobs:
         run: |
           cp artifacts/worsier.${{ matrix.platform }}.node npm/${{ matrix.platform }}/
           node_version=$(cat .node-version)
+          pnpm_spec=$(node -p "require('./package.json').packageManager")
           docker run --rm \
+            -e "PNPM_SPEC=${pnpm_spec}" \
             -v "$PWD:/work" \
             -w /work \
             "node:${node_version}-alpine" \
-            sh -c 'corepack enable && node packages/npm/scripts/test-packed-package.mts'
+            sh -c 'npm install --global "$PNPM_SPEC" && node packages/npm/scripts/test-packed-package.mts'
       - uses: actions/upload-artifact@v7
         with:
           name: binding-${{ matrix.platform }}
@@ -217,7 +219,7 @@ jobs:
           ref: ${{ needs.release-please.outputs.sha }}
           install-dependencies: true
       - run: rustup toolchain install
-      - run: npm install --global npm@12.1.0
+      - run: npm install --global npm@12.2.3
       - uses: actions/download-artifact@v8
         with:
           pattern: binding-*

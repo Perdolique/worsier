@@ -422,13 +422,13 @@ const output = await format(
 
 Repository scripts, npm package tests, and benchmark tooling use native ESM TypeScript (`.mts`) executed directly by Node.js without a loader or transpilation step. Run `vp run check:types` for strict no-emit type checking; the complete `vp run check` includes that check alongside the Rust, npm, native-package, and benchmark suites.
 
-Local development pins Node.js 24 LTS, Rust 1.98.1, and pnpm 12.6.0. Linux CI checks use Ubuntu 26.04; release binaries for Linux still build on Ubuntu 24.04 to preserve their glibc compatibility baseline.
+Local development pins Node.js 26 LTS, Rust 1.100.0, and pnpm 12.23.0. When updating the Rust toolchain, keep the workspace's `rust-version` on the same major and minor version. Linux CI checks use Ubuntu 26.04; release binaries for Linux still build on Ubuntu 24.04 to preserve their glibc compatibility baseline.
 
 On macOS, CLI tests compare ACL entries by UUID before and after file updates without resolving UUIDs to account names.
 
 ## Performance benchmarks
 
-Import and export indentation lookups share a line index across layout passes, so declarations on one physical line do not repeatedly scan the preceding source text.
+Import and export indentation lookups share a line index across layout passes. Punctuation passes reuse a parse when the source text stays the same. Union layout keeps one earlier revision of the source to detect cycles, so memory used for that check stays bounded as the number of passes grows.
 
 Benchmarks are manual snapshots, not release gates. The comparative suite measures Worsier, Prettier, and Oxfmt on the same small TypeScript input, TypeScript's `parser.ts`, and a pinned Outline source corpus. Run `vp run benchmark` for an ignored draft or `vp run benchmark:update` from a clean committed worktree to replace the published snapshot. See the [benchmark guide](benchmark/README.md) for the complete methodology.
 

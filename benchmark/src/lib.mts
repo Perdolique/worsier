@@ -36,41 +36,42 @@ export function calculateStatistics(samples: number[]): Statistics {
   }
 }
 
-export function parseHyperfineJson(text: string): Record<string, Statistics> {
+export function parseHyperfineJson(text: string): Map<string, { timing: Statistics; rss: Statistics }> {
   const document = JSON.parse(text) as unknown
-  if (!isRecord(document) || !Array.isArray(document.results)) {
-    throw new Error('Hyperfine output does not contain a results array')
+  if (!isRecord(document) || document.schema_version !== 2 || !Array.isArray(document.results)) {
+    throw new Error('Expected Hyperfine JSON schema version 2 with a results array')
   }
 
-  return Object.fromEntries(document.results.map((result) => {
-    if (
-      !isRecord(result)
-      || typeof result.command !== 'string'
-      || !Array.isArray(result.times)
-      || result.times.some((sample) => typeof sample !== 'number')
-    ) {
-      throw new Error('Hyperfine result is missing its command or samples')
+  const results = new Map<string, { timing: Statistics; rss: Statistics }>()
+  for (const result of document.results as unknown[]) {
+    if (!isRecord(result) || typeof result.name !== 'string' || !Array.isArray(result.measurements)) {
+      throw new Error('Hyperfine result is missing its name or measurements')
     }
-
-    const name = typeof result.command_name === 'string' ? result.command_name : result.command
-    return [name, calculateStatistics(result.times)]
-  }))
-}
-
-export function parsePeakRss(text: string, platform: NodeJS.Platform = process.platform): number {
-  if (platform === 'darwin') {
-    const match = text.match(/(\d+)\s+maximum resident set size/)
-    if (!match) {
-      throw new Error('macOS time output does not contain maximum resident set size')
+    if (results.has(result.name)) {
+      throw new Error(`Duplicate Hyperfine result for ${result.name}`)
     }
-    return Number.parseInt(match[1], 10)
+    const seconds: number[] = []
+    const rssBytes: number[] = []
+    for (const sample of result.measurements as unknown[]) {
+      if (!isRecord(sample) || sample.exit_code !== 0) {
+        throw new Error(`Missing or failed Hyperfine measurement for ${result.name}`)
+      }
+      const time = sample.time_wall_clock
+      if (!isRecord(time) || time.unit !== 'second' || typeof time.value !== 'number' || !Number.isFinite(time.value) || time.value <= 0) {
+        throw new Error(`Invalid Hyperfine wall time for ${result.name}`)
+      }
+      const rss = sample.memory_peak_resident
+      if (!isRecord(rss) || rss.unit !== 'byte' || typeof rss.value !== 'number' || !Number.isSafeInteger(rss.value) || rss.value <= 0) {
+        throw new Error(`Missing or invalid Hyperfine peak RSS for ${result.name}`)
+      }
+      seconds.push(time.value)
+      rssBytes.push(rss.value)
+    }
+    const timing = calculateStatistics(seconds)
+    const rss = calculateStatistics(rssBytes)
+    results.set(result.name, { timing, rss })
   }
-
-  const match = text.match(/Maximum resident set size \(kbytes\):\s*(\d+)/)
-  if (!match) {
-    throw new Error('GNU time output does not contain maximum resident set size')
-  }
-  return Number.parseInt(match[1], 10) * 1024
+  return results
 }
 
 export function normalizeLineEndings(text: string): string {
@@ -216,6 +217,10 @@ export function buildRootBenchmarkBlock(report: BenchmarkReport): string {
 }
 
 export function buildDetailedReport(report: BenchmarkReport): string {
+  const hyperfineMajor = Number.parseInt(report.environment.hyperfine, 10)
+  const rssMethod = hyperfineMajor >= 2
+    ? 'Peak RSS is the median from the same measured runs.'
+    : `Peak RSS is the median of ${report.settings.rssRuns} separate runs.`
   const lines = [
     '# Worsier benchmark results',
     '',
@@ -232,7 +237,7 @@ export function buildDetailedReport(report: BenchmarkReport): string {
     '',
     '## Comparative results',
     '',
-    `Each timing uses ${report.settings.warmups} warmups and ${report.settings.runs} measured Hyperfine runs. Peak RSS is the median of ${report.settings.rssRuns} separate runs.`,
+    `Each timing uses ${report.settings.warmups} warmups and ${report.settings.runs} measured Hyperfine runs. ${rssMethod}`,
     '',
     'Relative time normalizes each scenario to its fastest median (`1.00×`); higher values are slower.',
     '',

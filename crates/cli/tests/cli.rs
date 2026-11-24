@@ -954,6 +954,11 @@ fn directory_walk_respects_builtin_gitignore_config_ignores_and_sorts_diagnostic
     );
     write(&directory.path().join("z-invalid.ts"), "const z = @;");
     write(&directory.path().join("a-invalid.ts"), "const a = @;");
+    write(&directory.path().join("b-clean.ts"), "const clean = 1\n");
+    write(
+        &directory.path().join("y-changed.ts"),
+        "const changed = 2;\n",
+    );
 
     let output = command(directory.path())
         .args(["--check", ".", "--threads", "2"])
@@ -964,7 +969,16 @@ fn directory_walk_respects_builtin_gitignore_config_ignores_and_sorts_diagnostic
     assert!(!diagnostics.contains("skip.ts"));
     assert!(!diagnostics.contains("gitignored.js"));
     assert!(!diagnostics.contains("worker-configuration.d.ts"));
-    assert!(diagnostics.find("a-invalid.ts").unwrap() < diagnostics.find("z-invalid.ts").unwrap());
+    assert!(!diagnostics.contains("b-clean.ts"));
+    assert!(
+        diagnostics
+            .lines()
+            .any(|line| { line.starts_with("Would format ") && line.ends_with("y-changed.ts") })
+    );
+    let first_error = diagnostics.find("a-invalid.ts:").unwrap();
+    let changed = diagnostics.find("y-changed.ts").unwrap();
+    let last_error = diagnostics.find("z-invalid.ts:").unwrap();
+    assert!(first_error < changed && changed < last_error);
 
     write(
         &directory.path().join("worker-configuration.d.ts"),

@@ -13,14 +13,14 @@ This directory owns all benchmark-only dependencies, fixtures, runner code, deta
 
 ## What is measured
 
-The comparative benchmark pins Worsier from the current workspace, Prettier `3.9.9`, and Oxfmt `0.71.0`. It runs four end-to-end CLI scenarios:
+The comparative benchmark pins Worsier from the current workspace, Prettier `3.10.1`, and Oxfmt `0.80.0`. It runs four end-to-end CLI scenarios:
 
 1. Format the tracked small TypeScript fixture through stdin in a fresh process.
 2. Format TypeScript `parser.ts` through stdin in a fresh process.
 3. Run `--write` on separate pristine copies of the Outline corpus.
 4. Run `--check` on each formatter's own idempotent Outline output. This scenario is reported separately from rewrite performance.
 
-Hyperfine performs three warmups and ten measured runs. Peak RSS is measured in five separate runs with macOS `/usr/bin/time -l` or GNU `/usr/bin/time -v`, and the report publishes the median.
+Hyperfine 2 records wall time and peak RSS in each of ten measured runs after three warmups. The report shows the median of each metric. The CLI runs directly, with Hyperfine passing the input and output files for stdin scenarios.
 
 Comparative tables show relative time beside each median. The fastest median in each scenario is the `1.00×` baseline, and higher values mean proportionally slower execution.
 
@@ -53,7 +53,7 @@ Oxfmt treats Git-ignored paths as excluded even when they are passed explicitly.
 
 ## Running benchmarks
 
-Prerequisites are the repository toolchains, network access for the pinned fixtures, `tar`, Hyperfine `1.20.0`, and `/usr/bin/time`. Install workspace dependencies first, then build and measure:
+Prerequisites are the repository toolchains, network access for the pinned fixtures, `tar`, and Hyperfine `2.x` on macOS or Linux. Install workspace dependencies first, then build and measure:
 
 ```sh
 vp install
@@ -84,7 +84,7 @@ cargo bench -p worsier-benchmark --bench formatter --no-run
 
 Before timing, the runner requires every CLI invocation to exit successfully. It checks the common Outline input manifest, confirms no tool loses files, formats every fixture twice, and requires each formatter to be idempotent on its own output. Cross-tool output hashes are recorded but intentionally not compared.
 
-`results/latest.json` is the source of truth. It contains raw timing and RSS samples, derived median/min/max/mean/stddev values, throughput, normalized reproducible commands, tool and toolchain versions, the Worsier Git SHA, fixture metadata and hashes, validation output hashes, and machine parameters. Local executable and checkout paths are represented as `<node>`, `<repo>`, and `<tmp>`. `benchmark:verify` recomputes timing statistics, throughput, RSS medians, and the complete Criterion matrix from the raw report data, then fails if either generated Markdown file drifts.
+`results/latest.json` is the source of truth. It contains raw timing and RSS samples, derived median/min/max/mean/stddev values, throughput, normalized reproducible commands, tool and toolchain versions, the Worsier Git SHA, fixture metadata and hashes, validation output hashes, and machine parameters. Local executable and checkout paths are represented as `<node>`, `<repo>`, and `<tmp>`. `benchmark:verify` recomputes timing statistics, throughput, RSS medians, and the complete Criterion matrix from the raw report data. It checks the recorded Prettier and Oxfmt versions against the manifest at the snapshot’s commit. A shallow checkout needs that commit to verify the snapshot. Verification fails if either generated Markdown file drifts.
 
 Ordinary CI runs unit tests, one real small-fixture smoke invocation per CLI, result-render verification, and a compile-only Criterion check. It never records performance measurements. Release jobs do not run benchmarks or upload benchmark result assets.
 

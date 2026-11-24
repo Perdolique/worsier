@@ -280,31 +280,71 @@ fn rewrite_after_quotes(
             union_expansions,
         },
     )?;
-    let mut rewritten = if edits.is_empty() {
-        None
-    } else {
-        Some(apply_edits(source, &edits)?)
+    let rewritten = apply_nonempty_edits(source, &edits)?;
+    let always_commas = config.trailing_commas() == TrailingCommaMode::Always;
+    let statements = config.statement_semicolons();
+    let class_members = config.class_member_semicolons();
+    let semicolons = statements != SemicolonMode::Off
+        || class_members != SemicolonMode::Off
+        || !type_member_semicolons.is_off();
+    if !always_commas && !semicolons {
+        return Ok(rewritten);
+    }
+
+    continue_rewrite(source, parsed, source_type, rewritten, |source, parsed| {
+        let commas = if always_commas {
+            let edits = trailing_comma_edits(
+                source,
+                &parsed.program,
+                &parsed.tokens,
+                TrailingCommaMode::Always,
+                single_arrow_comma,
+                false,
+            );
+            apply_nonempty_edits(source, &edits)?
+        } else {
+            None
+        };
+        if !semicolons {
+            return Ok(commas);
+        }
+        continue_rewrite(source, parsed, source_type, commas, |source, parsed| {
+            let edits = semicolon_edits(
+                source,
+                &parsed.program,
+                &parsed.tokens,
+                statements,
+                class_members,
+                type_member_semicolons,
+            );
+            apply_nonempty_edits(source, &edits)
+        })
+    })
+}
+
+// AST nodes and tokens describe one immutable snapshot. If a stage changes it,
+// parse the new snapshot. If the next stage has no edits, return the owned text.
+fn continue_rewrite(
+    source: &str,
+    parsed: &oxc_parser::ParserReturn<'_>,
+    source_type: SourceType,
+    rewritten: Option<String>,
+    stage: impl FnOnce(&str, &oxc_parser::ParserReturn<'_>) -> Result<Option<String>, FormatError>,
+) -> Result<Option<String>, FormatError> {
+    let Some(rewritten) = rewritten else {
+        return stage(source, parsed);
     };
-    rewritten = apply_always_trailing_commas(
-        source,
-        rewritten,
-        parsed,
-        source_type,
-        config.trailing_commas(),
-        single_arrow_comma,
-    )?;
+    let allocator = Allocator::default();
+    let new_parse = parse_tokens(&allocator, &rewritten, source_type)?;
+    Ok(stage(&rewritten, &new_parse)?.or(Some(rewritten)))
+}
 
-    rewritten = apply_semicolons(
-        source,
-        rewritten,
-        parsed,
-        source_type,
-        config.statement_semicolons(),
-        config.class_member_semicolons(),
-        type_member_semicolons,
-    )?;
-
-    Ok(rewritten)
+fn apply_nonempty_edits(source: &str, edits: &[Edit]) -> Result<Option<String>, FormatError> {
+    if edits.is_empty() {
+        Ok(None)
+    } else {
+        apply_edits(source, edits).map(Some)
+    }
 }
 
 fn script_rules_disabled(
@@ -340,90 +380,6 @@ fn script_rules_after_quotes_disabled(
         && config.statement_semicolons() == SemicolonMode::Off
         && config.class_member_semicolons() == SemicolonMode::Off
         && type_member_semicolons.is_off()
-}
-
-fn apply_always_trailing_commas(
-    source: &str,
-    rewritten: Option<String>,
-    parsed: &oxc_parser::ParserReturn<'_>,
-    source_type: SourceType,
-    mode: TrailingCommaMode,
-    single_arrow_comma: SingleArrowCommaRule,
-) -> Result<Option<String>, FormatError> {
-    if mode != TrailingCommaMode::Always {
-        return Ok(rewritten);
-    }
-    let current = rewritten.as_deref().unwrap_or(source);
-    let comma_edits = if rewritten.is_none() {
-        trailing_comma_edits(
-            current,
-            &parsed.program,
-            &parsed.tokens,
-            mode,
-            single_arrow_comma,
-            false,
-        )
-    } else {
-        let allocator = Allocator::default();
-        let parsed = parse_tokens(&allocator, current, source_type)?;
-        trailing_comma_edits(
-            current,
-            &parsed.program,
-            &parsed.tokens,
-            mode,
-            single_arrow_comma,
-            false,
-        )
-    };
-    if comma_edits.is_empty() {
-        Ok(rewritten)
-    } else {
-        Ok(Some(apply_edits(current, &comma_edits)?))
-    }
-}
-
-fn apply_semicolons(
-    source: &str,
-    rewritten: Option<String>,
-    parsed: &oxc_parser::ParserReturn<'_>,
-    source_type: SourceType,
-    statements: SemicolonMode,
-    class_members: SemicolonMode,
-    type_members: TypeMemberSemicolonConfig,
-) -> Result<Option<String>, FormatError> {
-    if statements == SemicolonMode::Off
-        && class_members == SemicolonMode::Off
-        && type_members.is_off()
-    {
-        return Ok(rewritten);
-    }
-    let current = rewritten.as_deref().unwrap_or(source);
-    let edits = if rewritten.is_none() {
-        semicolon_edits(
-            current,
-            &parsed.program,
-            &parsed.tokens,
-            statements,
-            class_members,
-            type_members,
-        )
-    } else {
-        let allocator = Allocator::default();
-        let parsed = parse_tokens(&allocator, current, source_type)?;
-        semicolon_edits(
-            current,
-            &parsed.program,
-            &parsed.tokens,
-            statements,
-            class_members,
-            type_members,
-        )
-    };
-    if edits.is_empty() {
-        Ok(rewritten)
-    } else {
-        Ok(Some(apply_edits(current, &edits)?))
-    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -546,7 +502,7 @@ fn directives_match_after_quote_rewrite(
         return Ok(false);
     }
     for (input, output) in input_directives.iter().zip(&output_directives) {
-        if input.value != output.value || input.lone_surrogates != output.lone_surrogates {
+        if input.value != output.value {
             return Ok(false);
         }
         let expected = quote_style::canonical_span(input_source, input.span, quote_style)?;
@@ -572,23 +528,21 @@ fn directives_match_after_quote_rewrite(
     Ok(masked_input.program.content_eq(&masked_output.program))
 }
 
-struct DirectiveInfo {
+struct DirectiveInfo<'a> {
     span: Span,
-    value: String,
-    lone_surrogates: bool,
+    value: &'a [u8],
 }
 
-fn collect_directives(program: &Program<'_>) -> Vec<DirectiveInfo> {
-    struct Collector {
-        directives: Vec<DirectiveInfo>,
+fn collect_directives<'a>(program: &Program<'a>) -> Vec<DirectiveInfo<'a>> {
+    struct Collector<'a> {
+        directives: Vec<DirectiveInfo<'a>>,
     }
 
-    impl<'a> Visit<'a> for Collector {
+    impl<'a> Visit<'a> for Collector<'a> {
         fn visit_directive(&mut self, directive: &Directive<'a>) {
             self.directives.push(DirectiveInfo {
                 span: directive.expression.span,
-                value: directive.expression.value.to_string(),
-                lone_surrogates: directive.expression.lone_surrogates,
+                value: directive.expression.value.as_bytes(),
             });
             walk_directive(self, directive);
         }
@@ -601,7 +555,7 @@ fn collect_directives(program: &Program<'_>) -> Vec<DirectiveInfo> {
     collector.directives
 }
 
-fn mask_directives(source: &str, directives: &[DirectiveInfo]) -> Result<String, FormatError> {
+fn mask_directives(source: &str, directives: &[DirectiveInfo<'_>]) -> Result<String, FormatError> {
     let edits = directives
         .iter()
         .map(|directive| Edit {
@@ -5368,6 +5322,7 @@ mod tests {
     use std::path::Path;
 
     use oxc_allocator::Allocator;
+    use oxc_span::ContentEq;
 
     use super::{
         CORRUPT_REWRITE_FOR_TEST, DEFERRED_IMPORT_BOUNDARY_LOOKUPS, IMPORT_MULTILINE_SCANS,
@@ -7765,6 +7720,56 @@ mod tests {
     }
 
     #[test]
+    fn shares_the_intermediate_parse_when_trailing_commas_make_no_edits() {
+        let config = resolve_config(FormatConfig {
+            verify_ast: false,
+            rules: RulesConfig {
+                trailing_commas: TrailingCommaMode::Always,
+                ..RulesConfig::default()
+            },
+            ..FormatConfig::default()
+        })
+        .unwrap();
+        TOKEN_PARSER_RUNS.set(0);
+
+        let output = format_text(
+            Path::new("sample.ts"),
+            "import{one,two}from'package';\nconst value=1;\n",
+            &config,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            output,
+            "import { one, two } from 'package'\n\nconst value=1\n"
+        );
+        assert_eq!(TOKEN_PARSER_RUNS.get(), 2);
+    }
+
+    #[test]
+    fn reuses_the_union_parse_when_punctuation_restores_the_input() {
+        let config = resolve_config(FormatConfig {
+            verify_ast: false,
+            rules: RulesConfig {
+                trailing_commas: TrailingCommaMode::Always,
+                semicolons: semicolons_off(),
+                ..RulesConfig::default()
+            },
+            ..FormatConfig::default()
+        })
+        .unwrap();
+        let source =
+            "import data from 'x' with { // intro\ntype: 'json', };\n\ntype Choice = A | B;\n";
+        TOKEN_PARSER_RUNS.set(0);
+
+        let output = format_text(Path::new("sample.ts"), source, &config).unwrap();
+
+        assert!(output.is_none());
+        assert_eq!(TOKEN_PARSER_RUNS.get(), 2);
+    }
+
+    #[test]
     fn trailing_comma_indexes_stay_linear_for_nested_calls() {
         let depth = 64;
         let mut source = "call(\n".repeat(depth);
@@ -7801,6 +7806,45 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(error.code(), "VERIFICATION_ERROR");
+    }
+
+    #[test]
+    fn verification_distinguishes_lone_surrogates_from_literal_escape_text() {
+        let file_name = Path::new("sample.js");
+        let source_type = super::SourceType::mjs();
+        let input = r#""use 'client' \uD800"; const one = 1;"#;
+        let canonical = r"'use \'client\' \uD800'; const one = 1;";
+        let literal_escape = r"'use \'client\' \\uD800'; const one = 1;";
+        let allocator = Allocator::default();
+        let parsed = parse(&allocator, input, source_type).unwrap();
+        let canonical_ast = parse(&allocator, canonical, source_type).unwrap();
+        let literal_escape_ast = parse(&allocator, literal_escape, source_type).unwrap();
+        assert!(parsed.program.content_ne(&canonical_ast.program));
+
+        let input_directives = super::collect_directives(&parsed.program);
+        let literal_directives = super::collect_directives(&literal_escape_ast.program);
+        assert_eq!(input_directives[0].value, b"use 'client' \xed\xa0\x80");
+        assert_eq!(literal_directives[0].value, b"use 'client' \\uD800");
+
+        verify(
+            file_name,
+            source_type,
+            input,
+            &parsed.program,
+            canonical,
+            QuoteStyle::Single,
+        )
+        .unwrap();
+        let error = verify(
+            file_name,
+            source_type,
+            input,
+            &parsed.program,
+            literal_escape,
+            QuoteStyle::Single,
+        )
+        .unwrap_err();
+        assert!(matches!(error, crate::FormatError::Verification { .. }));
     }
 
     #[test]

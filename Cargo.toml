@@ -7,33 +7,33 @@ resolver = "2"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/Perdolique/worsier"
-rust-version = "1.98"
+rust-version = "1.100"
 version = "3.10.1"
 
 [workspace.dependencies]
-anyhow = "1.0.104"
-clap = { version = "4.6.7", features = ["derive"] }
-ignore = "0.4.33"
+anyhow = "1.0.105"
+clap = { version = "4.6.9", features = ["derive"] }
+ignore = "0.4.35"
 jsonc-parser = { version = "0.34.0", features = ["cst", "serde", "serde_json"] }
-libc = "0.2.189"
+libc = "0.2.191"
 memchr = "2.8.3"
-napi = { version = "3.13.0", default-features = false, features = ["napi8", "tokio_rt"] }
-napi-build = "2.5.0"
-napi-derive = "3.6.9"
-oxc_allocator = "=0.152.0"
-oxc_ast = "=0.152.0"
-oxc_ast_visit = "=0.152.0"
-oxc_parser = { version = "=0.152.0", default-features = false }
-oxc_span = "=0.152.0"
+napi = { version = "3.16.3", default-features = false, features = ["napi8", "tokio_rt"] }
+napi-build = "2.7.0"
+napi-derive = "3.7.2"
+oxc_allocator = "=0.160.0"
+oxc_ast = "=0.160.0"
+oxc_ast_visit = "=0.160.0"
+oxc_parser = { version = "=0.160.0", default-features = false }
+oxc_span = "=0.160.0"
 rayon = "1.12.0"
-schemars = "1.2.2"
+schemars = "1.2.3"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_path_to_error = "0.1.20"
-serde_json = "1.0.151"
+serde_json = "1.0.154"
 tempfile = "3.27.0"
 thiserror = "2.0.21"
 windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
-xattr = "1.6.1"
+xattr = "1.7.0"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
@@ -41,6 +41,10 @@ unsafe_code = "deny"
 [workspace.lints.clippy]
 all = "warn"
 pedantic = "warn"
+
+# Oxc's recursive parser exceeds the default test-thread stack on nested input at opt-level 0.
+[profile.dev.package.oxc_parser]
+opt-level = 1
 
 [profile.release]
 lto = "thin"

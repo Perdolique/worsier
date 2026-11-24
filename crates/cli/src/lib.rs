@@ -293,7 +293,7 @@ fn run_jobs(args: &Args, jobs: &[Job]) -> Result<i32> {
             .map(|job| format_job(job, mode))
             .collect::<Vec<_>>()
     };
-    let mut results = if let Some(threads) = args.threads {
+    let results = if let Some(threads) = args.threads {
         rayon::ThreadPoolBuilder::new()
             .num_threads(threads)
             .build()?
@@ -301,30 +301,31 @@ fn run_jobs(args: &Args, jobs: &[Job]) -> Result<i32> {
     } else {
         run()
     };
-    results.sort_by(|left, right| result_path(left).cmp(result_path(right)));
 
     let mut changed = false;
     let mut failed = false;
-    for result in results {
+    // Indexed parallel collection retains the sorted candidate order.
+    for (job, result) in jobs.iter().zip(results) {
+        let path = &job.path;
         match result {
-            JobResult::Clean { source, .. } => {
+            JobResult::Clean(source) => {
                 if let Some(source) = source {
                     print!("{source}");
                 }
             }
-            JobResult::Changed { path, output } => {
+            JobResult::Changed(output) => {
                 changed = true;
                 if args.write {
-                    eprintln!("Formatted {}", escaped_path(&path));
+                    eprintln!("Formatted {}", escaped_path(path));
                 } else if args.check {
-                    eprintln!("Would format {}", escaped_path(&path));
+                    eprintln!("Would format {}", escaped_path(path));
                 } else if let Some(output) = output {
                     print!("{output}");
                 }
             }
-            JobResult::Failed { path, error } => {
+            JobResult::Failed(error) => {
                 failed = true;
-                eprintln!("{}: {error:#}", escaped_path(&path));
+                eprintln!("{}: {error:#}", escaped_path(path));
             }
         }
     }
@@ -534,6 +535,9 @@ struct LoadedConfig {
 
 impl LoadedConfig {
     fn is_ignored(&self, path: &Path) -> Result<bool> {
+        if self.ignore.is_empty() {
+            return Ok(false);
+        }
         let absolute_path = path
             .canonicalize()
             .with_context(|| format!("failed to resolve {}", escaped_path(path)))?;
@@ -640,54 +644,27 @@ enum JobMode {
 }
 
 enum JobResult {
-    Clean {
-        path: PathBuf,
-        source: Option<String>,
-    },
-    Changed {
-        path: PathBuf,
-        output: Option<String>,
-    },
-    Failed {
-        path: PathBuf,
-        error: anyhow::Error,
-    },
+    Clean(Option<String>),
+    Changed(Option<String>),
+    Failed(anyhow::Error),
 }
 
 fn format_job(job: &Job, mode: JobMode) -> JobResult {
     let source = match read_source(job) {
         Ok(source) => source,
-        Err(error) => {
-            return JobResult::Failed {
-                path: job.path.clone(),
-                error,
-            };
-        }
+        Err(error) => return JobResult::Failed(error),
     };
-    let result = format_text(&job.path, &source, &job.config).map_err(anyhow::Error::from);
-    match result {
+    match format_text(&job.path, &source, &job.config) {
         Ok(Some(output)) => {
             if matches!(mode, JobMode::Write)
                 && let Err(error) = write_source_direct(&job.path, job.identity, output.as_bytes())
             {
-                return JobResult::Failed {
-                    path: job.path.clone(),
-                    error,
-                };
+                return JobResult::Failed(error);
             }
-            JobResult::Changed {
-                path: job.path.clone(),
-                output: matches!(mode, JobMode::Stdout).then_some(output),
-            }
+            JobResult::Changed(matches!(mode, JobMode::Stdout).then_some(output))
         }
-        Ok(None) => JobResult::Clean {
-            path: job.path.clone(),
-            source: matches!(mode, JobMode::Stdout).then_some(source),
-        },
-        Err(error) => JobResult::Failed {
-            path: job.path.clone(),
-            error,
-        },
+        Ok(None) => JobResult::Clean(matches!(mode, JobMode::Stdout).then_some(source)),
+        Err(error) => JobResult::Failed(error.into()),
     }
 }
 
@@ -724,14 +701,6 @@ fn open_validated_source(path: &Path, identity: FileIdentity, writable: bool) ->
         );
     }
     Ok(file)
-}
-
-fn result_path(result: &JobResult) -> &Path {
-    match result {
-        JobResult::Clean { path, .. }
-        | JobResult::Changed { path, .. }
-        | JobResult::Failed { path, .. } => path,
-    }
 }
 
 #[cfg(test)]
@@ -1098,7 +1067,7 @@ mod tests {
         let clean_job = job(clean, config.clone());
         assert!(matches!(
             format_job(&clean_job, JobMode::Check),
-            JobResult::Clean { source: None, .. }
+            JobResult::Clean(None)
         ));
 
         let changed = directory.path().join("changed.ts");
@@ -1106,7 +1075,7 @@ mod tests {
         let changed_job = job(changed, config);
         assert!(matches!(
             format_job(&changed_job, JobMode::Check),
-            JobResult::Changed { output: None, .. }
+            JobResult::Changed(None)
         ));
     }
 

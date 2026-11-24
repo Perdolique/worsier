@@ -13,12 +13,13 @@ import {
   formatRelativeTime,
   normalizeLineEndings,
   parseHyperfineJson,
-  parsePeakRss,
-  replaceGeneratedBlock
+  replaceGeneratedBlock,
+  shellQuote
 } from '../src/lib.mts'
 import {
   assertBenchmarkSemicolonsDisabled,
   buildCommands,
+  buildHyperfineArgs,
   collectEnvironment,
   commandFailure,
   displayCommand,
@@ -35,6 +36,7 @@ import type {
   BenchmarkScenario,
   CaptureCommand,
   MicrobenchmarkResult,
+  ScenarioDefinition,
   WorsierSemicolonCheckConfig
 } from '../src/types.mts'
 
@@ -50,18 +52,30 @@ test('calculates statistics from raw samples', () => {
   assert.throws(() => calculateStatistics([]), /at least one finite sample/)
 })
 
-test('parses Hyperfine raw samples and command names', () => {
-  const parsed = parseHyperfineJson(JSON.stringify({
-    results: [{ command: 'node tool.js', command_name: 'tool', times: [0.3, 0.1, 0.2] }]
+test('parses named Hyperfine 2 results with paired wall time and RSS samples', () => {
+  const measurements = [[0.3, 3072], [0.1, 1024], [0.2, 2048]].map(([seconds, bytes]) => ({
+    time_wall_clock: { value: seconds, unit: 'second' },
+    memory_peak_resident: { value: bytes, unit: 'byte' },
+    exit_code: 0
   }))
-  assert.deepEqual(parsed.tool.samples, [0.3, 0.1, 0.2])
-  assert.equal(parsed.tool.median, 0.2)
-})
+  const report = {
+    schema_version: 2,
+    results: [{
+      command: 'node tool.js',
+      name: 'tool',
+      measurements
+    }]
+  }
+  const json = JSON.stringify(report)
+  const results = parseHyperfineJson(json)
+  const result = results.get('tool')
+  assert.deepEqual(result?.timing.samples, [0.3, 0.1, 0.2])
+  assert.deepEqual(result?.rss.samples, [3072, 1024, 2048])
+  assert.equal(result?.rss.median, 2048)
 
-test('parses macOS and GNU peak RSS output', () => {
-  assert.equal(parsePeakRss('  123456  maximum resident set size', 'darwin'), 123456)
-  assert.equal(parsePeakRss('Maximum resident set size (kbytes): 2048', 'linux'), 2 * 1024 * 1024)
-  assert.throws(() => parsePeakRss('missing', 'darwin'), /does not contain/)
+  report.results[0].measurements[0].memory_peak_resident.unit = 'kibibyte'
+  const invalidJson = JSON.stringify(report)
+  assert.throws(() => parseHyperfineJson(invalidJson), /invalid Hyperfine peak RSS/)
 })
 
 test('normalizes third-party fixture line endings to LF', () => {
@@ -146,11 +160,38 @@ test('constructs direct CLI commands and aliases Oxfmt project targets outside i
   assert.doesNotMatch(oxfmt, /--write '\/workspace\/benchmark\/\.work/)
 })
 
-test('normalizes machine-specific paths in published commands', () => {
-  const command = `'${process.execPath}' '${process.cwd()}/src/cli.mts'`
-  const displayed = displayCommand(command)
-  assert.equal(displayed, `'<node>' '<repo>/benchmark/src/cli.mts'`)
-  assert.doesNotMatch(displayed, /Users|home|vite-plus/)
+test('normalizes shell-escaped paths in published commands', () => {
+  const workspace = "/Users/person's work/project"
+  const node = "/opt/person's tools/node"
+  const scriptPath = `${workspace}/packages/npm/bin/worsier.js`
+  const inputPath = `${workspace}/benchmark/fixtures/small.ts`
+  const outputPath = `${workspace}/benchmark/.work/output.ts`
+  const quotedNode = shellQuote(node)
+  const script = shellQuote(scriptPath)
+  const input = shellQuote(inputPath)
+  const output = shellQuote(outputPath)
+  const command = `${quotedNode} ${script} --stdin-filepath ${input} < ${input} > ${output}`
+  const displayed = displayCommand(command, workspace, node)
+  assert.equal(displayed, "'<node>' '<repo>/packages/npm/bin/worsier.js' --stdin-filepath '<repo>/benchmark/fixtures/small.ts' < '<repo>/benchmark/fixtures/small.ts' > '<repo>/benchmark/.work/output.ts'")
+})
+
+test('passes the fixture to Hyperfine with a distinct output file for each formatter', () => {
+  const definition: ScenarioDefinition = {
+    name: 'small',
+    displayName: 'Small TypeScript input',
+    commands: { worsier: 'worsier-cli', prettier: 'prettier-cli', oxfmt: 'oxfmt-cli' },
+    input: "/tmp/person's work/input.ts",
+    outputDirectory: "/tmp/person's work/outputs"
+  }
+  const args = buildHyperfineArgs(definition, measurementSettings, '/tmp/result.json')
+  const stdinOption = args.indexOf('--input')
+  const formatterArgs = args.slice(stdinOption)
+  assert.deepEqual(formatterArgs, [
+    '--input', "/tmp/person's work/input.ts",
+    '--output', "/tmp/person's work/outputs/worsier.ts", '--command-name', 'worsier', 'worsier-cli',
+    '--output', "/tmp/person's work/outputs/prettier.ts", '--command-name', 'prettier', 'prettier-cli',
+    '--output', "/tmp/person's work/outputs/oxfmt.ts", '--command-name', 'oxfmt', 'oxfmt-cli'
+  ])
 })
 
 test('does not collect or publish a Linux hostname', () => {
@@ -244,19 +285,39 @@ test('requires every Worsier semicolon group to be explicitly disabled for bench
 
 test('validates every derived sample statistic and the complete Criterion matrix', () => {
   const report = sampleReport()
-  assert.doesNotThrow(() => validateReport(report))
+  assert.doesNotThrow(() => validateReport(report, pinnedToolVersions))
 
   const wrongMean = structuredClone(report)
   wrongMean.scenarios.small.results.worsier.meanSeconds = 999
-  assert.throws(() => validateReport(wrongMean), /mean does not match its raw samples/)
+  assert.throws(() => validateReport(wrongMean, pinnedToolVersions), /mean does not match its raw samples/)
 
   const wrongRss = structuredClone(report)
   wrongRss.scenarios.parser.results.prettier.peakRssBytes = 999
-  assert.throws(() => validateReport(wrongRss), /peak RSS does not match its raw samples/)
+  assert.throws(() => validateReport(wrongRss, pinnedToolVersions), /peak RSS does not match its raw samples/)
 
   const emptyMicrobenchmarks = structuredClone(report)
   emptyMicrobenchmarks.microbenchmarks = []
-  assert.throws(() => validateReport(emptyMicrobenchmarks), /complete Criterion benchmark matrix/)
+  assert.throws(() => validateReport(emptyMicrobenchmarks, pinnedToolVersions), /complete Criterion benchmark matrix/)
+})
+
+test('rejects a competitor version outside the snapshot pins', () => {
+  const report = sampleReport()
+  report.tools.prettier.version = '0.0.0'
+  assert.throws(() => validateReport(report, pinnedToolVersions), /prettier version 0\.0\.0 does not match its pin/)
+})
+
+test('requires paired timing and RSS samples for Hyperfine 2 reports', () => {
+  const report = sampleReport()
+  report.settings.rssRuns = 2
+  for (const scenario of Object.values(report.scenarios)) {
+    for (const result of Object.values(scenario.results)) {
+      result.peakRssSamplesBytes = [1024, 1024]
+    }
+  }
+  assert.doesNotThrow(() => validateReport(report, pinnedToolVersions))
+
+  report.environment.hyperfine = '2.0.0'
+  assert.throws(() => validateReport(report, pinnedToolVersions), /must pair each wall time sample/)
 })
 
 function sampleReport(): BenchmarkReport {

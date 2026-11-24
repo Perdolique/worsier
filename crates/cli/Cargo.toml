@@ -24,6 +24,11 @@ worsier-formatter = { path = "../formatter" }
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+xattr.workspace = true
+
+[target.'cfg(unix)'.dev-dependencies]
 xattr.workspace = true
 
 [target.'cfg(windows)'.dependencies]

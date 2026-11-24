@@ -12,7 +12,7 @@ fn committed_fuzz_corpus_formats_successfully_and_idempotently() {
         .map(|entry| entry.unwrap().path())
         .collect::<Vec<_>>();
     entries.sort();
-    assert!(!entries.is_empty());
+    assert!(!entries.is_empty(), "fuzz corpus is empty");
 
     for path in entries {
         let source = fs::read_to_string(&path).unwrap();

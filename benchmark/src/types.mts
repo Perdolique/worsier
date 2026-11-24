@@ -45,7 +45,7 @@ export interface BenchmarkFixtures {
 
 export interface BenchmarkCommands {
   check(tool: ToolName, directory: string): string
-  stdin(tool: ToolName, input: string, output: string): string
+  stdin(tool: ToolName, input: string, output?: string): string
   write(tool: ToolName, directory: string): string
 }
 
@@ -153,7 +153,8 @@ export interface ScenarioDefinition {
   displayName: string
   name: ScenarioName
   prepareCommand?: string
-  prepareRss?: (tool: ToolName) => Promise<void>
+  input?: string
+  outputDirectory?: string
 }
 
 export interface CommandResult {
