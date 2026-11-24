@@ -138,6 +138,11 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: Perdolique/automations/.github/actions/setup-pnpm@v4
+        env:
+          # Keep the CLI shebang LF even when rebuilding tags without .gitattributes.
+          GIT_CONFIG_COUNT: '1'
+          GIT_CONFIG_KEY_0: core.autocrlf
+          GIT_CONFIG_VALUE_0: 'false'
         with:
           ref: ${{ needs.release-please.outputs.sha }}
           install-dependencies: true
