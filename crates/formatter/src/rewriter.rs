@@ -280,31 +280,71 @@ fn rewrite_after_quotes(
             union_expansions,
         },
     )?;
-    let mut rewritten = if edits.is_empty() {
-        None
-    } else {
-        Some(apply_edits(source, &edits)?)
+    let rewritten = apply_nonempty_edits(source, &edits)?;
+    let always_commas = config.trailing_commas() == TrailingCommaMode::Always;
+    let statements = config.statement_semicolons();
+    let class_members = config.class_member_semicolons();
+    let semicolons = statements != SemicolonMode::Off
+        || class_members != SemicolonMode::Off
+        || !type_member_semicolons.is_off();
+    if !always_commas && !semicolons {
+        return Ok(rewritten);
+    }
+
+    continue_rewrite(source, parsed, source_type, rewritten, |source, parsed| {
+        let commas = if always_commas {
+            let edits = trailing_comma_edits(
+                source,
+                &parsed.program,
+                &parsed.tokens,
+                TrailingCommaMode::Always,
+                single_arrow_comma,
+                false,
+            );
+            apply_nonempty_edits(source, &edits)?
+        } else {
+            None
+        };
+        if !semicolons {
+            return Ok(commas);
+        }
+        continue_rewrite(source, parsed, source_type, commas, |source, parsed| {
+            let edits = semicolon_edits(
+                source,
+                &parsed.program,
+                &parsed.tokens,
+                statements,
+                class_members,
+                type_member_semicolons,
+            );
+            apply_nonempty_edits(source, &edits)
+        })
+    })
+}
+
+// AST nodes and tokens describe one immutable snapshot. If a stage changes it,
+// parse the new snapshot. If the next stage has no edits, return the owned text.
+fn continue_rewrite(
+    source: &str,
+    parsed: &oxc_parser::ParserReturn<'_>,
+    source_type: SourceType,
+    rewritten: Option<String>,
+    stage: impl FnOnce(&str, &oxc_parser::ParserReturn<'_>) -> Result<Option<String>, FormatError>,
+) -> Result<Option<String>, FormatError> {
+    let Some(rewritten) = rewritten else {
+        return stage(source, parsed);
     };
-    rewritten = apply_always_trailing_commas(
-        source,
-        rewritten,
-        parsed,
-        source_type,
-        config.trailing_commas(),
-        single_arrow_comma,
-    )?;
+    let allocator = Allocator::default();
+    let new_parse = parse_tokens(&allocator, &rewritten, source_type)?;
+    Ok(stage(&rewritten, &new_parse)?.or(Some(rewritten)))
+}
 
-    rewritten = apply_semicolons(
-        source,
-        rewritten,
-        parsed,
-        source_type,
-        config.statement_semicolons(),
-        config.class_member_semicolons(),
-        type_member_semicolons,
-    )?;
-
-    Ok(rewritten)
+fn apply_nonempty_edits(source: &str, edits: &[Edit]) -> Result<Option<String>, FormatError> {
+    if edits.is_empty() {
+        Ok(None)
+    } else {
+        apply_edits(source, edits).map(Some)
+    }
 }
 
 fn script_rules_disabled(
@@ -340,90 +380,6 @@ fn script_rules_after_quotes_disabled(
         && config.statement_semicolons() == SemicolonMode::Off
         && config.class_member_semicolons() == SemicolonMode::Off
         && type_member_semicolons.is_off()
-}
-
-fn apply_always_trailing_commas(
-    source: &str,
-    rewritten: Option<String>,
-    parsed: &oxc_parser::ParserReturn<'_>,
-    source_type: SourceType,
-    mode: TrailingCommaMode,
-    single_arrow_comma: SingleArrowCommaRule,
-) -> Result<Option<String>, FormatError> {
-    if mode != TrailingCommaMode::Always {
-        return Ok(rewritten);
-    }
-    let current = rewritten.as_deref().unwrap_or(source);
-    let comma_edits = if rewritten.is_none() {
-        trailing_comma_edits(
-            current,
-            &parsed.program,
-            &parsed.tokens,
-            mode,
-            single_arrow_comma,
-            false,
-        )
-    } else {
-        let allocator = Allocator::default();
-        let parsed = parse_tokens(&allocator, current, source_type)?;
-        trailing_comma_edits(
-            current,
-            &parsed.program,
-            &parsed.tokens,
-            mode,
-            single_arrow_comma,
-            false,
-        )
-    };
-    if comma_edits.is_empty() {
-        Ok(rewritten)
-    } else {
-        Ok(Some(apply_edits(current, &comma_edits)?))
-    }
-}
-
-fn apply_semicolons(
-    source: &str,
-    rewritten: Option<String>,
-    parsed: &oxc_parser::ParserReturn<'_>,
-    source_type: SourceType,
-    statements: SemicolonMode,
-    class_members: SemicolonMode,
-    type_members: TypeMemberSemicolonConfig,
-) -> Result<Option<String>, FormatError> {
-    if statements == SemicolonMode::Off
-        && class_members == SemicolonMode::Off
-        && type_members.is_off()
-    {
-        return Ok(rewritten);
-    }
-    let current = rewritten.as_deref().unwrap_or(source);
-    let edits = if rewritten.is_none() {
-        semicolon_edits(
-            current,
-            &parsed.program,
-            &parsed.tokens,
-            statements,
-            class_members,
-            type_members,
-        )
-    } else {
-        let allocator = Allocator::default();
-        let parsed = parse_tokens(&allocator, current, source_type)?;
-        semicolon_edits(
-            current,
-            &parsed.program,
-            &parsed.tokens,
-            statements,
-            class_members,
-            type_members,
-        )
-    };
-    if edits.is_empty() {
-        Ok(rewritten)
-    } else {
-        Ok(Some(apply_edits(current, &edits)?))
-    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -7760,6 +7716,56 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(TOKEN_PARSER_RUNS.get(), 2);
+    }
+
+    #[test]
+    fn shares_the_intermediate_parse_when_trailing_commas_make_no_edits() {
+        let config = resolve_config(FormatConfig {
+            verify_ast: false,
+            rules: RulesConfig {
+                trailing_commas: TrailingCommaMode::Always,
+                ..RulesConfig::default()
+            },
+            ..FormatConfig::default()
+        })
+        .unwrap();
+        TOKEN_PARSER_RUNS.set(0);
+
+        let output = format_text(
+            Path::new("sample.ts"),
+            "import{one,two}from'package';\nconst value=1;\n",
+            &config,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            output,
+            "import { one, two } from 'package'\n\nconst value=1\n"
+        );
+        assert_eq!(TOKEN_PARSER_RUNS.get(), 2);
+    }
+
+    #[test]
+    fn reuses_the_union_parse_when_punctuation_restores_the_input() {
+        let config = resolve_config(FormatConfig {
+            verify_ast: false,
+            rules: RulesConfig {
+                trailing_commas: TrailingCommaMode::Always,
+                semicolons: semicolons_off(),
+                ..RulesConfig::default()
+            },
+            ..FormatConfig::default()
+        })
+        .unwrap();
+        let source =
+            "import data from 'x' with { // intro\ntype: 'json', };\n\ntype Choice = A | B;\n";
+        TOKEN_PARSER_RUNS.set(0);
+
+        let output = format_text(Path::new("sample.ts"), source, &config).unwrap();
+
+        assert!(output.is_none());
         assert_eq!(TOKEN_PARSER_RUNS.get(), 2);
     }
 

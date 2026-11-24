@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use oxc_ast::ast::{
@@ -13,9 +14,10 @@ use oxc_span::{GetSpan, SourceType, Span};
 use super::{
     Allocator, Comment, Edit, ExpandedLayout, FormatError, LayoutIndents, LineBreakIndex,
     ObjectLayout, ParentItem, ResolvedConfig, StatementList, SwitchLayout, Token,
-    TypeMemberSemicolonConfig, UnionLayoutMode, apply_edits, comments_in_span, contains_line_break,
-    detect_newline, is_line_scoped_typescript_directive, parse_tokens, rewrite_after_quotes,
-    source_slice, tokens_in_span, typescript_directive_target_lines,
+    TypeMemberSemicolonConfig, UnionLayoutMode, apply_nonempty_edits, comments_in_span,
+    contains_line_break, continue_rewrite, detect_newline, is_line_scoped_typescript_directive,
+    parse_tokens, rewrite_after_quotes, source_slice, tokens_in_span,
+    typescript_directive_target_lines,
 };
 
 #[derive(Debug)]
@@ -184,11 +186,7 @@ fn flat_edits(
     let lines = LineBreakIndex::new(source);
     let protected = protected_token_boundaries(source, parsed, &lines)?;
     let mut edits = Vec::new();
-    let mut breaks = source
-        .char_indices()
-        .filter(|(_, character)| matches!(character, '\n' | '\r'))
-        .map(|(index, _)| u32::try_from(index).unwrap())
-        .collect::<BTreeSet<_>>();
+    let mut breaks = lines.offsets.iter().copied().collect::<BTreeSet<_>>();
     for union in unions {
         if (mode == UnionLayoutMode::Auto && union.object_variants)
             || is_protected(union, &protected)
@@ -249,7 +247,11 @@ fn inline_boundary(source: &str, boundary: Span, index: usize) -> Result<&str, F
 fn rewrite_object_chains(
     source: &str,
     parsed: &oxc_parser::ParserReturn<'_>,
+    unions: &[UnionLayout],
 ) -> Result<Option<String>, FormatError> {
+    if !unions.iter().any(|union| union.object_variants) {
+        return Ok(None);
+    }
     let lines = LineBreakIndex::new(source);
     let protected = protected_token_boundaries(source, parsed, &lines)?;
     let comments = &parsed.program.comments;
@@ -257,8 +259,8 @@ fn rewrite_object_chains(
     let mut indents = BTreeMap::new();
     // Outer variants move first; inner chains then compose their relative shift
     // with that move instead of producing overlapping indentation edits.
-    for union in syntax(parsed).into_iter().rev() {
-        if !union.object_variants || is_protected(&union, &protected) {
+    for union in unions.iter().rev() {
+        if !union.object_variants || is_protected(union, &protected) {
             continue;
         }
         for (index, boundary) in union.boundaries().enumerate() {
@@ -310,11 +312,7 @@ fn rewrite_object_chains(
     }
     edits.extend(indent_edits);
     edits.sort_by_key(|edit| edit.start);
-    if edits.is_empty() {
-        Ok(None)
-    } else {
-        apply_edits(source, &edits).map(Some)
-    }
+    apply_nonempty_edits(source, &edits)
 }
 
 fn effective_indent(
@@ -390,6 +388,7 @@ fn rebase_variant(
 fn expansions(
     source: &str,
     parsed: &oxc_parser::ParserReturn<'_>,
+    unions: &[UnionLayout],
     mode: UnionLayoutMode,
     width: u32,
 ) -> Result<HashSet<u32>, FormatError> {
@@ -397,8 +396,8 @@ fn expansions(
     let protected = protected_token_boundaries(source, parsed, &lines)?;
     let mut widths = HashMap::new();
     let mut selected = BTreeSet::new();
-    for union in syntax(parsed) {
-        if is_protected(&union, &protected) {
+    for union in unions {
+        if is_protected(union, &protected) {
             continue;
         }
         if mode == UnionLayoutMode::Auto && union.object_variants {
@@ -460,7 +459,7 @@ pub(super) fn rewrite(
             None,
         );
     }
-    let mut current = transaction(
+    let Some(current) = transaction(
         source,
         parsed,
         &unions,
@@ -468,33 +467,77 @@ pub(super) fn rewrite(
         newline_hint,
         config,
         type_semicolons,
-    )?;
-    if current == source {
+    )?
+    else {
         return Ok(None);
-    }
-    let mut seen = HashSet::new();
-    seen.insert(source.to_owned());
-    loop {
-        if !seen.insert(current.clone()) {
-            return Err(FormatError::internal("union layout did not converge"));
-        }
+    };
+
+    converge(source, current, |current| {
         let allocator = Allocator::default();
-        let parsed = parse_tokens(&allocator, &current, source_type)?;
+        let parsed = parse_tokens(&allocator, current, source_type)?;
         let unions = syntax(&parsed);
-        let next = transaction(
-            &current,
+        transaction(
+            current,
             &parsed,
             &unions,
             source_type,
             newline_hint,
             config,
             type_semicolons,
-        )?;
-        if next == current {
-            return Ok(Some(current));
+        )
+    })
+    .map(Some)
+}
+
+fn converge(
+    source: &str,
+    mut current: String,
+    mut advance: impl FnMut(&str) -> Result<Option<String>, FormatError>,
+) -> Result<String, FormatError> {
+    // Brent's algorithm keeps one exact checkpoint. Move old text into it
+    // after exponentially growing intervals instead of saving every revision.
+    let mut checkpoint = Cow::Borrowed(source);
+    let mut interval = 1_usize;
+    let mut distance = 1;
+    loop {
+        if current == checkpoint {
+            return Err(FormatError::internal("union layout did not converge"));
+        }
+        let Some(next) = advance(&current)? else {
+            return Ok(current);
+        };
+        if distance == interval {
+            let Some(doubled) = interval.checked_mul(2) else {
+                return converge_without_counter(current, next, advance);
+            };
+            checkpoint = Cow::Owned(current);
+            interval = doubled;
+            distance = 0;
         }
         current = next;
+        distance += 1;
     }
+}
+
+// Use two moving positions if Brent's checkpoint interval ever outgrows usize.
+fn converge_without_counter(
+    mut slow: String,
+    mut fast: String,
+    mut advance: impl FnMut(&str) -> Result<Option<String>, FormatError>,
+) -> Result<String, FormatError> {
+    while slow != fast {
+        let Some(next_slow) = advance(&slow)? else {
+            return Ok(slow);
+        };
+        slow = next_slow;
+        for _ in 0..2 {
+            let Some(next_fast) = advance(&fast)? else {
+                return Ok(fast);
+            };
+            fast = next_fast;
+        }
+    }
+    Err(FormatError::internal("union layout did not converge"))
 }
 
 #[allow(
@@ -509,73 +552,68 @@ fn transaction(
     newline_hint: Option<&'static str>,
     config: &ResolvedConfig,
     type_semicolons: TypeMemberSemicolonConfig,
-) -> Result<String, FormatError> {
+) -> Result<Option<String>, FormatError> {
     let edits = flat_edits(source, parsed, unions, config.union_layout())?;
-    let flat = if edits.is_empty() {
-        None
-    } else {
-        Some(apply_edits(source, &edits)?)
-    };
-    let flat_source = flat.as_deref().unwrap_or(source);
-    let flat_allocator = Allocator::default();
-    let flat_parsed;
-    let flat_parse = if flat.is_some() {
-        flat_parsed = parse_tokens(&flat_allocator, flat_source, source_type)?;
-        &flat_parsed
-    } else {
-        parsed
-    };
-    let base = rewrite_after_quotes(
-        flat_source,
-        flat_parse,
-        source_type,
-        newline_hint,
-        config,
-        type_semicolons,
-        None,
-    )?;
-    let base_source = base.as_deref().unwrap_or(flat_source);
-    let base_allocator = Allocator::default();
-    let base_parsed;
-    let base_parse = if base.is_some() {
-        base_parsed = parse_tokens(&base_allocator, base_source, source_type)?;
-        &base_parsed
-    } else {
-        flat_parse
-    };
-    let joined = if config.union_layout() == UnionLayoutMode::Auto {
-        rewrite_object_chains(base_source, base_parse)?
-    } else {
-        None
-    };
-    let joined_source = joined.as_deref().unwrap_or(base_source);
-    let joined_allocator = Allocator::default();
-    let joined_parsed;
-    let joined_parse = if joined.is_some() {
-        joined_parsed = parse_tokens(&joined_allocator, joined_source, source_type)?;
-        &joined_parsed
-    } else {
-        base_parse
-    };
-    let selected = expansions(
-        joined_source,
-        joined_parse,
-        config.union_layout(),
-        config.line_width(),
-    )?;
-    if selected.is_empty() {
-        return Ok(joined_source.to_owned());
-    }
-    let output = rewrite_after_quotes(
-        joined_source,
-        joined_parse,
-        source_type,
-        newline_hint,
-        config,
-        type_semicolons,
-        Some(&selected),
-    )?;
-    Ok(output.unwrap_or_else(|| joined_source.to_owned()))
+    let flat = apply_nonempty_edits(source, &edits)?;
+    let flat_changed = flat.is_some();
+    let output = continue_rewrite(source, parsed, source_type, flat, |source, parsed| {
+        let base = rewrite_after_quotes(
+            source,
+            parsed,
+            source_type,
+            newline_hint,
+            config,
+            type_semicolons,
+            None,
+        )?
+        .filter(|rewritten| rewritten != source);
+        let base_changed = base.is_some();
+        continue_rewrite(source, parsed, source_type, base, |source, parsed| {
+            let new_unions;
+            let unions = if flat_changed || base_changed {
+                new_unions = syntax(parsed);
+                &new_unions
+            } else {
+                unions
+            };
+
+            let joined = if config.union_layout() == UnionLayoutMode::Auto {
+                rewrite_object_chains(source, parsed, unions)?
+            } else {
+                None
+            };
+            let joined_changed = joined.is_some();
+            continue_rewrite(source, parsed, source_type, joined, |source, parsed| {
+                let new_unions;
+                let unions = if joined_changed {
+                    new_unions = syntax(parsed);
+                    &new_unions
+                } else {
+                    unions
+                };
+                let selected = expansions(
+                    source,
+                    parsed,
+                    unions,
+                    config.union_layout(),
+                    config.line_width(),
+                )?;
+                if selected.is_empty() {
+                    return Ok(None);
+                }
+                rewrite_after_quotes(
+                    source,
+                    parsed,
+                    source_type,
+                    newline_hint,
+                    config,
+                    type_semicolons,
+                    Some(&selected),
+                )
+            })
+        })
+    })?;
+    Ok(output.filter(|output| output != source))
 }
 
 #[allow(
@@ -701,6 +739,39 @@ mod tests {
     };
 
     #[test]
+    fn convergence_retains_the_fixed_point_and_rejects_a_cycle() {
+        let mut passes = 0;
+        let output = super::converge("raw", "partial".to_owned(), |current| {
+            passes += 1;
+            Ok((current == "partial").then(|| "formatted".to_owned()))
+        })
+        .unwrap();
+        assert_eq!(output, "formatted");
+        assert_eq!(passes, 2);
+
+        let mut cycle_passes = 0;
+        let error = super::converge("raw", "first".to_owned(), |current| {
+            cycle_passes += 1;
+            assert!(
+                cycle_passes <= 16,
+                "failed to detect the three-state layout cycle"
+            );
+            let next = match current {
+                "first" => "second",
+                "second" => "third",
+                "third" => "first",
+                unexpected => panic!("unexpected layout: {unexpected}"),
+            };
+            Ok(Some(next.to_owned()))
+        })
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            FormatError::Internal { message } if message == "union layout did not converge"
+        ));
+    }
+
+    #[test]
     fn object_chain_indentation_work_is_bounded() {
         for count in [8, 256] {
             let source = format!(
@@ -761,7 +832,7 @@ mod tests {
         );
 
         LINE_START_INDEX_QUERIES.set(0);
-        let selected = expansions(&source, &parsed, UnionLayoutMode::Auto, 120).unwrap();
+        let selected = expansions(&source, &parsed, &unions, UnionLayoutMode::Auto, 120).unwrap();
         assert_eq!(selected.len(), depth);
         let queries = LINE_START_INDEX_QUERIES.get();
         assert!(

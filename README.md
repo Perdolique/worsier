@@ -428,7 +428,7 @@ On macOS, CLI tests compare ACL entries by UUID before and after file updates wi
 
 ## Performance benchmarks
 
-Import and export indentation lookups share a line index across layout passes, so declarations on one physical line do not repeatedly scan the preceding source text.
+Import and export indentation lookups share a line index across layout passes. Punctuation passes reuse a parse when the source text stays the same. Union layout keeps one earlier revision of the source to detect cycles, so memory used for that check stays bounded as the number of passes grows.
 
 Benchmarks are manual snapshots, not release gates. The comparative suite measures Worsier, Prettier, and Oxfmt on the same small TypeScript input, TypeScript's `parser.ts`, and a pinned Outline source corpus. Run `vp run benchmark` for an ignored draft or `vp run benchmark:update` from a clean committed worktree to replace the published snapshot. See the [benchmark guide](benchmark/README.md) for the complete methodology.
 
