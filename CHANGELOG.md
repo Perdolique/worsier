@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.10.2](https://github.com/Perdolique/worsier/compare/v3.10.1...v3.10.2) (2026-11-24)
+
+
+### Performance Improvements
+
+* **all:** reuse parses and speed up CLI scans ([6f62907](https://github.com/Perdolique/worsier/commit/6f629070a8533b756c2665b40af83989ce1854c2))
+
 ## [3.10.1](https://github.com/Perdolique/worsier/compare/v3.10.0...v3.10.1) (2026-10-17)
 
 
